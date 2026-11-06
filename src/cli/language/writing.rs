@@ -49,7 +49,28 @@ pub(crate) fn font_build(
         }
     };
 
-    emit_font(&resolved_family, resolved_upm, &sources, skipped, out, want_ufo, want_ttf)
+    // LI-6: without `--output` the font lands in the project's `exports/`
+    // folder (per language when built from the book) instead of the shell's
+    // current directory, and the path is printed.
+    if sources.is_empty() {
+        return Err(Error::Config("no usable glyphs to compile".into()));
+    }
+    let default_out;
+    let out = match out {
+        Some(p) => p,
+        None => {
+            let mut dir = project.join("exports");
+            if let Some(lang) = language {
+                dir.push(lang_slug(lang));
+            }
+            dir.push("fonts");
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| Error::Config(format!("creating {}: {e}", dir.display())))?;
+            default_out = dir.join(&resolved_family);
+            &default_out
+        }
+    };
+    emit_font(&resolved_family, resolved_upm, &sources, skipped, Some(out), want_ufo, want_ttf)
 }
 
 /// Build glyph sources from a directory of `.svg` files (filename stem → glyph
@@ -171,8 +192,8 @@ pub(crate) fn emit_font(
     }
     let font = crate::conlang::writing::font::build_ufo(family, upm, sources).map_err(Error::Config)?;
 
-    // `--out` sets the stem; the extension follows the format. When both are
-    // requested, the UFO and TTF share that stem.
+    // `--output` sets the stem; the extension follows the format. When both
+    // are requested, the UFO and TTF share that stem.
     let stem = out
         .map(|p| p.with_extension(""))
         .unwrap_or_else(|| std::path::PathBuf::from(family));
@@ -184,7 +205,7 @@ pub(crate) fn emit_font(
         let ufo_path = stem.with_extension("ufo");
         font.save(&ufo_path)
             .map_err(|e| Error::Store(format!("saving UFO: {e}")))?;
-        println!("  UFO source → {}", ufo_path.display());
+        eprintln!("  UFO source → {}", ufo_path.display());
         if !want_ttf {
             eprintln!("  (compile to TTF/OTF with `--format ttf`, fontc / fontmake, or FontForge)");
         }
@@ -193,7 +214,7 @@ pub(crate) fn emit_font(
         let ttf = compile::compile_ttf(&font, upm).map_err(Error::Config)?;
         let ttf_path = stem.with_extension("ttf");
         crate::io_atomic::write(&ttf_path, &ttf).map_err(Error::Io)?;
-        println!("  TrueType font → {} ({} bytes)", ttf_path.display(), ttf.len());
+        eprintln!("  TrueType font → {} ({} bytes)", ttf_path.display(), ttf.len());
     }
     Ok(())
 }
@@ -314,7 +335,7 @@ pub(crate) fn write_font_config(
     font_obj.insert("upm".into(), json!(font.upm));
     font_obj.insert("glyphs".into(), json!(glyphs));
     let body = serde_json::to_string_pretty(&json!({ "font": font_obj }))
-        .map_err(|e| Error::Store(format!("serializing font config: {e}")))?;
+        .map_err(|e| Error::Store(format!("serialising font config: {e}")))?;
 
     let existing = find_font_paragraph(store, hierarchy, lang_book);
     upsert_chapter_paragraph(store, cfg, lang_book, "Phonology", "Writing system", existing, &body)
@@ -422,7 +443,7 @@ pub(crate) fn bind_glyph_text(
 
     let cp_note = cp.map(|c| format!(" U+{:04X}", c as u32)).unwrap_or_default();
     let ph_note = phoneme.map(|p| format!(" /{p}/")).unwrap_or_default();
-    println!("glyph `{glyph_name}`{cp_note}{ph_note} → {}", dest.display());
+    eprintln!("glyph `{glyph_name}`{cp_note}{ph_note} → {}", dest.display());
     println!("{language} font now has {total} glyph(s)");
     Ok(())
 }
@@ -456,7 +477,7 @@ pub(crate) fn font_config_show(project: &Path, language: &str, json: bool) -> Re
                 "upm": font.upm,
                 "glyphs": glyphs,
             }))
-            .map_err(|e| Error::Store(format!("serializing: {e}")))?
+            .map_err(|e| Error::Store(format!("serialising: {e}")))?
         );
         return Ok(());
     }
@@ -583,7 +604,7 @@ pub(crate) fn font_compose(
     // Phase 2 — preview + advisory bind.
     if let Some(p) = out {
         crate::io_atomic::write(p, composed.as_bytes()).map_err(Error::Io)?;
-        println!("composed block → {}", p.display());
+        eprintln!("composed block → {}", p.display());
     } else {
         println!("{composed}");
     }
@@ -624,7 +645,7 @@ pub(crate) fn transliterate(project: &Path, language: &str, text: &str, json: bo
                 "mapped": out.mapped,
                 "unmatched": out.unmatched.iter().collect::<String>(),
             }))
-            .map_err(|e| Error::Store(format!("serializing: {e}")))?
+            .map_err(|e| Error::Store(format!("serialising: {e}")))?
         );
         return Ok(());
     }
@@ -702,12 +723,13 @@ pub(crate) fn spatial_typst(
     let typ = compose::quadrat_typst(name, &template, &family, &chars, size).map_err(Error::Config)?;
     if let Some(p) = out {
         crate::io_atomic::write(p, typ.as_bytes()).map_err(Error::Io)?;
-        println!("quadrat `{name}` → {}", p.display());
+        eprintln!("quadrat `{name}` → {}", p.display());
     } else {
         print!("{typ}");
     }
     eprintln!(
-        "(uses the `{family}` font — build it with `font-build --language {language} --format ttf` and embed it in your Typst document)"
+        "(uses the `{family}` font — build it with `{}` and embed it in your Typst document)",
+        super::wording::font_build_command(language)
     );
     Ok(())
 }
@@ -758,7 +780,7 @@ pub(crate) fn glyph_draft(
     // Always make the draft inspectable.
     if let Some(path) = out {
         crate::io_atomic::write(path, svg.as_bytes()).map_err(Error::Io)?;
-        println!("draft SVG → {}", path.display());
+        eprintln!("draft SVG → {}", path.display());
     } else {
         println!("{svg}");
     }

@@ -57,12 +57,18 @@ of the context is empty, the right side is /i/. A few more building blocks:
 + An empty side means "no condition there". `_ i` cares only about what follows.
 + A context token may be a *class name* (like `V` for any vowel) rather than a
   single sound: `k > h / V _ V` means "/k/ becomes /h/ between two vowels".
++ The target and the result may each be a *sequence* of sounds, written with
+  spaces between them: `a i > e / _ #` turns a final /ai/ into /e/, and
+  `t > t s / _ i` splits one sound into two. Written without the space, `ai`
+  still works when every reading is the same two phonemes; when it could be
+  read two ways, `language doctor` tells you and asks for the spaces.
 
 #term("SPE notation")[
   A standard shorthand for sound rules, named after a famous 1968 linguistics
   book (*The Sound Pattern of English*). The form is `target > result / left _
-  right`, where `_` is the target's position, `#` is a word edge, and a class
-  name matches any sound in that class. Inkhaven uses it for both allophony and,
+  right`, where `_` is the target's position, `#` is a word edge, a class
+  name matches any sound in that class, and a space-separated run of sounds on
+  either side of `>` is a sequence. Inkhaven uses it for both allophony and,
   later, historical sound change.
 ]
 

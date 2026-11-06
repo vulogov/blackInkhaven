@@ -24,7 +24,7 @@ pub(crate) fn metrics(project: &Path, language: &str, json: bool) -> Result<()> 
         println!(
             "{}",
             serde_json::to_string_pretty(&m)
-                .map_err(|e| Error::Store(format!("serializing metrics: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising metrics: {e}")))?
         );
         return Ok(());
     }
@@ -36,11 +36,11 @@ pub(crate) fn metrics(project: &Path, language: &str, json: bool) -> Result<()> 
 fn print_report(language: &str, m: &LanguageMetrics) {
     println!("language metrics · {language}");
     if m.analyzable_words == 0 {
-        println!("  (no analyzable words — add dictionary entries that parse as the language's phonemes)");
+        println!("  (no analysable words — add dictionary entries that parse as the language's phonemes)");
         return;
     }
     println!(
-        "  corpus    · {} analyzable word(s), {} segments",
+        "  corpus    · {} analysable word(s), {} segments",
         m.analyzable_words, m.total_segments
     );
     println!(
@@ -80,7 +80,7 @@ pub(crate) fn pairs(project: &Path, language: &str, limit: usize, json: bool) ->
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing pairs: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising pairs: {e}")))?
         );
         return Ok(());
     }
@@ -92,11 +92,11 @@ pub(crate) fn pairs(project: &Path, language: &str, limit: usize, json: bool) ->
 fn print_pairs(language: &str, r: &PairsReport) {
     println!("minimal pairs · {language}");
     if r.analyzable_words == 0 {
-        println!("  (no analyzable words — define a phoneme inventory and add dictionary entries)");
+        println!("  (no analysable words — define a phoneme inventory and add dictionary entries)");
         return;
     }
     println!(
-        "  {} minimal pair(s) across {} analyzable words",
+        "  {} minimal pair(s) across {} analysable words",
         r.pair_count, r.analyzable_words
     );
     if !r.contrast_load.is_empty() {
@@ -135,7 +135,7 @@ pub(crate) fn naturalness(project: &Path, language: &str, json: bool) -> Result<
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing naturalness: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising naturalness: {e}")))?
         );
         return Ok(());
     }
@@ -192,7 +192,7 @@ pub(crate) fn harmony(project: &Path, language: &str, json: bool) -> Result<()> 
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing harmony: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising harmony: {e}")))?
         );
         return Ok(());
     }
@@ -204,7 +204,7 @@ pub(crate) fn harmony(project: &Path, language: &str, json: bool) -> Result<()> 
 fn print_harmony(language: &str, r: &HarmonyReport) {
     println!("vowel harmony · {language}");
     if r.analyzable_words == 0 {
-        println!("  (no analyzable words — define a phoneme inventory and add dictionary entries)");
+        println!("  (no analysable words — define a phoneme inventory and add dictionary entries)");
         return;
     }
     println!("  {} analyzable word(s)", r.analyzable_words);
@@ -235,7 +235,7 @@ pub(crate) fn suggest_phonemes(project: &Path, language: &str, json: bool) -> Re
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing suggestions: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising suggestions: {e}")))?
         );
         return Ok(());
     }
@@ -256,7 +256,7 @@ pub(crate) fn suggest_phonemes(project: &Path, language: &str, json: bool) -> Re
 
 /// LING-1 L-P4 — `inkhaven language sketch <lang>`: a one-page, deterministic
 /// overview of the language, assembling the whole analysis suite into prose.
-pub(crate) fn sketch(project: &Path, language: &str, out: Option<&str>) -> Result<()> {
+pub(crate) fn sketch(project: &Path, language: &str, out: Option<&Path>) -> Result<()> {
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
     let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
     let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
@@ -265,9 +265,9 @@ pub(crate) fn sketch(project: &Path, language: &str, out: Option<&str>) -> Resul
 
     match out {
         Some(path) => {
-            crate::io_atomic::write(std::path::Path::new(path), text.as_bytes())
-                .map_err(|e| Error::Config(format!("write {path}: {e}")))?;
-            eprintln!("wrote sketch to {path}");
+            crate::io_atomic::write(path, text.as_bytes())
+                .map_err(|e| Error::Config(format!("write {}: {e}", path.display())))?;
+            eprintln!("wrote sketch to {}", path.display());
         }
         None => print!("{text}"),
     }
@@ -286,7 +286,7 @@ pub(crate) fn distribution(project: &Path, language: &str, json: bool) -> Result
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing distribution: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising distribution: {e}")))?
         );
         return Ok(());
     }
@@ -298,7 +298,7 @@ pub(crate) fn distribution(project: &Path, language: &str, json: bool) -> Result
 fn print_distribution(language: &str, r: &DistributionReport) {
     println!("phoneme distribution · {language}");
     if r.analyzable_words == 0 {
-        println!("  (no analyzable words — define a phoneme inventory and add dictionary entries)");
+        println!("  (no analysable words — define a phoneme inventory and add dictionary entries)");
         return;
     }
     println!("  {} analyzable word(s)", r.analyzable_words);

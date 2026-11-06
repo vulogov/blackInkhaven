@@ -19,7 +19,7 @@ pub(crate) fn universals(project: &Path, language: &str, json: bool) -> Result<(
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing typology: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising typology: {e}")))?
         );
         return Ok(());
     }
@@ -57,7 +57,7 @@ pub(crate) fn grammar_check(project: &Path, language: &str, json: bool) -> Resul
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing grammar check: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising grammar check: {e}")))?
         );
         return Ok(());
     }

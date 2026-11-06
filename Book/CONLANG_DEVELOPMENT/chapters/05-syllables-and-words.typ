@@ -69,7 +69,10 @@ inkhaven language generate-word Eldar --role root --count 10
 
 This prints ten random roots that fit your templates — perhaps *taki*, *mun*,
 *sala*, *kira*. None of them mean anything yet; they are raw material. When one
-sounds right, you will turn it into a real word in Part III.
+sounds right, you will turn it into a real word in Part III. `--count` takes
+1 to 100 000; if not a single candidate passes your constraints the command
+says so (`0 of 10 candidates passed the constraints — …`) and points you at
+`language doctor`. Add `--json` to get the batch as a list for a script.
 
 #callout(label: "Listen to what comes out")[
   Generating a batch of words is the best way to *audition* your phonology. If

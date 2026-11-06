@@ -18,12 +18,12 @@ syllable templates that fit the described character. Keep it coherent and typolo
 
 /// LING-1 L-P4 — `inkhaven language scaffold --from "<description>"`: AI-propose a
 /// starter phoneme inventory (as pasteable Phonology-chapter HJSON) from a short
-/// description. Preview-only: it prints (or writes with `--out`) a validated
+/// description. Preview-only: it prints (or writes with `--output`) a validated
 /// block; it never touches an existing language.
 pub(crate) fn scaffold_from(
     project: &Path,
     description: &str,
-    out: Option<&str>,
+    out: Option<&Path>,
     provider: Option<&str>,
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
@@ -49,11 +49,12 @@ pub(crate) fn scaffold_from(
     let block = crate::language_entry::extract_hjson_block(&raw).unwrap_or(raw.trim()).trim();
     match out {
         Some(path) => {
-            crate::io_atomic::write(Path::new(path), format!("{block}\n").as_bytes())
-                .map_err(|e| Error::Config(format!("write {path}: {e}")))?;
+            crate::io_atomic::write(path, format!("{block}\n").as_bytes())
+                .map_err(|e| Error::Config(format!("write {}: {e}", path.display())))?;
             eprintln!(
-                "wrote a {}-phoneme starter inventory to {path}",
-                phon.phonemes.len()
+                "wrote a {}-phoneme starter inventory to {}",
+                phon.phonemes.len(),
+                path.display()
             );
         }
         None => {
@@ -96,11 +97,7 @@ pub(crate) fn open_lang_book(
         .into_iter()
         .find(|n| n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language))
         .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "language `{language}` not found — run `inkhaven language init {language}` first"
-            ))
-        })?;
+        .ok_or_else(|| super::wording::language_not_found(language))?;
     Ok((store, hierarchy, lang_book))
 }
 
@@ -129,11 +126,7 @@ pub(crate) fn find_language_book(
         .into_iter()
         .find(|n| n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(name))
         .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "language `{name}` not found — create it first (e.g. `ink.lang.init`)"
-            ))
-        })
+        .ok_or_else(|| super::wording::language_not_found(name))
 }
 
 /// Create a language sub-book plus its scaffold chapters, using the active
@@ -504,14 +497,41 @@ pub(crate) fn scaffold_language_chapters(
     }
     Ok(())
 }
-pub(crate) fn list(project: &Path) -> Result<()> {
-    use crate::store::node::NodeKind;
+pub(crate) fn list(project: &Path, json: bool) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout, &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
 
+    let rows = language_summaries(&hierarchy)?;
+    if rows.is_empty() && !json {
+        eprintln!("{}", super::wording::NO_LANGUAGES);
+        return Ok(());
+    }
+    emit(json, &rows, |rows| {
+        let max_name = rows.iter().map(|r| r.name.chars().count()).max().unwrap_or(8);
+        let name_w = max_name.max(8);
+        println!(
+            "  {:<width$}  {:>6}  {:>7}  {:>9}  {:>7}",
+            "name", "words", "grammar", "phonology", "samples",
+            width = name_w,
+        );
+        println!("  {}", "-".repeat(name_w + 36));
+        for r in rows {
+            println!(
+                "  {:<width$}  {:>6}  {:>7}  {:>9}  {:>7}",
+                r.name, r.entries, r.grammar, r.phonology, r.samples,
+                width = name_w,
+            );
+        }
+    })
+}
+
+/// One row per language: the paragraph counts under its scaffold chapters.
+/// `language list` prints these and `ink.lang.list` returns them.
+pub(crate) fn language_summaries(hierarchy: &Hierarchy) -> Result<Vec<super::shapes::LanguageSummary>> {
+    use crate::store::node::NodeKind;
     let lang_root = hierarchy
         .iter()
         .find(|n| {
@@ -525,21 +545,16 @@ pub(crate) fn list(project: &Path) -> Result<()> {
             )
         })?;
     let languages = hierarchy.children_of(Some(lang_root.id));
-    if languages.is_empty() {
-        eprintln!("no languages defined — run `inkhaven language init <name>`");
-        return Ok(());
-    }
-    // Compute counts up-front so the column widths
-    // can size to the data.  Tuple shape:
-    // (name, entries, grammar, phonology, samples).
-    let mut rows: Vec<(String, usize, usize, usize, usize)> =
-        Vec::with_capacity(languages.len());
+    let mut rows = Vec::with_capacity(languages.len());
     for lang in &languages {
         let chapters = hierarchy.children_of(Some(lang.id));
-        let mut entries = 0usize;
-        let mut grammar = 0usize;
-        let mut phonology = 0usize;
-        let mut samples = 0usize;
+        let mut row = super::shapes::LanguageSummary {
+            name: lang.title.clone(),
+            entries: 0,
+            grammar: 0,
+            phonology: 0,
+            samples: 0,
+        };
         for chapter in &chapters {
             let title_lc = chapter.title.to_lowercase();
             let paragraph_count = hierarchy
@@ -549,32 +564,14 @@ pub(crate) fn list(project: &Path) -> Result<()> {
                 .filter(|n| n.kind == NodeKind::Paragraph)
                 .count();
             match title_lc.as_str() {
-                "dictionary" => entries = paragraph_count,
-                "grammar" => grammar = paragraph_count,
-                "phonology" => phonology = paragraph_count,
-                "sample texts" => samples = paragraph_count,
+                "dictionary" => row.entries = paragraph_count,
+                "grammar" => row.grammar = paragraph_count,
+                "phonology" => row.phonology = paragraph_count,
+                "sample texts" => row.samples = paragraph_count,
                 _ => {}
             }
         }
-        rows.push((lang.title.clone(), entries, grammar, phonology, samples));
+        rows.push(row);
     }
-    let max_name = rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(8);
-    let name_w = max_name.max(8);
-    println!(
-        "  {:<width$}  {:>6}  {:>7}  {:>9}  {:>7}",
-        "name", "words", "grammar", "phonology", "samples",
-        width = name_w,
-    );
-    println!(
-        "  {}",
-        "-".repeat(name_w + 36)
-    );
-    for (name, entries, grammar, phonology, samples) in &rows {
-        println!(
-            "  {:<width$}  {:>6}  {:>7}  {:>9}  {:>7}",
-            name, entries, grammar, phonology, samples,
-            width = name_w,
-        );
-    }
-    Ok(())
+    Ok(rows)
 }

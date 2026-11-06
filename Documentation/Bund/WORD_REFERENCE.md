@@ -292,12 +292,13 @@ mutations are `store_write`; file/font output is `fs_write`.
 
 | Word | Category | Stack | Description |
 |------|----------|-------|-------------|
-| `ink.lang.list` | store_read | `( -- list )` | all language book names |
+| `ink.lang.list` | store_read | `( -- list )` | one `{name, entries, grammar, phonology, samples}` dict per language — the rows `inkhaven language list --json` prints |
 | `ink.lang.stats` | store_read | `( lang -- dict )` | phonological/lexical profile statistics |
 | `ink.lang.audit` | store_read | `( lang -- dict )` | lexicon health audit (homophones, gaps, anomalies) |
 | `ink.lang.query` | store_read | `( lang text -- list )` | filter dictionary entries by headword/gloss |
 | `ink.lang.gaps` | store_read | `( lang scope -- dict )` | lexical gaps vs a scope (`swadesh_100` or file) |
 | `ink.lang.generate_word` | store_read | `( lang role seed -- word )` | one phonotactically-valid word for a template role |
+| `ink.lang.generate_words` | store_read | `( lang role count -- list )` | the deterministic batch `inkhaven language generate-word --count N --json` prints; 1 … 100 000; an error when no candidate passes |
 | `ink.lang.names` | store_read | `( lang count seed -- list )` | deterministic proper names |
 | `ink.lang.ipa` | store_read | `( lang word -- ipa )` | surface IPA (allophony applied) |
 | `ink.lang.syllabify` | store_read | `( lang word -- list )` | split a word into syllables |
@@ -344,7 +345,8 @@ mutations are `store_write`; file/font output is `fs_write`.
 | `ink.lang.reconstruct` | ai_write | `( forms gloss provider -- text )` | AI-reconstruct a proto-form from cognates |
 | `ink.lang.dictionary` | fs_write | `( lang format out font -- path )` | render the lexicon to a dictionary file |
 | `ink.lang.grammar_book` | fs_write | `( lang format out font -- path )` | render a full grammar book |
-| `ink.lang.export` | fs_write | `( lang out-path -- path )` | export the translation system as a `.itm` bundle |
+| `ink.lang.export_translation` | fs_write | `( lang out-path -- path )` | export the translation system as a `.itm` bundle (the CLI's `export-translation`); `ink.lang.export` is kept as an alias |
+| `ink.lang.export` | fs_write | `( lang out-path -- path )` | alias of `ink.lang.export_translation` (pre-3.18 name) |
 | `ink.lang.font_build` | fs_write | `( lang format out -- stem )` | compile the writing system's glyphs into a font |
 | `ink.lang.glyph_lint` | fs_read | `( svg-path -- dict )` | lint an SVG for font suitability |
 | `ink.lang.glyph_draft` | fs_write | `( lang describe phoneme out provider -- path )` | AI-draft a glyph SVG (also needs ai_write) |

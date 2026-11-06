@@ -46,11 +46,7 @@ pub(crate) fn export(
             n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language)
         })
         .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "language `{language}` not found"
-            ))
-        })?;
+        .ok_or_else(|| super::wording::language_not_found(language))?;
 
     // Collect data once; per-format renderers fan
     // out from a single walk.
@@ -122,9 +118,13 @@ pub(crate) fn export(
             _ => {}
         }
     }
-    // Sort entries by lemma so every format renders
-    // in a stable order.
-    entries.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    // Sort entries in declared alphabet order (LI-5) so every format renders
+    // in the order the book files them.
+    {
+        let alphabet: Vec<String> = meta.as_ref().map(|m| m.alphabet.clone()).unwrap_or_default();
+        let alpha = crate::conlang::lexicon::headword::Alphabet::new(&alphabet);
+        entries.sort_by_cached_key(|e| alpha.sort_key(&e.0));
+    }
 
     let rendered: Vec<u8> = match format {
         LanguageExportFormat::Json => render_json(
@@ -316,21 +316,19 @@ pub(crate) fn render_dictionary_twocol(
     meta: Option<&crate::language_entry::MetaOverview>,
     entries: &[(String, crate::language_entry::DictionaryEntry)],
 ) -> Vec<u8> {
-    // Group entries by alphabet bucket.  Use the
-    // first character of the entry's title
-    // (uppercased) as the bucket key — same logic as
-    // the add-word fallback.  Authors with non-
-    // Latin alphabets get sensible grouping for free.
-    let mut by_bucket: std::collections::BTreeMap<String, Vec<&(String, crate::language_entry::DictionaryEntry)>> =
-        std::collections::BTreeMap::new();
-    for entry in entries {
-        let bucket = entry
-            .0
-            .chars()
-            .find(|c| !c.is_whitespace())
-            .map(|c| c.to_uppercase().to_string())
-            .unwrap_or_else(|| "?".into());
-        by_bucket.entry(bucket).or_default().push(entry);
+    // Group entries by alphabet bucket — the same bucket the tree files
+    // them under (`Ch` is a section of its own), in alphabet order (LI-5).
+    let alphabet: Vec<String> = meta.map(|m| m.alphabet.clone()).unwrap_or_default();
+    let alpha = crate::conlang::lexicon::headword::Alphabet::new(&alphabet);
+    let mut sorted: Vec<&(String, crate::language_entry::DictionaryEntry)> = entries.iter().collect();
+    sorted.sort_by_cached_key(|e| alpha.sort_key(&e.0));
+    let mut by_bucket: Vec<(String, Vec<&(String, crate::language_entry::DictionaryEntry)>)> = Vec::new();
+    for entry in sorted {
+        let bucket = alpha.section_for(&entry.0);
+        match by_bucket.last_mut() {
+            Some((last, group)) if *last == bucket => group.push(entry),
+            _ => by_bucket.push((bucket, vec![entry])),
+        }
     }
 
     let mut s = String::new();

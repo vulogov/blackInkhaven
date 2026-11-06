@@ -192,6 +192,38 @@ pub struct Store {
     layout: Arc<ProjectLayout>,
 }
 
+/// 3.18 LI-3 — a deferred-flush window from [`Store::begin_batch`]. Call
+/// [`SyncBatch::finish`] to flush and see the error; dropping it flushes
+/// too but can only log.
+pub struct SyncBatch<'a> {
+    store: &'a Store,
+    released: bool,
+}
+
+impl SyncBatch<'_> {
+    /// End the batch; when it was the outermost one, flush the index now.
+    pub fn finish(mut self) -> Result<()> {
+        self.released = true;
+        if self.store.inner.release_sync() {
+            self.store.sync()?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for SyncBatch<'_> {
+    fn drop(&mut self) {
+        if self.released {
+            return;
+        }
+        if self.store.inner.release_sync() {
+            if let Err(e) = self.store.sync() {
+                tracing::warn!(target: "inkhaven::store", "batch end: vector index flush failed: {e}");
+            }
+        }
+    }
+}
+
 impl Store {
     pub fn open(layout: ProjectLayout, cfg: &Config) -> Result<Self> {
         let root = layout
@@ -744,6 +776,16 @@ symbol/motif proposals you can accept straight into this book.";
         self.inner.sync().map_err(|e| Error::Store(e.to_string()))
     }
 
+    /// 3.18 LI-3 — start a write batch: every `sync()` the per-node write
+    /// paths call is deferred until the returned guard is finished (or
+    /// dropped), when the vector index is flushed once. Content and
+    /// metadata stay durable per write as before; only the derived index
+    /// flush is coalesced. Nestable.
+    pub fn begin_batch(&self) -> SyncBatch<'_> {
+        self.inner.hold_sync();
+        SyncBatch { store: self, released: false }
+    }
+
     /// 1.8.32+ hardening — flush the derived vector index off the calling
     /// thread (used by the editor's routine save path so serializing the HNSW
     /// index never freezes the render thread). See
@@ -776,6 +818,16 @@ symbol/motif proposals you can accept straight into this book.";
     pub fn row_count(&self) -> Result<usize> {
         self.inner
             .row_count()
+            .map_err(|e| Error::Store(e.to_string()))
+    }
+
+    /// 3.18 LI-1 — how many nodes of `kind` the project holds, counted
+    /// inside DuckDB. Cheap enough for the hook path: the scripting
+    /// layer asks it on every `hooks::fire` until the VM exists, to
+    /// avoid building a VM for a project with no Script node at all.
+    pub fn count_nodes_of_kind(&self, kind: NodeKind) -> Result<usize> {
+        self.inner
+            .count_metadata_by_field("kind", kind.as_str())
             .map_err(|e| Error::Store(e.to_string()))
     }
 
@@ -851,6 +903,18 @@ symbol/motif proposals you can accept straight into this book.";
             .map_err(|e| Error::Store(format!("get_content: {e}")))
     }
 
+    /// 3.18 LI-2 — the bodies of `ids` in one round trip per 256 ids; ids
+    /// without a body are absent from the map. `LanguageModel::load` reads a
+    /// whole language book with it.
+    pub fn get_content_batch(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<u8>>> {
+        self.inner
+            .get_content_batch(ids)
+            .map_err(|e| Error::Store(format!("get_content_batch: {e}")))
+    }
+
     /// Create a hierarchy node end-to-end: validate placement, derive a unique
     /// slug, compute the filesystem path, write a .typ template (paragraphs) or
     /// create a directory (branches), insert into bdslib, sync. Returns the
@@ -870,6 +934,64 @@ symbol/motif proposals you can accept straight into this book.";
         parent: Option<&Node>,
         slug_override: Option<&str>,
         position: InsertPosition,
+    ) -> Result<Node> {
+        self.create_node_inner(cfg, hierarchy, kind, title, parent, slug_override, position, None)
+    }
+
+    /// 3.18 LI-3 — create a paragraph whose final body is known up front
+    /// (a dictionary entry, an HJSON block). One file write and one
+    /// `add_document` with the real text — the create-then-overwrite path
+    /// wrote a template, embedded it, then re-wrote and re-embedded the
+    /// body. `content_type` lands on the node before it is stored. Fires
+    /// `hook.on_create` and then `hook.on_save`, the sequence the two-step
+    /// path produced.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_paragraph_with_body(
+        &self,
+        cfg: &Config,
+        hierarchy: &Hierarchy,
+        title: &str,
+        parent: Option<&Node>,
+        position: InsertPosition,
+        body: &[u8],
+        content_type: Option<&str>,
+    ) -> Result<Node> {
+        let node = self.create_node_inner(
+            cfg,
+            hierarchy,
+            NodeKind::Paragraph,
+            title,
+            parent,
+            None,
+            position,
+            Some((body, content_type)),
+        )?;
+        // Parity with `update_paragraph_content`: the canon harvest (advisory)
+        // and the save hook.
+        if let Err(e) = self
+            .inner
+            .harvest_paragraph(node.id, &node.path, &node.slug, &node.tags)
+        {
+            tracing::warn!(
+                target: "inkhaven::canon",
+                "canon harvest on create failed (advisory, ignored): {e}"
+            );
+        }
+        fire_hook("hook.on_save", vec![bund_string(&node.id.to_string())]);
+        Ok(node)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn create_node_inner(
+        &self,
+        cfg: &Config,
+        hierarchy: &Hierarchy,
+        kind: NodeKind,
+        title: &str,
+        parent: Option<&Node>,
+        slug_override: Option<&str>,
+        position: InsertPosition,
+        body: Option<(&[u8], Option<&str>)>,
     ) -> Result<Node> {
         hierarchy.validate_placement(cfg, parent, kind)?;
 
@@ -1019,6 +1141,20 @@ symbol/motif proposals you can accept straight into this book.";
             .unwrap_or(false);
 
         let content: Vec<u8> = match kind {
+            NK::Paragraph if body.is_some() => {
+                // 3.18 LI-3 — the final body, once.
+                let (bytes, content_type) = body.unwrap_or((&[], None));
+                if let Some(parent_dir) = abs_path.parent() {
+                    std::fs::create_dir_all(parent_dir)?;
+                }
+                crate::io_atomic::write(&abs_path, bytes)?;
+                node.file = Some(rel_path.to_string_lossy().into_owned());
+                node.word_count = std::str::from_utf8(bytes)
+                    .map(|s| s.split_whitespace().count() as u64)
+                    .unwrap_or(0);
+                node.content_type = content_type.map(str::to_string);
+                bytes.to_vec()
+            }
             NK::Paragraph => {
                 if let Some(parent_dir) = abs_path.parent() {
                     std::fs::create_dir_all(parent_dir)?;
@@ -1071,6 +1207,34 @@ symbol/motif proposals you can accept straight into this book.";
     /// updating bdslib metadata (plus descendant `file` paths for branches).
     /// Errors if a sibling already occupies the target slot — callers are
     /// expected to process shifts highest-order-first to avoid this.
+    /// Where `node` really is on disk. A paragraph's stored `file` is the
+    /// truth: HJSON paragraphs (dictionary entries, sources, symbols) are
+    /// written as `.typ` and only have their `content_type` flipped in
+    /// metadata, so `fs_name()` would name a `.hjson` file that never
+    /// existed. Branches have no `file` and derive from the hierarchy.
+    fn on_disk_rel(&self, hierarchy: &Hierarchy, node: &Node) -> std::path::PathBuf {
+        match &node.file {
+            Some(f) if node.kind == NK::Paragraph => std::path::PathBuf::from(f),
+            _ => hierarchy.fs_path(node, &self.layout),
+        }
+    }
+
+    /// The entry name a reordered node takes: its `NN-` prefix from the
+    /// new order, the rest from the name it has on disk (so a reorder
+    /// never changes a paragraph's extension). Falls back to `fs_name()`
+    /// when the on-disk name carries no order prefix.
+    fn reordered_fs_name(node: &Node, old_rel: &std::path::Path) -> String {
+        let old_name = old_rel.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let has_prefix = old_name.len() > 3
+            && old_name.as_bytes()[..2].iter().all(u8::is_ascii_digit)
+            && old_name.as_bytes()[2] == b'-';
+        if node.kind != NK::Book && has_prefix {
+            format!("{:02}-{}", node.order, &old_name[3..])
+        } else {
+            node.fs_name()
+        }
+    }
+
     fn shift_sibling_order(
         &self,
         hierarchy: &Hierarchy,
@@ -1084,12 +1248,12 @@ symbol/motif proposals you can accept straight into this book.";
         if node.order == new_order {
             return Ok(());
         }
-        let old_rel = hierarchy.fs_path(&node, &self.layout);
+        let old_rel = self.on_disk_rel(hierarchy, &node);
         let old_abs = self.layout.root.join(&old_rel);
 
         let mut new_node = node.clone();
         new_node.order = new_order;
-        let new_name = new_node.fs_name();
+        let new_name = Self::reordered_fs_name(&new_node, &old_rel);
         let parent_dir = old_abs
             .parent()
             .ok_or_else(|| Error::Store("filesystem entry has no parent directory".into()))?;
@@ -1263,20 +1427,20 @@ symbol/motif proposals you can accept straight into this book.";
             return Err(Error::Store("can only swap siblings".into()));
         }
 
-        let a_old_rel = hierarchy.fs_path(&a, &self.layout);
-        let b_old_rel = hierarchy.fs_path(&b, &self.layout);
+        let a_old_rel = self.on_disk_rel(hierarchy, &a);
+        let b_old_rel = self.on_disk_rel(hierarchy, &b);
         let a_old_abs = self.layout.root.join(&a_old_rel);
         let b_old_abs = self.layout.root.join(&b_old_rel);
 
         // Build the new nodes with swapped orders so we can compute new
-        // filesystem segment names via `fs_name()`.
+        // filesystem segment names (the on-disk extension is kept).
         let mut a_new = a.clone();
         a_new.order = b.order;
         let mut b_new = b.clone();
         b_new.order = a.order;
 
-        let a_new_name = a_new.fs_name();
-        let b_new_name = b_new.fs_name();
+        let a_new_name = Self::reordered_fs_name(&a_new, &a_old_rel);
+        let b_new_name = Self::reordered_fs_name(&b_new, &b_old_rel);
 
         // Both new names exist in the same parent directory.
         let parent_dir = a_old_abs
@@ -1340,6 +1504,114 @@ symbol/motif proposals you can accept straight into this book.";
 
         self.sync()?;
         Ok(())
+    }
+
+    /// 3.18 LI-5 — set the order of `parent_id`'s children to `ids` (every
+    /// current child exactly once) in one pass: each moved node takes
+    /// `order = position + 1`, its on-disk `NN-` entry is renamed through a
+    /// temporary name so no two renames can collide, its metadata is
+    /// updated, and a moved branch's descendants get their `file` paths
+    /// rewritten. Returns how many nodes moved. The hierarchy is kept
+    /// current (moved nodes and rewritten descendants are re-inserted), so
+    /// a caller can reorder several parents in a row — entries inside a
+    /// bucket and then the buckets — without reloading between them. A
+    /// sort that used `swap_siblings` would be O(n²) renames and a reload
+    /// per swap; this is one rename per moved node.
+    pub fn reorder_children(&self, hierarchy: &mut Hierarchy, parent_id: Option<Uuid>, ids: &[Uuid]) -> Result<usize> {
+        let current = hierarchy.children_of(parent_id);
+        if current.len() != ids.len() || !current.iter().all(|n| ids.contains(&n.id)) {
+            return Err(Error::Store(
+                "reorder_children: the id list must name every current child exactly once".into(),
+            ));
+        }
+        let mut seen = std::collections::HashSet::new();
+        if !ids.iter().all(|id| seen.insert(*id)) {
+            return Err(Error::Store("reorder_children: duplicate id".into()));
+        }
+
+        // Plan: (old node, new node, old rel path, old abs, tmp abs, new abs).
+        struct Move {
+            old: Node,
+            new: Node,
+            old_rel: std::path::PathBuf,
+            old_abs: std::path::PathBuf,
+            tmp_abs: std::path::PathBuf,
+            new_abs: std::path::PathBuf,
+        }
+        let mut moves: Vec<Move> = Vec::new();
+        for (i, id) in ids.iter().enumerate() {
+            let old = hierarchy.get(*id).cloned().ok_or_else(|| Error::Store(format!("reorder_children: missing {id}")))?;
+            let new_order = i as u32 + 1;
+            if old.order == new_order {
+                continue;
+            }
+            let mut new = old.clone();
+            new.order = new_order;
+            let old_rel = self.on_disk_rel(hierarchy, &old);
+            let old_abs = self.layout.root.join(&old_rel);
+            let parent_dir = old_abs
+                .parent()
+                .ok_or_else(|| Error::Store("filesystem entry has no parent directory".into()))?
+                .to_path_buf();
+            let new_abs = parent_dir.join(Self::reordered_fs_name(&new, &old_rel));
+            let tmp_abs = parent_dir.join(format!(".inkhaven-mv-{}", old.id.as_simple()));
+            moves.push(Move { old, new, old_rel, old_abs, tmp_abs, new_abs });
+        }
+        if moves.is_empty() {
+            return Ok(0);
+        }
+
+        // Phase 1: every moved entry to its temporary name (books carry no
+        // `NN-` prefix, so their path is unchanged and they skip the rename).
+        let mut renamed: Vec<usize> = Vec::new();
+        for (i, m) in moves.iter().enumerate() {
+            if m.old_abs == m.new_abs {
+                continue;
+            }
+            if let Err(e) = std::fs::rename(&m.old_abs, &m.tmp_abs) {
+                for j in renamed {
+                    let _ = std::fs::rename(&moves[j].tmp_abs, &moves[j].old_abs);
+                }
+                return Err(Error::Io(e));
+            }
+            renamed.push(i);
+        }
+        // Phase 2: temporary names to final names. Every old name of a moved
+        // node is gone, and unmoved siblings keep their distinct orders, so a
+        // final name can only exist if the disk disagrees with the store.
+        for &i in &renamed {
+            let m = &moves[i];
+            if m.new_abs.exists() {
+                return Err(Error::Store(format!(
+                    "reorder_children: target `{}` already exists",
+                    m.new_abs.display()
+                )));
+            }
+            std::fs::rename(&m.tmp_abs, &m.new_abs)?;
+        }
+
+        for m in &mut moves {
+            let new_rel = m
+                .new_abs
+                .strip_prefix(&self.layout.root)
+                .unwrap_or(&m.new_abs)
+                .to_string_lossy()
+                .into_owned();
+            if m.new.file.is_some() {
+                m.new.file = Some(new_rel.clone());
+            }
+            self.inner
+                .update_metadata(m.new.id, m.new.to_json())
+                .map_err(|e| Error::Store(format!("update_metadata: {e}")))?;
+            if m.old.kind != NK::Paragraph {
+                for d in self.rewrite_descendant_files(hierarchy, &m.old, &m.old_rel, &new_rel)? {
+                    hierarchy.insert(d);
+                }
+            }
+            hierarchy.insert(m.new.clone());
+        }
+        self.sync()?;
+        Ok(moves.len())
     }
 
     /// OUTLINE-1 (O-P3/O-P4) — relocate a **childless** node (paragraph / image
@@ -1512,14 +1784,17 @@ symbol/motif proposals you can accept straight into this book.";
 
     /// Walk descendants of `moved` and rewrite each paragraph's `file` field
     /// so the prefix that used to be `old_rel` becomes `new_rel`.
+    /// Returns the descendants it updated (with their new `file`), so a
+    /// caller holding a mutable hierarchy can keep its snapshot current.
     fn rewrite_descendant_files(
         &self,
         hierarchy: &Hierarchy,
         moved: &Node,
         old_rel: &std::path::Path,
         new_rel: &str,
-    ) -> Result<()> {
+    ) -> Result<Vec<Node>> {
         let old_prefix = old_rel.to_string_lossy().into_owned();
+        let mut updated_nodes = Vec::new();
         for descendant_id in hierarchy.collect_subtree(moved.id) {
             if descendant_id == moved.id {
                 continue;
@@ -1540,9 +1815,10 @@ symbol/motif proposals you can accept straight into this book.";
                 self.inner
                     .update_metadata(updated.id, updated.to_json())
                     .map_err(|e| Error::Store(format!("update_metadata: {e}")))?;
+                updated_nodes.push(updated);
             }
         }
-        Ok(())
+        Ok(updated_nodes)
     }
 
     // -------- snapshots ---------------------------------------------------

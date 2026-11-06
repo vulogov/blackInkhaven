@@ -34,6 +34,7 @@ mod tests {
                 ph("tʃ", PhonemeKind::Consonant), ph("x", PhonemeKind::Consonant),
                 ph("n", PhonemeKind::Consonant), ph("ə", PhonemeKind::Vowel),
                 ph("a", PhonemeKind::Vowel), ph("i", PhonemeKind::Vowel),
+                ph("e", PhonemeKind::Vowel), ph("s", PhonemeKind::Consonant),
             ],
             ..Default::default()
         };
@@ -49,6 +50,8 @@ mod tests {
                 serde_hjson::from_str::<AllophonyRule>(&format!("{{ rule: \"{r}\" }}")).unwrap()
             })
             .collect();
+        // What `Phonology::from_hjson` does: NFC + split joined tokens (LI-4).
+        p.normalize();
         p
     }
 
@@ -97,6 +100,46 @@ mod tests {
         let p = base(&["k > tʃ / _ i", "i > 0 / _ #"]);
         // /k i/ → palatalize → /tʃ i/ → final-i-deletion → /tʃ/
         assert_eq!(surface_form(&p, &seq(&["k", "i"])), seq(&["tʃ"]));
+    }
+
+    #[test]
+    fn monophthongisation_ai_to_e() {
+        // LI-4: a two-segment target, written with spaces or as one token.
+        for rule in ["a i > e / _ #", "ai > e / _ #"] {
+            let p = base(&[rule]);
+            assert_eq!(p.allophony[0].lhs.len(), 2, "{rule}: target resolved to two atoms");
+            assert_eq!(surface_form(&p, &seq(&["t", "a", "i"])), seq(&["t", "e"]), "{rule}");
+            assert_eq!(surface_form(&p, &seq(&["t", "a", "i", "t"])), seq(&["t", "a", "i", "t"]), "{rule}: not final");
+            assert_eq!(surface_form(&p, &seq(&["t", "i"])), seq(&["t", "i"]), "{rule}: no `a`");
+            // The match consumes both segments: `a i a i` at the edge → `a i e`.
+            assert_eq!(surface_form(&p, &seq(&["a", "i", "a", "i"])), seq(&["a", "i", "e"]), "{rule}");
+        }
+    }
+
+    #[test]
+    fn affrication_t_to_t_s_emits_two_segments() {
+        for rule in ["t > t s / _ i", "t > ts / _ i"] {
+            let p = base(&[rule]);
+            assert_eq!(p.allophony[0].rhs, seq(&["t", "s"]), "{rule}: replacement resolved to two items");
+            assert_eq!(surface_form(&p, &seq(&["t", "i"])), seq(&["t", "s", "i"]), "{rule}");
+            assert_eq!(surface_form(&p, &seq(&["t", "a"])), seq(&["t", "a"]), "{rule}");
+        }
+        // A declared multi-character phoneme is one segment, not a sequence.
+        let p = base(&["k > tʃ / _ i"]);
+        assert_eq!(p.allophony[0].rhs, seq(&["tʃ"]));
+        assert_eq!(surface_form(&p, &seq(&["k", "i"])), seq(&["tʃ", "i"]));
+    }
+
+    #[test]
+    fn sequence_target_with_class_in_context() {
+        // Monophthongise only after a consonant and before a vowel: C _ V.
+        let p = base(&["a i > e / C _ V"]);
+        assert_eq!(surface_form(&p, &seq(&["t", "a", "i", "a"])), seq(&["t", "e", "a"]));
+        assert_eq!(surface_form(&p, &seq(&["a", "i", "a"])), seq(&["a", "i", "a"])); // no left C
+        assert_eq!(surface_form(&p, &seq(&["t", "a", "i"])), seq(&["t", "a", "i"])); // no right V
+        // A class may also stand inside the target: any vowel followed by `i`.
+        let p = base(&["V i > e"]);
+        assert_eq!(surface_form(&p, &seq(&["t", "ə", "i", "n"])), seq(&["t", "e", "n"]));
     }
 
     #[test]

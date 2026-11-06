@@ -71,3 +71,21 @@ impl<'de> Deserialize<'de> for StressRule {
         Ok(StressRule { primary })
     }
 }
+
+impl std::fmt::Display for StressPlacement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Initial => "initial",
+            Self::Final => "final",
+            Self::Penultimate => "penultimate",
+            Self::Antepenultimate => "antepenultimate",
+            Self::LatinRule => "latin (heavy penult, otherwise antepenult)",
+        })
+    }
+}
+
+impl std::fmt::Display for StressRule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.primary.fmt(f)
+    }
+}

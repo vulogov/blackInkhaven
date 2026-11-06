@@ -92,7 +92,9 @@ inkhaven language add-word Eldar --import words.csv
 ```
 
 Every row becomes an entry. This is the fast path when you are moving an existing
-list into Inkhaven.
+list into Inkhaven: the whole file is written as one batch and the search index
+is refreshed once at the end, so a few hundred rows land in seconds, already in
+alphabet order.
 
 #callout(label: "Removing a word")[
   Made a mistake, or retired a word? `inkhaven language remove-word Eldar makil`

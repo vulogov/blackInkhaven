@@ -78,23 +78,9 @@ impl<'a> Vocabulary<'a> {
     }
 
     /// Greedy longest-unit decomposition of `s`; `None` unless the whole
-    /// string is covered.
+    /// string is covered (shared with rule resolution, LI-4).
     fn split(&self, s: &str) -> Option<Vec<String>> {
-        let mut units: Vec<&str> = self.units.clone();
-        units.sort_by_key(|u| std::cmp::Reverse(u.chars().count()));
-        let mut out = Vec::new();
-        let mut rest = s;
-        'outer: while !rest.is_empty() {
-            for u in &units {
-                if !u.is_empty() && rest.starts_with(u) {
-                    out.push((*u).to_string());
-                    rest = &rest[u.len()..];
-                    continue 'outer;
-                }
-            }
-            return None;
-        }
-        Some(out)
+        super::allophony::split_units(s, &self.units)
     }
 }
 
@@ -118,21 +104,17 @@ fn finding(severity: Severity, location: impl Into<String>, message: impl Into<S
 fn symbol_problem(vocab: &Vocabulary, what: &str, sym: &str, unit_noun: &str) -> Option<(Severity, String)> {
     match vocab.classify(sym) {
         Symbol::Class | Symbol::Unit => None,
+        // A loaded rule has had its joined tokens split (LI-4), so a sequence
+        // reaching here was built without `resolve` — it is one symbol to the
+        // matcher and can only match a unit spelled exactly so.
         Symbol::Sequence(parts) => Some((
             if what == "replacement" { Severity::Warning } else { Severity::Error },
-            if what == "replacement" {
-                format!(
-                    "{what} `{sym}` spans {} {unit_noun}s ({}) and is emitted as one segment — declare `{sym}` as a {unit_noun} if it is one",
-                    parts.len(),
-                    parts.join(" ")
-                )
-            } else {
-                format!(
-                    "{what} `{sym}` spans {} {unit_noun}s ({}) but a rule matches one segment — declare `{sym}` as a {unit_noun}, or write one rule per segment",
-                    parts.len(),
-                    parts.join(" ")
-                )
-            },
+            format!(
+                "{what} `{sym}` spans {} {unit_noun}s ({}) and is read as one segment — write it as `{}`",
+                parts.len(),
+                parts.join(" "),
+                parts.join(" ")
+            ),
         )),
         Symbol::Unknown => {
             // A replacement may legitimately be a surface allophone that is not
@@ -147,13 +129,31 @@ fn symbol_problem(vocab: &Vocabulary, what: &str, sym: &str, unit_noun: &str) ->
     }
 }
 
+/// A joined token the author wrote (`abc`) that the inventory split one way
+/// (`ab c`) but could also split another (`a bc`): the rule fires on the
+/// greedy reading, and the author should spell out the one they meant.
+fn ambiguous_split(vocab: &Vocabulary, what: &str, tok: &str, unit_noun: &str) -> Option<String> {
+    if vocab.classes.contains(&tok) || vocab.units.contains(&tok) {
+        return None;
+    }
+    let greedy = vocab.split(tok).filter(|p| p.len() >= 2)?;
+    let other = super::allophony::alternative_split(tok, &vocab.units, &greedy)?;
+    Some(format!(
+        "{what} `{tok}` is read as the {unit_noun}s `{}` but could also be `{}` — write it with spaces",
+        greedy.join(" "),
+        other.join(" ")
+    ))
+}
+
 fn check_rule(vocab: &Vocabulary, location: &str, rule: &AllophonyRule, unit_noun: &str, out: &mut Vec<Finding>) {
-    if let Some(PatternAtom::Symbol(s)) = &rule.lhs {
-        if let Some((sev, msg)) = symbol_problem(vocab, "target", s, unit_noun) {
-            out.push(finding(sev, location, msg));
+    for atom in &rule.lhs {
+        if let PatternAtom::Symbol(s) = atom {
+            if let Some((sev, msg)) = symbol_problem(vocab, "target", s, unit_noun) {
+                out.push(finding(sev, location, msg));
+            }
         }
     }
-    if let Some(r) = &rule.rhs {
+    for r in &rule.rhs {
         if let Some((sev, msg)) = symbol_problem(vocab, "replacement", r, unit_noun) {
             out.push(finding(sev, location, msg));
         }
@@ -162,6 +162,17 @@ fn check_rule(vocab: &Vocabulary, location: &str, rule: &AllophonyRule, unit_nou
         if let PatternAtom::Symbol(s) = atom {
             if let Some((sev, msg)) = symbol_problem(vocab, "context", s, unit_noun) {
                 out.push(finding(sev, location, msg));
+            }
+        }
+    }
+    // LI-4: a joined token that was split against the inventory is fine
+    // unless the split was ambiguous.
+    if let Some((lhs, rhs)) = rule.source_tokens() {
+        for (what, toks) in [("target", &lhs), ("replacement", &rhs)] {
+            for tok in toks {
+                if let Some(msg) = ambiguous_split(vocab, what, tok, unit_noun) {
+                    out.push(finding(Severity::Warning, location, msg));
+                }
             }
         }
     }
@@ -373,15 +384,54 @@ mod tests {
     }
 
     #[test]
-    fn a_multi_segment_rule_target_is_an_error() {
-        // LB-2: `ai > e` can never match — the rewriter matches one segment.
+    fn a_multi_segment_rule_target_is_split_and_clean() {
+        // LI-4 (inverting LB-2): `ai > e` is read as `a i > e` and fires.
         let p = phon(r#"{
             phonemes: [ { ipa: "a", kind: "vowel" }, { ipa: "i", kind: "vowel" }, { ipa: "e", kind: "vowel" } ],
-            allophony: [ { rule: "ai > e / _" } ]
+            allophony: [ { rule: "ai > e / _" }, { rule: "a i > e / _ #" } ]
         }"#);
+        assert_eq!(p.allophony[0].lhs.len(), 2);
+        assert_eq!(messages(&p), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_ambiguous_joined_token_warns_with_both_readings() {
+        // `abc` over {ab, a, bc, c}: greedy reads `ab c`, but `a bc` is also a cover.
+        let p = phon(r#"{
+            phonemes: [
+                { ipa: "ab", kind: "consonant" }, { ipa: "a", kind: "vowel" },
+                { ipa: "bc", kind: "consonant" }, { ipa: "c", kind: "consonant" }, { ipa: "e", kind: "vowel" }
+            ],
+            allophony: [ { rule: "abc > e / _ #" }, { rule: "e > abc / _ #" }, { rule: "ab c > e / _" } ]
+        }"#);
+        assert_eq!(p.allophony[0].lhs.len(), 2); // greedy split still applies
+        let f = p.validate();
+        let m: Vec<String> = f.iter().map(ToString::to_string).collect();
+        assert_eq!(f.len(), 2, "{m:?}");
+        assert!(f.iter().all(|x| x.severity == Severity::Warning), "{m:?}");
+        assert!(m[0].starts_with("warning: allophony[0] \"abc > e / _ #\": target `abc` is read as the phonemes `ab c` but could also be `a bc`"), "{}", m[0]);
+        assert!(m[1].contains("replacement `abc` is read as the phonemes `ab c`"), "{}", m[1]);
+    }
+
+    #[test]
+    fn a_hand_built_sequence_symbol_is_still_reported() {
+        // A rule that never went through `resolve` (built in code) keeps one
+        // joined symbol; the matcher reads it as one segment, so say so.
+        let mut p = phon(r#"{
+            phonemes: [ { ipa: "a", kind: "vowel" }, { ipa: "i", kind: "vowel" }, { ipa: "e", kind: "vowel" } ]
+        }"#);
+        p.allophony.push(AllophonyRule {
+            name: "hand".into(),
+            lhs: vec![PatternAtom::Symbol("ai".into())],
+            rhs: vec!["e".into()],
+            left: vec![],
+            right: vec![],
+            optional: false,
+            source: String::new(),
+        });
         let m = messages(&p);
         assert_eq!(m.len(), 1, "{m:?}");
-        assert!(m[0].starts_with("error: allophony[0] \"ai > e / _\": target `ai` spans 2 phonemes (a i)"), "{}", m[0]);
+        assert!(m[0].starts_with("error: allophony[0] \"\": target `ai` spans 2 phonemes (a i) and is read as one segment — write it as `a i`"), "{}", m[0]);
     }
 
     #[test]
@@ -397,15 +447,14 @@ mod tests {
     }
 
     #[test]
-    fn a_multi_segment_replacement_is_only_a_warning() {
+    fn a_multi_segment_replacement_is_split_and_clean() {
+        // LI-4: `t > ts` emits the two declared segments `t` `s`.
         let p = phon(r#"{
             phonemes: [ { ipa: "t", kind: "consonant" }, { ipa: "s", kind: "consonant" }, { ipa: "a", kind: "vowel" } ],
             allophony: [ { rule: "t > ts / _ a" } ]
         }"#);
-        let f = p.validate();
-        assert_eq!(f.len(), 1);
-        assert_eq!(f[0].severity, Severity::Warning);
-        assert!(f[0].message.contains("replacement `ts` spans 2 phonemes"), "{}", f[0].message);
+        assert_eq!(p.allophony[0].rhs, vec!["t".to_string(), "s".to_string()]);
+        assert_eq!(messages(&p), Vec::<String>::new());
     }
 
     #[test]

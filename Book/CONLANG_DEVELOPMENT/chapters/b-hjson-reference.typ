@@ -17,7 +17,7 @@ identity and the defaults the rest of the suite reads. Every key is optional:
   family: "Elvish"
   language_kind: "constructed"   // "constructed" | "natural"
   iso_code: "qya"                // optional ISO 639-3 code
-  alphabet: ["Aa", "Bb", "Cc"]   // canonical order; drives Dictionary buckets
+  alphabet: ["Aa", "Bb", "Cc"]   // canonical order; sorts the Dictionary, the book, exports
   reading_direction: "ltr"       // "ltr" | "rtl"
   script: "latin"
   word_order: "SVO"
@@ -33,8 +33,9 @@ identity and the defaults the rest of the suite reads. Every key is optional:
 
 A few of these do real work: `language_kind` tightens how strictly the AI
 translator adheres to your rules (`constructed`) versus leaning on its pretraining
-(`natural`); `alphabet` drives the Dictionary's letter buckets and `add-word`'s
-placement; `reading_direction` and `script` shape rendering; `stemmer` governs how
+(`natural`); `alphabet` orders the Dictionary — its letter buckets, the entries
+inside them, the dictionary book and every export — and decides where `add-word`
+files a word (`sort-dictionary` repairs an older dictionary); `reading_direction` and `script` shape rendering; `stemmer` governs how
 `query` strips inflection when it searches. The rest are descriptive.
 
 #section("Phonology chapter")
@@ -223,3 +224,4 @@ TARGET > RESULT / LEFT _ RIGHT
 / `∅` or `0`: the empty string — insertion (on the left) or deletion (on the right).
 / a class name (`V`, `C`, `Stop`): matches any sound in that class.
 / a bare phoneme (`i`, `k`): matches just that sound.
+/ a space-separated run (`a i`, `t s`): a *sequence* — on the left, several sounds matched in order; on the right, several sounds emitted. `a i > e / _ #` and `t > t s / _ i` are both one rule. A joined token (`ai`) is split against the inventory when the split is unambiguous; `doctor` warns when it is not.

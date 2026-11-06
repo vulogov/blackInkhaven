@@ -125,16 +125,21 @@
   // user-authored scripts) and applies a category-based deny list
   // to the registered words.
   //
-  // Default (no entries below): destructive categories
-  // `fs_write`, `net`, `shell`, `code_eval` are denied; the other
-  // categories (`store_read`, `store_write`, `fs_read`) are
-  // allowed. Currently inkhaven only ships `store_read` words.
+  // Default (no entries below): the destructive categories
+  // `store_write`, `editor_write`, `ai_write`, `theme_write`,
+  // `fs_write`, `net`, `shell`, `code_eval` and `keymap` are
+  // denied; the read-only ones (`store_read`, `fs_read`,
+  // `ai_read`, `audio`, …) are allowed. About ninety `ink.*`
+  // words fall under the denied categories; when the VM is built
+  // inkhaven logs one INFO line with the count, and lists each
+  // denied word at DEBUG (`RUST_LOG=inkhaven::scripting::policy=debug`).
   //
   // Resolution: enabled_words > disabled_words > disabled_categories.
   scripting: {
     // Additional categories to deny on top of the built-in defaults.
-    // Choices: store_read, store_write, fs_read, fs_write, net,
-    // shell, code_eval.
+    // Choices: store_read, store_write, editor_read, editor_write,
+    // ai_read, ai_write, theme_write, fs_read, fs_write, net, shell,
+    // code_eval, keymap, audio.
     disabled_categories: []
     // Specific word names to deny regardless of their category.
     disabled_words: []
@@ -142,14 +147,16 @@
     // Useful for "give me one tool out of an otherwise-blocked family".
     enabled_words: []
     // Categories to opt INTO from the built-in default-deny list.
-    // The defaults deny `fs_write`, `net`, `shell`, `code_eval`,
-    // and `keymap`; entries listed here are subtracted from that
+    // The defaults deny `store_write`, `editor_write`, `ai_write`,
+    // `theme_write`, `fs_write`, `net`, `shell`, `code_eval` and
+    // `keymap`; entries listed here are subtracted from that
     // baseline so a user can grant a single family without
     // unlocking everything with `no_default_deny`.
     //   Example: enabled_categories: ["keymap"]
     enabled_categories: []
     // Power-user switch: when true, the built-in default deny list
-    // (fs_write, net, shell, code_eval) is cleared and only
+    // (store_write, editor_write, ai_write, theme_write, fs_write,
+    // net, shell, code_eval, keymap) is cleared and only
     // `disabled_*` above apply. Off in stock projects.
     no_default_deny: false
     // Bund script run once after the VM is built, after stdlib

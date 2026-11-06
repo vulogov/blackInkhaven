@@ -120,7 +120,7 @@ pub(crate) fn ecology(project: &Path, svg: Option<&Path>) -> Result<()> {
     }
 
     if links.places.is_empty() && links.characters.is_empty() && areas.is_empty() {
-        println!("no speech-community links yet — use `link-place` / `link-character` (with --variety).");
+        println!("no speech-community links yet — use `inkhaven language link-place` / `link-character` (with --variety).");
         return Ok(());
     }
     if !links.places.is_empty() {
@@ -235,10 +235,10 @@ pub(crate) fn idiolect(project: &Path, character: &str, word: Option<&str>, text
         .languages
         .first()
         .map(|p| p.language.clone())
-        .ok_or_else(|| Error::Config(format!("`{character}` commands no language")))?;
+        .ok_or_else(|| super::wording::character_has_no_language(character))?;
     let var_id = link.native_variety.clone().ok_or_else(|| {
         Error::Config(format!(
-            "`{character}` has no native variety — set one with `link-character … --native-variety <id>`"
+            "character `{character}` has no native variety — set one with `inkhaven language link-character {character} <language> <proficiency> --native-variety <id>`"
         ))
     })?;
 
@@ -352,12 +352,16 @@ pub(crate) fn propose_dialect(
         }
     }
     // Validate each rule parses as an AllophonyRule; drop the ones that don't.
+    // Resolve the keepers against the inventory so `ai > e` reads as `a i > e`.
     let valid: Vec<(String, AllophonyRule)> = rules
         .drain(..)
         .filter_map(|r| {
             serde_hjson::from_str::<AllophonyRule>(&format!("{{ rule: \"{r}\" }}"))
                 .ok()
-                .map(|ar| (r, ar))
+                .map(|mut ar| {
+                    phon.resolve_rules(std::slice::from_mut(&mut ar));
+                    (r, ar)
+                })
         })
         .collect();
     if valid.is_empty() {

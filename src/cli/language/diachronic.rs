@@ -101,7 +101,7 @@ pub(crate) fn all_language_books(hierarchy: &Hierarchy) -> Vec<crate::store::nod
 }
 
 /// LANG-1 P4.2 — print the language-family tree.
-pub(crate) fn family_tree(project: &Path) -> Result<()> {
+pub(crate) fn family_tree(project: &Path, json: bool) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = Config::load_layered(&layout.config_path())?;
@@ -109,8 +109,8 @@ pub(crate) fn family_tree(project: &Path) -> Result<()> {
     let hierarchy = Hierarchy::load(&store)?;
 
     let langs = all_language_books(&hierarchy);
-    if langs.is_empty() {
-        println!("no languages yet — `inkhaven language init <name>`");
+    if langs.is_empty() && !json {
+        eprintln!("{}", super::wording::NO_LANGUAGES);
         return Ok(());
     }
     let mut pairs: Vec<(String, Option<String>)> = Vec::new();
@@ -118,7 +118,6 @@ pub(crate) fn family_tree(project: &Path) -> Result<()> {
         let proto = load_diachronics(&store, &hierarchy, l)?.and_then(|d| d.proto);
         pairs.push((l.title.clone(), proto));
     }
-    print!("{}", crate::conlang::diachronic::family::render_tree(&pairs));
 
     // LANG-2 P3 — horizontal contact edges alongside the vertical inheritance.
     let mut edges: Vec<(String, String, String)> = Vec::new(); // (a, b, region)
@@ -135,23 +134,30 @@ pub(crate) fn family_tree(project: &Path) -> Result<()> {
     }
     edges.sort();
     edges.dedup_by(|x, y| x.0.eq_ignore_ascii_case(&y.0) && x.1.eq_ignore_ascii_case(&y.1));
-    if !edges.is_empty() {
-        println!("\ncontact (horizontal):");
-        for (a, b, region) in &edges {
-            let where_ = if region.is_empty() { String::new() } else { format!("  ({region})") };
-            println!("  {a} ⇄ {b}{where_}");
+
+    let shape = shapes::FamilyTree {
+        languages: pairs.iter().map(|(name, proto)| shapes::Descent { name: name.clone(), proto: proto.clone() }).collect(),
+        contact: edges.iter().map(|(a, b, region)| shapes::ContactEdge { a: a.clone(), b: b.clone(), region: region.clone() }).collect(),
+    };
+    emit(json, &shape, |_| {
+        print!("{}", crate::conlang::diachronic::family::render_tree(&pairs));
+        if !edges.is_empty() {
+            println!("\ncontact (horizontal):");
+            for (a, b, region) in &edges {
+                let where_ = if region.is_empty() { String::new() } else { format!("  ({region})") };
+                println!("  {a} ⇄ {b}{where_}");
+            }
         }
-    }
-    Ok(())
+    })
 }
 
 /// LANG-1 P4.2 — the cognate set of a proto-form across its daughters.
-pub(crate) fn cognates(project: &Path, proto: &str, form: &str) -> Result<()> {
+pub(crate) fn cognates(project: &Path, proto: &str, form: &str, json: bool) -> Result<()> {
     let (store, hierarchy, proto_book) = open_lang_book(project, proto)?;
     let proto_phon = load_phonology(&store, &hierarchy, &proto_book)?.unwrap_or_default();
 
     // Daughters: languages whose diachronics `proto` names this language.
-    let mut reflexes: Vec<(String, String)> = Vec::new();
+    let mut reflexes: Vec<shapes::Cognate> = Vec::new();
     for l in all_language_books(&hierarchy) {
         if l.id == proto_book.id {
             continue;
@@ -159,20 +165,23 @@ pub(crate) fn cognates(project: &Path, proto: &str, form: &str) -> Result<()> {
         let Some(dia) = load_diachronics(&store, &hierarchy, &l)? else { continue };
         if dia.proto.as_deref().is_some_and(|p| p.eq_ignore_ascii_case(&proto_book.title)) {
             let reflex = crate::conlang::diachronic::apply::derive_form(&proto_phon, &dia.rules, form);
-            reflexes.push((l.title.clone(), reflex));
+            reflexes.push(shapes::Cognate { language: l.title.clone(), reflex });
         }
     }
-    reflexes.sort();
+    reflexes.sort_by(|a, b| (&a.language, &a.reflex).cmp(&(&b.language, &b.reflex)));
 
-    println!("cognate set · *{form} ({})", proto_book.title);
-    if reflexes.is_empty() {
-        println!("  (no daughter languages declare {} as their proto)", proto_book.title);
-        return Ok(());
-    }
-    for (name, reflex) in &reflexes {
-        println!("  {:<16} {reflex}", name);
-    }
-    Ok(())
+    // `reflexes` carries the same `{language, reflex}` rows `ink.lang.cognates` returns.
+    let shape = shapes::CognateSet { proto: proto_book.title.clone(), form: form.to_string(), reflexes };
+    emit(json, &shape, |s| {
+        println!("cognate set · *{} ({})", s.form, s.proto);
+        if s.reflexes.is_empty() {
+            println!("  (no daughter languages declare {} as their proto)", s.proto);
+            return;
+        }
+        for c in &s.reflexes {
+            println!("  {:<16} {}", c.language, c.reflex);
+        }
+    })
 }
 
 /// Resolve a daughter's proto-language: its `Book` node + phonology (the
@@ -198,18 +207,14 @@ pub(crate) fn resolve_proto(
         .into_iter()
         .find(|n| n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(&proto_name))
         .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "proto-language `{proto_name}` not found — `inkhaven language init {proto_name}` first"
-            ))
-        })?;
+        .ok_or_else(|| super::wording::proto_language_not_found(&proto_name))?;
     let proto_phon = load_phonology(store, hierarchy, &proto_book)?.unwrap_or_default();
     Ok((proto_book, proto_phon, proto_name))
 }
 
 /// LANG-1 P4.1 — evolve a single proto-form through a language's sound-change
 /// chain (segmented with the proto's inventory).
-pub(crate) fn sound_change(project: &Path, language: &str, form: &str) -> Result<()> {
+pub(crate) fn sound_change(project: &Path, language: &str, form: &str, json: bool) -> Result<()> {
     let (store, hierarchy, daughter_book) = open_lang_book(project, language)?;
     let dia = load_diachronics(&store, &hierarchy, &daughter_book)?.ok_or_else(|| {
         Error::Config(format!(
@@ -219,8 +224,10 @@ pub(crate) fn sound_change(project: &Path, language: &str, form: &str) -> Result
     })?;
     let (_proto_book, proto_phon, proto_name) = resolve_proto(&store, &hierarchy, &dia, language)?;
     let daughter = crate::conlang::diachronic::apply::derive_form(&proto_phon, &dia.rules, form);
-    println!("{form}  >  {daughter}   (from {proto_name}, {} rule(s))", dia.rules.len());
-    Ok(())
+    let shape = shapes::SoundChanged { proto: proto_name, form: form.to_string(), result: daughter, rules: dia.rules.len() };
+    emit(json, &shape, |s| {
+        println!("{}  >  {}   (from {}, {})", s.form, s.result, s.proto, super::wording::plural(s.rules, "rule", "rules"));
+    })
 }
 
 /// LING-1 L-P1 — the Consequence Tracer. Preview a pending sound change across
@@ -236,7 +243,7 @@ pub(crate) fn trace(project: &Path, language: &str, rule: &str, limit: usize, js
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing trace: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising trace: {e}")))?
         );
         return Ok(());
     }
@@ -258,10 +265,10 @@ pub(crate) fn print_trace_body(report: &crate::conlang::trace::TraceReport) {
         return;
     }
     if report.analyzable_words == 0 {
-        println!("  (no analyzable words — define a phoneme inventory and add dictionary entries)");
+        println!("  (no analysable words — define a phoneme inventory and add dictionary entries)");
         return;
     }
-    println!("  affects {} of {} analyzable word(s)", report.affected, report.analyzable_words);
+    println!("  affects {} of {} analysable word(s)", report.affected, report.analyzable_words);
     if !report.changes.is_empty() {
         println!("  changes:");
         for c in &report.changes {
@@ -298,9 +305,9 @@ pub(crate) fn derive_lexicon_cmd(project: &Path, language: &str, yes: bool) -> R
         crate::conlang::diachronic::apply::derive_lexicon(&proto_phon, &dia.rules, &proto_entries);
 
     println!(
-        "derive {language} from {proto_name} · {} rule(s) · {} entr(y/ies):",
-        dia.rules.len(),
-        derived.len()
+        "derive {language} from {proto_name} · {} · {}:",
+        super::wording::plural(dia.rules.len(), "rule", "rules"),
+        super::wording::entries(derived.len())
     );
     for d in &derived {
         println!("  {:<14} > {:<14} {}", d.proto_form, d.form, d.gloss);
@@ -309,6 +316,7 @@ pub(crate) fn derive_lexicon_cmd(project: &Path, language: &str, yes: bool) -> R
     if yes {
         let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
         let mut added = 0usize;
+        let mut writer = DictionaryWriter::open(&store, &cfg, &daughter_book)?;
         for d in &derived {
             let entry = ImportEntry {
                 word: d.form.clone(),
@@ -317,14 +325,15 @@ pub(crate) fn derive_lexicon_cmd(project: &Path, language: &str, yes: bool) -> R
                 etymology: format!("from {proto_name} {} via sound change", d.proto_form),
                 ..Default::default()
             };
-            match add_imported_dictionary_entry(&store, &cfg, &daughter_book, &entry) {
+            match writer.add_imported(&entry) {
                 Ok(_) => added += 1,
                 Err(e) => eprintln!("  skipped {}: {e}", d.form),
             }
         }
-        eprintln!("\nadded {added} derived entr(y/ies) to {language}'s Dictionary");
+        writer.finish()?;
+        eprintln!("\nadded {} derived to {language}'s Dictionary", super::wording::entries(added));
     } else {
-        eprintln!("\n(dry run — re-run with --yes to add the {} derived entr(y/ies))", derived.len());
+        eprintln!("\n(dry run — re-run with --yes to add the {} derived)", super::wording::entries(derived.len()));
     }
     Ok(())
 }

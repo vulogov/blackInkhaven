@@ -279,7 +279,7 @@ pub(crate) fn translate(project: &Path, language: &str, text: &str, trace: bool,
         println!(
             "{}",
             serde_json::to_string_pretty(&out)
-                .map_err(|e| Error::Store(format!("serializing translation: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising translation: {e}")))?
         );
         return Ok(());
     }
@@ -350,7 +350,7 @@ pub(crate) fn reverse_translate(project: &Path, language: &str, text: &str, json
         println!(
             "{}",
             serde_json::to_string_pretty(&out)
-                .map_err(|e| Error::Store(format!("serializing reverse: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising reverse: {e}")))?
         );
         return Ok(());
     }
@@ -396,7 +396,7 @@ pub(crate) fn cross_translate(project: &Path, from: &str, to: &str, text: &str, 
         println!(
             "{}",
             serde_json::to_string_pretty(&out)
-                .map_err(|e| Error::Store(format!("serializing cross: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising cross: {e}")))?
         );
         return Ok(());
     }
@@ -446,23 +446,29 @@ pub(crate) fn remember(project: &Path, language: &str, english: &str, conlang: &
 }
 
 /// 1.3.23 LANG-3 P1 — list a language's translation memory.
-pub(crate) fn memory_list(project: &Path, language: &str) -> Result<()> {
+pub(crate) fn memory_list(project: &Path, language: &str, json: bool) -> Result<()> {
     use crate::conlang::translate::memory::TranslationMemory;
     let _ = open_lang_book(project, language)?;
     let mem = TranslationMemory::load(project, language)
         .map_err(|e| Error::Store(format!("loading translation memory: {e}")))?;
-    if mem.is_empty() {
+    if mem.is_empty() && !json {
         println!(
             "{language} has no remembered translations yet — add one with \
-             `language remember {language} --english … --conlang …`."
+             `inkhaven language remember {language} --english … --conlang …`."
         );
         return Ok(());
     }
-    println!("{language} · {} remembered translation(s):", mem.len());
-    for (en, con) in mem.entries() {
-        println!("  {en}  →  {con}");
-    }
-    Ok(())
+    // The same list `ink.lang.memory` returns.
+    let pairs: Vec<shapes::MemoryPair> = mem
+        .entries()
+        .map(|(en, con)| shapes::MemoryPair { english: en.to_string(), conlang: con.to_string() })
+        .collect();
+    emit(json, &pairs, |pairs| {
+        println!("{language} · {}:", super::wording::plural(pairs.len(), "remembered translation", "remembered translations"));
+        for p in pairs {
+            println!("  {}  →  {}", p.english, p.conlang);
+        }
+    })
 }
 
 /// 1.3.23 LANG-3 P1 — generate a synthetic corpus and (with --yes) seed memory.
@@ -514,7 +520,7 @@ pub(crate) fn corpus(
         println!(
             "{}",
             serde_json::to_string_pretty(&out)
-                .map_err(|e| Error::Store(format!("serializing corpus report: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising corpus report: {e}")))?
         );
         return Ok(());
     }
@@ -546,7 +552,7 @@ pub(crate) fn corpus(
 }
 
 /// 1.3.23 LANG-3 P3 — export the translation system as a portable `.itm` bundle.
-pub(crate) fn export_translation(project: &Path, language: &str, out: Option<&str>) -> Result<()> {
+pub(crate) fn export_translation(project: &Path, language: &str, out: Option<&Path>) -> Result<()> {
     use crate::conlang::translate::{export, memory::TranslationMemory};
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
     let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
@@ -571,13 +577,17 @@ pub(crate) fn export_translation(project: &Path, language: &str, out: Option<&st
         .map_err(|e| Error::Store(format!("building translation bundle: {e}")))?;
 
     let out_path = match out {
-        Some(p) => std::path::PathBuf::from(p),
+        Some(p) => p.to_path_buf(),
         None => std::path::PathBuf::from(format!("{}-translation.itm", language.to_lowercase())),
     };
     crate::io_atomic::write(&out_path, &bytes)
         .map_err(|e| Error::Store(format!("writing {}: {e}", out_path.display())))?;
-    println!("exported {language}'s translation pack → {}", out_path.display());
-    eprintln!("({} memory pair(s), {} lexicon entr(y/ies))", meta.memory_pairs, meta.lexicon_entries);
+    eprintln!(
+        "exported {language}'s translation pack → {} ({}, {})",
+        out_path.display(),
+        super::wording::plural(meta.memory_pairs, "memory pair", "memory pairs"),
+        super::wording::plural(meta.lexicon_entries, "lexicon entry", "lexicon entries")
+    );
     Ok(())
 }
 
@@ -656,7 +666,7 @@ pub(crate) fn eval(
         println!(
             "{}",
             serde_json::to_string_pretty(&out)
-                .map_err(|e| Error::Store(format!("serializing eval: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising eval: {e}")))?
         );
         return Ok(());
     }
@@ -689,6 +699,7 @@ pub(crate) fn sentence(
     negator: Option<&str>,
     question: bool,
     q_particle: Option<&str>,
+    json: bool,
 ) -> Result<()> {
     use crate::conlang::syntax::{self, Clause, NounPhrase};
 
@@ -727,20 +738,34 @@ pub(crate) fn sentence(
     let rendered = syntax::assemble(&phon, &morph, &grammar_spec.grammar, &clause);
 
     let order = grammar_spec.grammar.get("word_order").map(String::as_str).unwrap_or("svo");
-    println!("{} ({} order)", rendered.surface, order.to_uppercase());
-    // Interlinear: surface words over their glosses.
-    let surf: Vec<&str> = rendered.words.iter().map(|(w, _)| w.as_str()).collect();
-    let gl: Vec<&str> = rendered.words.iter().map(|(_, g)| g.as_str()).collect();
-    let widths: Vec<usize> =
-        rendered.words.iter().map(|(w, g)| w.chars().count().max(g.chars().count()) + 2).collect();
-    let mut line1 = String::from("  ");
-    let mut line2 = String::from("  ");
-    for (i, w) in surf.iter().enumerate() {
-        line1.push_str(&format!("{:<width$}", w, width = widths[i]));
-        line2.push_str(&format!("{:<width$}", gl[i], width = widths[i]));
-    }
-    println!("{line1}");
-    println!("{line2}");
-    println!("  '{}'", rendered.literal);
-    Ok(())
+    // The keys `ink.lang.sentence` returns, plus the order and the word pairs.
+    let shape = shapes::Sentence {
+        surface: rendered.surface.clone(),
+        gloss: rendered.words.iter().map(|(_, g)| g.as_str()).collect::<Vec<_>>().join(" "),
+        literal: rendered.literal.clone(),
+        order: order.to_uppercase(),
+        words: rendered
+            .words
+            .iter()
+            .map(|(w, g)| shapes::GlossPair { surface: w.clone(), gloss: Some(g.clone()) })
+            .collect(),
+    };
+    emit(json, &shape, |s| {
+        println!("{} ({} order)", s.surface, s.order);
+        // Interlinear: surface words over their glosses.
+        let widths: Vec<usize> = s
+            .words
+            .iter()
+            .map(|p| p.surface.chars().count().max(p.gloss.as_deref().unwrap_or("").chars().count()) + 2)
+            .collect();
+        let mut line1 = String::from("  ");
+        let mut line2 = String::from("  ");
+        for (i, p) in s.words.iter().enumerate() {
+            line1.push_str(&format!("{:<width$}", p.surface, width = widths[i]));
+            line2.push_str(&format!("{:<width$}", p.gloss.as_deref().unwrap_or(""), width = widths[i]));
+        }
+        println!("{line1}");
+        println!("{line2}");
+        println!("  '{}'", s.literal);
+    })
 }

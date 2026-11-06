@@ -91,9 +91,12 @@ pub mod category {
 }
 
 /// Categories denied out of the box. A user has to actively flip
-/// these on in `inkhaven.hjson` to use destructive operations.
-/// Currently inkhaven registers zero words in these categories —
-/// the deny is forward-looking, ready for P4/P5 additions.
+/// these on in `inkhaven.hjson` (`scripting.enabled_categories`,
+/// `scripting.enabled_words`, or `scripting.no_default_deny`) to use
+/// destructive operations. Around ninety `ink.*` words live in these
+/// categories today (`store_write`, `fs_write`, `editor_write`,
+/// `ai_write`, `keymap`, `theme_write`); `apply_policy` reports the
+/// count once at INFO and names each word at DEBUG.
 pub const DEFAULT_DENIED_CATEGORIES: &[&str] = &[
     category::STORE_WRITE,
     category::EDITOR_WRITE,
@@ -542,6 +545,7 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.poem.suppress", category::STORE_WRITE),
     ("ink.lang.list", category::STORE_READ),
     ("ink.lang.generate_word", category::STORE_READ),
+    ("ink.lang.generate_words", category::STORE_READ),
     ("ink.lang.syllabify", category::STORE_READ),
     ("ink.lang.ipa", category::STORE_READ),
     ("ink.lang.stress", category::STORE_READ),
@@ -598,6 +602,7 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // reads an SVG (fs_read). `glyph_draft` writes a file AND calls the LLM, so
     // it is gated fs_write here and additionally checks ai_write at run time.
     ("ink.lang.glyph_lint", category::FS_READ),
+    ("ink.lang.export_translation", category::FS_WRITE),
     ("ink.lang.export", category::FS_WRITE),
     ("ink.lang.dictionary", category::FS_WRITE),
     ("ink.lang.grammar_book", category::FS_WRITE),
@@ -846,6 +851,13 @@ pub fn apply_policy(vm: &mut VM, policy: &Policy) -> Result<()> {
     let denied_words: HashSet<&str> =
         policy.disabled_words.iter().map(String::as_str).collect();
 
+    // 3.18 LI-1 — one summary line instead of one WARN per word. The
+    // default policy denies ~90 words, and every CLI command that built
+    // the VM used to print all of them to stderr before its own output.
+    // The per-word detail is still there at DEBUG for anyone asking
+    // (`RUST_LOG=inkhaven::scripting::policy=debug`).
+    let mut denied_count = 0usize;
+    let mut denied_cats: Vec<&str> = Vec::new();
     for (word, cat) in WORD_CATEGORIES {
         if enabled.contains(*word) {
             continue; // explicit allowlist wins
@@ -853,25 +865,43 @@ pub fn apply_policy(vm: &mut VM, policy: &Policy) -> Result<()> {
         let cat_denied = denied_categories.contains(*cat);
         let word_denied = denied_words.contains(*word);
         if cat_denied || word_denied {
-            tracing::warn!(
+            tracing::debug!(
                 target: "inkhaven::scripting::policy",
                 "denying {} (category {})",
                 word,
                 cat
             );
+            denied_count += 1;
+            if !denied_cats.contains(cat) {
+                denied_cats.push(cat);
+            }
             vm.register_inline(word.to_string(), denied_stub)
                 .map_err(|e| anyhow!("policy: re-register {word} as denied: {e}"))?;
         }
     }
+    if denied_count > 0 {
+        denied_cats.sort_unstable();
+        tracing::info!(
+            target: "inkhaven::scripting::policy",
+            "policy: {} word(s) denied by default ({}); set scripting.enabled_categories, \
+             scripting.enabled_words or scripting.no_default_deny in inkhaven.hjson to change",
+            denied_count,
+            denied_cats.join(", ")
+        );
+    }
     Ok(())
 }
 
-/// The handler every denied word is re-registered with. Returns a
-/// generic error — the specific word name is in the log line emitted
-/// at apply-policy time (stderr in CLI mode, `.inkhaven.log` in TUI).
+/// The handler every denied word is re-registered with. The VM gives
+/// an inline handler no access to the word it was invoked as, so the
+/// error names the policy knobs instead; the denied words themselves
+/// are listed at DEBUG when the policy is applied.
 fn denied_stub(_vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
     bail!(
-        "script denied by inkhaven policy — earlier log lines name the offending word"
+        "script denied by inkhaven policy (a default-denied category such as store_write, \
+         fs_write, editor_write, ai_write, keymap or theme_write) — enable it with \
+         scripting.enabled_categories / scripting.enabled_words in inkhaven.hjson; \
+         RUST_LOG=inkhaven::scripting::policy=debug lists every denied word"
     );
 }
 
@@ -1205,6 +1235,8 @@ mod tests {
             "ink.lang.grammar_book",
             "ink.lang.font_build",
             "ink.lang.glyph_draft",
+            "ink.lang.export_translation",
+            "ink.lang.export",
         ] {
             assert_eq!(cat(w), Some(category::FS_WRITE), "{w} must be fs_write");
             assert!(denied.contains(cat(w).unwrap()), "{w} denied by default");
@@ -1331,6 +1363,101 @@ mod tests {
     // backup.make (fs_write) MUST be denied by default; only the Scrivener
     // dry-run preview (fs_read) is allowed. Pin the whole chain so a refactor
     // can't silently let an auto-loaded untrusted script import or backup.
+    /// 3.18 LI-1 — applying the default policy emits ONE summary event at
+    /// INFO and nothing at WARN; every denied word is reported at DEBUG. Before
+    /// this, every CLI command that built the VM printed ~90 WARN lines to
+    /// stderr under the CLI's default filter (`inkhaven=info,warn`).
+    ///
+    /// The recorder is a bare `tracing::Subscriber` (no `fmt`, no `EnvFilter`)
+    /// so the test checks the levels the policy code chooses, not a formatter.
+    /// It is installed as the process-global default, not a scoped one: with a
+    /// single *scoped* dispatcher, a callsite first hit on another test thread
+    /// (no subscriber there) is cached as "never" and resets tracing's global
+    /// max level, so a scoped recorder sees one event and then silence. The
+    /// global recorder keeps only events from this thread. It must stay the
+    /// only test in this binary that installs a global subscriber.
+    #[test]
+    fn default_policy_logs_one_summary_line_not_a_flood() {
+        use rust_multistackvm::multistackvm::VM;
+        use std::sync::{Arc, Mutex};
+        use tracing::{field::Field, field::Visit, Event, Level, Metadata};
+
+        #[derive(Debug, Clone)]
+        struct Rec {
+            level: Level,
+            target: String,
+            message: String,
+        }
+        struct Recorder(Arc<Mutex<Vec<Rec>>>, std::thread::ThreadId);
+        struct MsgVisitor(String);
+        impl Visit for MsgVisitor {
+            fn record_debug(&mut self, f: &Field, v: &dyn std::fmt::Debug) {
+                if f.name() == "message" {
+                    self.0 = format!("{v:?}");
+                }
+            }
+        }
+        impl tracing::Subscriber for Recorder {
+            fn enabled(&self, _: &Metadata<'_>) -> bool {
+                true
+            }
+            fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+                tracing::span::Id::from_u64(1)
+            }
+            fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+            fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+            fn event(&self, event: &Event<'_>) {
+                if std::thread::current().id() != self.1 {
+                    return;
+                }
+                let mut v = MsgVisitor(String::new());
+                event.record(&mut v);
+                self.0.lock().unwrap().push(Rec {
+                    level: *event.metadata().level(),
+                    target: event.metadata().target().to_string(),
+                    message: v.0,
+                });
+            }
+            fn enter(&self, _: &tracing::span::Id) {}
+            fn exit(&self, _: &tracing::span::Id) {}
+        }
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let recorder = Recorder(events.clone(), std::thread::current().id());
+        tracing::subscriber::set_global_default(recorder)
+            .expect("this must be the only test that installs a global tracing subscriber");
+        // Callsites already hit by other tests (with no subscriber) are cached
+        // as "never interested"; registering the global rebuilds that cache,
+        // this makes the intent explicit.
+        tracing::callsite::rebuild_interest_cache();
+        let mut vm = VM::new();
+        crate::scripting::stdlib::register_ink_stdlib(&mut vm).unwrap();
+        apply_policy(&mut vm, &Policy::default()).unwrap();
+        let events = events.lock().unwrap().clone();
+        let policy: Vec<&Rec> = events
+            .iter()
+            .filter(|r| r.target == "inkhaven::scripting::policy")
+            .collect();
+        let at = |lvl: Level| policy.iter().filter(|r| r.level == lvl).count();
+        assert!(
+            !events.is_empty(),
+            "no events reached the scoped subscriber at all (LevelFilter::current() = {:?})",
+            tracing::level_filters::LevelFilter::current()
+        );
+        assert_eq!(at(Level::WARN), 0, "policy must not log at WARN: {policy:?}");
+        assert_eq!(at(Level::ERROR), 0, "policy must not log at ERROR: {policy:?}");
+        assert_eq!(at(Level::INFO), 1, "expected exactly one INFO summary: {policy:?}");
+        let summary = policy.iter().find(|r| r.level == Level::INFO).unwrap();
+        assert!(summary.message.contains("word(s) denied by default"), "{summary:?}");
+        assert!(summary.message.contains("store_write"), "{summary:?}");
+        let per_word = at(Level::DEBUG);
+        assert!(per_word >= 50, "every denied word is still listed at DEBUG, got {per_word}");
+        assert!(
+            policy.iter().filter(|r| r.level == Level::DEBUG).all(|r| r.message.starts_with("denying ")),
+            "{policy:?}"
+        );
+    }
+
     #[test]
     fn phase3_write_wrappers_default_denied() {
         let cat = |w: &str| WORD_CATEGORIES.iter().find(|(n, _)| *n == w).map(|(_, c)| *c);

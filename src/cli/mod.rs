@@ -38,6 +38,7 @@ pub mod event;
 pub mod event_critique;
 pub mod comments;
 pub mod language;
+pub mod language_index;
 pub mod inner_socrates;
 pub mod inner_editor;
 pub mod companions;
@@ -1621,6 +1622,11 @@ pub enum Command {
         /// verification harness. Default: English only.
         #[arg(long, default_value = "en", value_delimiter = ',')]
         languages: Vec<String>,
+        /// 3.18 LI-2 — also create the constructed language `Benchlang` with
+        /// this many generated dictionary entries (0 = no language). Drives
+        /// `benches/conlang.rs`.
+        #[arg(long, default_value_t = 0)]
+        conlang_words: usize,
         #[arg(long)]
         force: bool,
     },
@@ -3756,7 +3762,11 @@ pub enum LanguageCommand {
     /// texts).  Companion to `inkhaven language
     /// doctor` for a quick at-a-glance overview of
     /// every language in the project.
-    List,
+    List {
+        /// Emit the table as a JSON list of `{name, entries, grammar, phonology, samples}` (the same rows `ink.lang.list` returns).
+        #[arg(long)]
+        json: bool,
+    },
     /// 1.3.19 LANG-1 P6 — semantic-gap finder.
     /// Diff the lexicon against a reference concept
     /// scope and report which concepts are still
@@ -3793,9 +3803,9 @@ pub enum LanguageCommand {
         /// `incantation`.
         #[arg(long, default_value = "prose")]
         kind: String,
-        /// How many items (names / sentences).
-        #[arg(long, default_value_t = 5)]
-        count: usize,
+        /// How many items (names / sentences); at least 1.
+        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u32).range(1..))]
+        count: u32,
         /// Seed for the deterministic generators —
         /// change it for a different draw.
         #[arg(long, default_value_t = 0)]
@@ -3823,6 +3833,22 @@ pub enum LanguageCommand {
         /// The word to remove (case-insensitive
         /// title match).
         word: String,
+    },
+    /// Put a language's Dictionary into the declared
+    /// alphabet's order. Bucket subchapters sort by
+    /// `Meta/overview.alphabet` position and the
+    /// entries inside each bucket letter by letter,
+    /// renaming the `NN-` file prefixes in one pass
+    /// per parent (3.18 LI-5). Every door
+    /// that adds words keeps this order; this
+    /// command repairs a dictionary built before
+    /// 3.18 or edited by hand.
+    SortDictionary {
+        /// Target language name.
+        language: String,
+        /// Print the moves without applying them.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// 1.2.16+ Phase P.5 — define-or-edit a
     /// grammar or phonology rule in `$EDITOR`.
@@ -3865,9 +3891,17 @@ pub enum LanguageCommand {
         /// omitted (json + anki only — typst always
         /// needs a path because the renderer doesn't
         /// stream).
-        #[arg(long, short = 'o')]
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
         output: Option<PathBuf>,
     },
+
+    /// Maintainer: print the `## Command index` section of
+    /// `Documentation/CONLANG.md` (every visible `language` subcommand, grouped,
+    /// one line each from its `about`). The release checklist pastes it in; the
+    /// `docs_language_surface` test fails when a documented command or flag no
+    /// longer exists.
+    #[command(hide = true, name = "_index-markdown")]
+    IndexMarkdown,
 
     /// LANG-1 P1.1 — generate candidate words from a language's
     /// phonotactic templates.  Reads the typed phoneme block in the
@@ -3884,8 +3918,12 @@ pub enum LanguageCommand {
         #[arg(long, default_value = "root")]
         role: String,
         /// How many words to generate.
-        #[arg(long, default_value_t = 20)]
-        count: usize,
+        /// 1 … 100 000 (`MAX_GENERATE_BATCH`); clap refuses anything else.
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..=crate::conlang::generate::word::MAX_GENERATE_BATCH as i64))]
+        count: u32,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 P1.2 — syllabify a word against a language's phonology.
@@ -3902,6 +3940,9 @@ pub enum LanguageCommand {
         /// IPA).  Segmented greedily against the phoneme inventory.
         #[arg(long)]
         word: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 P1.3 — derive the surface pronunciation of a word by applying
@@ -3915,6 +3956,9 @@ pub enum LanguageCommand {
         /// The word, in the language's romanization (or raw IPA).
         #[arg(long)]
         word: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 P1.4 — place primary stress on a word per the language's
@@ -3928,6 +3972,9 @@ pub enum LanguageCommand {
         /// The word, in the language's romanization (or raw IPA).
         #[arg(long)]
         word: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// 1.8.2 — scan a line (or several) of verse: syllabify each word, mark it
@@ -3943,6 +3990,9 @@ pub enum LanguageCommand {
         /// stanza also gets a dominant-metre summary).
         #[arg(long)]
         text: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 P1.5 — convert between IPA and a named romanization scheme.
@@ -3963,6 +4013,9 @@ pub enum LanguageCommand {
         /// Convert text → IPA instead of IPA → text.
         #[arg(long)]
         reverse: bool,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 P1.6 — apply the language's tone-sandhi rules to a sequence of
@@ -3975,6 +4028,9 @@ pub enum LanguageCommand {
         /// Space-separated underlying tone labels (`3 3 3`, `H L H`).
         #[arg(long)]
         tones: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 P2.1 — audit a language's dictionary for consistency: headwords
@@ -4089,13 +4145,13 @@ pub enum LanguageCommand {
 
     /// 1.7 LING-1 L-P4 — a one-page grammar sketch: a deterministic prose
     /// overview of the language, assembling the phonology, typology and lexicon
-    /// analyses. Instant and always current (no AI). `--out` writes to a file.
+    /// analyses. Instant and always current (no AI). `--output` writes to a file.
     Sketch {
         /// Target language name (case-insensitive).
         language: String,
         /// Write the sketch to this file (default: stdout).
-        #[arg(long, value_name = "PATH")]
-        out: Option<String>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
     },
 
     /// 1.7 LING-1 Wave-2 — recommend phonemes that would round out the inventory
@@ -4113,7 +4169,7 @@ pub enum LanguageCommand {
 
     /// 1.7 LING-1 L-P4 — scaffold a starter phoneme inventory from a short
     /// description (AI), as pasteable Phonology-chapter HJSON. Preview-only: it
-    /// prints (or `--out` writes) a validated block; it never touches an
+    /// prints (or `--output` writes) a validated block; it never touches an
     /// existing language.
     Scaffold {
         /// A short description of the language's desired sound (e.g. "a flowing,
@@ -4121,8 +4177,8 @@ pub enum LanguageCommand {
         #[arg(long, value_name = "DESCRIPTION")]
         from: String,
         /// Write the proposal to this file (default: stdout).
-        #[arg(long, value_name = "PATH")]
-        out: Option<String>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
         /// Override the LLM provider for this call.
         #[arg(long)]
         provider: Option<String>,
@@ -4328,8 +4384,8 @@ pub enum LanguageCommand {
         #[arg(long, default_value = "md")]
         format: String,
         /// Write the document here (otherwise it prints to stdout).
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
         /// Conscript font family for the Typst path (defaults to the `font`
         /// block's family).
         #[arg(long)]
@@ -4349,8 +4405,8 @@ pub enum LanguageCommand {
         #[arg(long, default_value = "md")]
         format: String,
         /// Write the document here (otherwise it prints to stdout).
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
         /// Conscript font family for the Typst path (defaults to the `font`
         /// block's family).
         #[arg(long)]
@@ -4377,8 +4433,8 @@ pub enum LanguageCommand {
         #[arg(long, default_value = "md")]
         format: String,
         /// Write the document here (otherwise it prints to stdout).
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
         /// Conscript font family for the Typst path (defaults to the `font`
         /// block's family).
         #[arg(long)]
@@ -4431,11 +4487,11 @@ pub enum LanguageCommand {
     /// 1.3.22 LANG-2 P4 — the language **ecology**: who speaks what (and which
     /// variety) where.  Lists every place with its language + variety, every
     /// character with their commanded languages + native variety, and the
-    /// contact areas.  With `--svg <path>` writes a node-link **atlas**.
+    /// contact areas.  With `--output <path>` writes a node-link **atlas** as SVG.
     Ecology {
         /// Write the atlas as an SVG file at this path (instead of the text report).
-        #[arg(long)]
-        svg: Option<std::path::PathBuf>,
+        #[arg(long, short = 'o', alias = "svg", alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
     },
 
     /// 1.3.22 LANG-2 P4 — render a form / text in a **character's idiolect** —
@@ -4467,9 +4523,11 @@ pub enum LanguageCommand {
         /// Directory of glyph `.svg` files (alternative to `--language`).
         #[arg(long)]
         glyphs: Option<std::path::PathBuf>,
-        /// Output path (extension set by `--format`; defaults to `<family>.<ext>`).
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        /// Output path (extension set by `--format`). Default:
+        /// `<project>/exports/<lang>/fonts/<family>.<ext>` (or
+        /// `exports/fonts/` when building from `--glyphs`).
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
         /// Units per em (the design grid; overrides the config value).
         #[arg(long)]
         upm: Option<f64>,
@@ -4542,8 +4600,8 @@ pub enum LanguageCommand {
         #[arg(long = "slot", value_name = "SLOT=GLYPH")]
         slots: Vec<String>,
         /// Write the composed SVG here (otherwise it prints to stdout).
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
         /// Bind the composed block into the language's `font` block.
         #[arg(long)]
         yes: bool,
@@ -4584,8 +4642,8 @@ pub enum LanguageCommand {
         #[arg(long, default_value = "2em")]
         size: String,
         /// Write the Typst snippet here (otherwise it prints to stdout).
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
     },
 
     /// LANG-1 P5.5 — AI text-to-SVG glyph draft: describe a glyph and the model
@@ -4611,8 +4669,8 @@ pub enum LanguageCommand {
         #[arg(long)]
         provider: Option<String>,
         /// Write the drafted SVG here (otherwise it prints to stdout).
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
         /// Bind the drafted glyph into the language's `font` block.
         #[arg(long)]
         yes: bool,
@@ -4657,7 +4715,11 @@ pub enum LanguageCommand {
 
     /// LANG-1 P4.2 — print the language-family tree (each language under its
     /// declared `proto`).
-    FamilyTree,
+    FamilyTree {
+        /// Emit `{languages: [{name, proto}], contact: [{a, b, region}]}` instead of the drawn tree.
+        #[arg(long)]
+        json: bool,
+    },
 
     /// LANG-1 P4.2 — the cognate set of a proto-form: its reflex in every
     /// daughter language (each daughter's sound-change chain applied to the
@@ -4668,6 +4730,9 @@ pub enum LanguageCommand {
         /// The proto-form to trace.
         #[arg(long)]
         form: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 P4.1 — apply a language's diachronic sound-change chain to a
@@ -4679,6 +4744,9 @@ pub enum LanguageCommand {
         /// The proto-form to evolve (in the proto's romanization).
         #[arg(long)]
         form: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 P4.1 — derive a daughter language's lexicon from its proto by
@@ -4782,6 +4850,9 @@ pub enum LanguageCommand {
         /// The conlang text to gloss (whitespace-separated words).
         #[arg(long)]
         text: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// 1.7 IGT-1 (Wave 4) — interlinear glossed text: auto-gloss a sentence and
@@ -4993,6 +5064,9 @@ pub enum LanguageCommand {
         /// Gloss for the root (defaults to the root itself).
         #[arg(long)]
         gloss: Option<String>,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 syntax — assemble a **sentence** from a subject, verb, and object.
@@ -5053,6 +5127,9 @@ pub enum LanguageCommand {
         /// the language uses one.
         #[arg(long)]
         q_particle: Option<String>,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// 1.3.19 LANG-1 P9 — build a noun phrase with a
@@ -5199,12 +5276,11 @@ pub enum LanguageCommand {
     Varieties {
         /// Target language name (case-insensitive).
         language: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
-    /// 1.3.22 LANG-2 P1 — render a form *in a variety* (`lect`).  Applies the
-    /// variety's sound changes (the same engine diachronics uses,
-    /// synchronically) to a `--word` or a `--text` run, showing the base →
-    /// variety diff.  A variety is a *dialect*, *register*, or *sociolect*.
     /// 1.3.23 LANG-3 P0 — **translate** English into the conlang. Tier 1 (the
     /// deterministic rule-based spine): each English word is mapped to a
     /// headword by its lexicon gloss, and the LANG-1 syntax engine orders,
@@ -5276,6 +5352,9 @@ pub enum LanguageCommand {
     Memory {
         /// Target language name (case-insensitive).
         language: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// 1.3.23 LANG-3 P1 — generate a **synthetic corpus**: translate an English
@@ -5330,10 +5409,14 @@ pub enum LanguageCommand {
         /// Target language name (case-insensitive).
         language: String,
         /// Output path (defaults to `<lang>-translation.itm`).
-        #[arg(long)]
-        out: Option<String>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
     },
 
+    /// 1.3.22 LANG-2 P1 — render a form *in a variety* (`lect`).  Applies the
+    /// variety's sound changes (the same engine diachronics uses,
+    /// synchronically) to a `--word` or a `--text` run, showing the base →
+    /// variety diff.  A variety is a *dialect*, *register*, or *sociolect*.
     Lect {
         /// Target language name (case-insensitive).
         language: String,
@@ -5354,8 +5437,11 @@ pub enum LanguageCommand {
         /// Target language name (case-insensitive).
         language: String,
         /// How many headwords to compare.
-        #[arg(long, default_value_t = 12)]
-        count: usize,
+        #[arg(long, default_value_t = 12, value_parser = clap::value_parser!(u32).range(1..))]
+        count: u32,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// 1.3.22 LANG-2 P2 — **borrow** a word into a language: nativise a donor
@@ -5443,8 +5529,8 @@ pub enum LanguageCommand {
         #[arg(long)]
         topic: Option<String>,
         /// How many loanwords to propose.
-        #[arg(long, default_value_t = 6)]
-        count: usize,
+        #[arg(long, default_value_t = 6, value_parser = clap::value_parser!(u32).range(1..))]
+        count: u32,
         /// AI provider override.
         #[arg(long)]
         provider: Option<String>,
@@ -5505,8 +5591,8 @@ pub enum LanguageCommand {
         #[arg(long)]
         topic: Option<String>,
         /// How many entries to propose.
-        #[arg(long, default_value_t = 20)]
-        count: usize,
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..))]
+        count: u32,
         /// Optional in-world era tag recorded on the prompt.
         #[arg(long)]
         era: Option<String>,
@@ -6619,6 +6705,7 @@ fn command_mutates(command: &Command) -> bool {
                 LanguageCommand::Init { .. }
                     | LanguageCommand::AddWord { .. }
                     | LanguageCommand::RemoveWord { .. }
+                    | LanguageCommand::SortDictionary { .. }
                     | LanguageCommand::Import { .. }
             )
     )
@@ -7375,6 +7462,7 @@ impl Cli {
                 target_words,
                 seed,
                 languages,
+                conlang_words,
                 force,
             } => {
                 let spec = gen_fixture::FixtureSpec {
@@ -7385,14 +7473,20 @@ impl Cli {
                     seed,
                     languages,
                     force,
+                    conlang_words,
                     ..gen_fixture::FixtureSpec::default()
                 };
                 let stats = gen_fixture::run(&path, spec)?;
                 eprintln!(
-                    "gen-fixture: {} books · {} chapters · {} paragraphs at {}",
+                    "gen-fixture: {} books · {} chapters · {} paragraphs{} at {}",
                     stats.books_created,
                     stats.chapters_created,
                     stats.paragraphs_created,
+                    if stats.conlang_words_created > 0 {
+                        format!(" · {} {} words", stats.conlang_words_created, gen_fixture::CONLANG_NAME)
+                    } else {
+                        String::new()
+                    },
                     path.display(),
                 );
                 Ok(())
@@ -7482,5 +7576,140 @@ mod prompt_resolve_tests {
         assert_eq!(strip_typst_heading("Just a prompt.\n"), "Just a prompt.");
         // only the FIRST heading is dropped
         assert_eq!(strip_typst_heading("= Title\nbody = x"), "body = x");
+    }
+}
+
+#[cfg(test)]
+mod language_flag_tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    /// `Cli::command()` builds a tree of several hundred subcommands and clap's
+    /// `debug_assert` walks it recursively; the default 2 MiB test-thread
+    /// stack overflows (SIGABRT), so run on a thread with room.
+    fn with_big_stack(f: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(f)
+            .expect("spawn")
+            .join()
+            .expect("test body panicked");
+    }
+
+    /// 3.18 LI-6: every `language` subcommand that writes a user-named file
+    /// takes `-o, --output <PATH>`; `--out` (and `--svg` on `ecology`) stay as
+    /// hidden aliases. The inventory is pinned so a new command cannot
+    /// quietly reintroduce `--out`.
+    #[test]
+    fn every_language_output_path_is_o_output_with_hidden_aliases() {
+        with_big_stack(every_language_output_path_is_o_output_with_hidden_aliases_body);
+    }
+
+    fn every_language_output_path_is_o_output_with_hidden_aliases_body() {
+        // Only the `language` subtree is asserted (and `build()` is not called,
+        // since it asserts the whole tree): the top-level `ai -p/--provider`
+        // collides with the global `-p/--project`, a pre-existing defect
+        // outside LANG-IMPROVE-1.
+        let cli = Cli::command();
+        let language = cli.find_subcommand("language").expect("language subcommand").clone();
+        language.clone().debug_assert();
+        let mut with_output = Vec::new();
+        for sub in language.get_subcommands() {
+            for arg in sub.get_arguments() {
+                let id = arg.get_id().as_str();
+                assert_ne!(id, "out", "`language {}` still names its output `out`", sub.get_name());
+                if id == "output" {
+                    assert_eq!(arg.get_short(), Some('o'), "`language {} --output` has no -o", sub.get_name());
+                    assert_eq!(arg.get_long(), Some("output"));
+                    let aliases: Vec<&str> = arg.get_all_aliases().unwrap_or_default();
+                    assert!(aliases.contains(&"out"), "`language {} --output` lacks the `--out` alias", sub.get_name());
+                    assert!(
+                        arg.get_visible_aliases().unwrap_or_default().is_empty(),
+                        "`language {} --output` aliases must stay hidden",
+                        sub.get_name()
+                    );
+                    with_output.push(sub.get_name().to_string());
+                }
+            }
+        }
+        with_output.sort();
+        assert_eq!(
+            with_output,
+            [
+                "dictionary", "ecology", "export", "export-translation", "font-build", "font-compose",
+                "glyph-draft", "grammar-book", "scaffold", "sketch", "spatial-typst", "tutorial",
+            ]
+        );
+    }
+
+    #[test]
+    fn output_aliases_parse_to_the_same_field() {
+        with_big_stack(output_aliases_parse_to_the_same_field_body);
+    }
+
+    fn output_aliases_parse_to_the_same_field_body() {
+        let parse = |args: &[&str]| Cli::try_parse_from(args).expect("parses");
+        for form in [["--output", "s.md"], ["--out", "s.md"], ["-o", "s.md"]] {
+            let cli = parse(&["inkhaven", "language", "sketch", "Avesha", form[0], form[1]]);
+            match cli.command {
+                Some(Command::Language(LanguageCommand::Sketch { output, .. })) => {
+                    assert_eq!(output.as_deref(), Some(std::path::Path::new("s.md")), "{form:?}");
+                }
+                other => panic!("unexpected parse: {other:?}"),
+            }
+        }
+        for form in [["--output", "a.svg"], ["--svg", "a.svg"], ["-o", "a.svg"]] {
+            let cli = parse(&["inkhaven", "language", "ecology", form[0], form[1]]);
+            match cli.command {
+                Some(Command::Language(LanguageCommand::Ecology { output })) => {
+                    assert_eq!(output.as_deref(), Some(std::path::Path::new("a.svg")), "{form:?}");
+                }
+                other => panic!("unexpected parse: {other:?}"),
+            }
+        }
+        // `export` keeps its original spelling and gains the alias.
+        let cli = parse(&["inkhaven", "language", "export", "Avesha", "--out", "d.json"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Language(LanguageCommand::Export { output: Some(ref p), .. })) if p == std::path::Path::new("d.json")
+        ));
+    }
+
+    /// 3.18 LI-7: every `--count` is a `u32` of at least 1, and
+    /// `generate-word` also refuses more than `MAX_GENERATE_BATCH`, so a
+    /// typo is clap's error with the real reason, not a silent cap or a
+    /// message that blames the constraints.
+    #[test]
+    fn count_flags_refuse_zero_and_over_cap() {
+        with_big_stack(count_flags_refuse_zero_and_over_cap_body);
+    }
+
+    fn count_flags_refuse_zero_and_over_cap_body() {
+        let err = |args: &[&str]| Cli::try_parse_from(args).err().map(|e| e.to_string()).unwrap_or_default();
+        let ok = |args: &[&str]| Cli::try_parse_from(args).is_ok();
+        let zero: [&[&str]; 5] = [
+            &["inkhaven", "language", "generate-word", "L", "--count", "0"],
+            &["inkhaven", "language", "compose", "L", "--count", "0"],
+            &["inkhaven", "language", "dialects", "L", "--count", "0"],
+            &["inkhaven", "language", "propose-loans", "L", "--from", "X", "--count", "0"],
+            &["inkhaven", "language", "generate-lexicon", "L", "--count", "0"],
+        ];
+        for args in zero {
+            let e = err(args);
+            assert!(e.contains("--count") && e.contains("0 is not in 1.."), "{args:?}: {e}");
+        }
+        let e = err(&["inkhaven", "language", "generate-word", "L", "--count", "100001"]);
+        assert!(e.contains("100001 is not in 1..=100000"), "{e}");
+        assert!(ok(&["inkhaven", "language", "generate-word", "L", "--count", "100000"]));
+        assert!(ok(&["inkhaven", "language", "generate-lexicon", "L", "--count", "100001"]), "no cap here");
+        let e = err(&["inkhaven", "language", "generate-word", "L", "--count", "-3"]);
+        assert!(!e.is_empty(), "negative counts are refused");
+        if let Ok(Cli { command: Some(Command::Language(LanguageCommand::GenerateWord { count, .. })), .. }) =
+            Cli::try_parse_from(["inkhaven", "language", "generate-word", "L"])
+        {
+            assert_eq!(count, 20, "default unchanged");
+        } else {
+            panic!("default parse");
+        }
     }
 }

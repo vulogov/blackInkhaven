@@ -50,7 +50,7 @@ pub(crate) fn movement(
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing movement: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising movement: {e}")))?
         );
         return Ok(());
     }
@@ -101,7 +101,7 @@ pub(crate) fn binding(
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing binding: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising binding: {e}")))?
         );
         return Ok(());
     }
@@ -152,7 +152,7 @@ pub(crate) fn build_tree(
         println!(
             "{}",
             serde_json::to_string_pretty(&tree)
-                .map_err(|e| Error::Store(format!("serializing tree: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising tree: {e}")))?
         );
         return Ok(());
     }
@@ -176,7 +176,7 @@ pub(crate) fn oracle_check(project: &Path, language: &str, word: &str, json: boo
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing oracle: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising oracle: {e}")))?
         );
         return Ok(());
     }
@@ -247,7 +247,7 @@ pub(crate) fn oracle_check_clause(
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing oracle: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising oracle: {e}")))?
         );
         return Ok(());
     }
@@ -288,7 +288,7 @@ pub(crate) fn oracle_check_agreement(
         println!(
             "{}",
             serde_json::to_string_pretty(&finding)
-                .map_err(|e| Error::Store(format!("serializing oracle: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising oracle: {e}")))?
         );
         return Ok(());
     }
@@ -333,7 +333,7 @@ pub(crate) fn link_args(
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing link: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising link: {e}")))?
         );
         return Ok(());
     }
@@ -363,7 +363,7 @@ pub(crate) fn parse_surface(project: &Path, language: &str, word: &str, json: bo
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing parse: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising parse: {e}")))?
         );
         return Ok(());
     }
@@ -383,32 +383,16 @@ pub(crate) fn parse_surface(project: &Path, language: &str, word: &str, json: bo
     Ok(())
 }
 
-/// Load the `{ grammar: { … } }` typology block from the Grammar chapter,
-/// returning the spec + the paragraph node that holds it (for in-place edits).
+/// The `{ grammar: { … } }` typology block from the Grammar chapter — the
+/// spec + the paragraph node that holds it (for in-place edits) — from the
+/// cached [`crate::conlang::model::LanguageModel`] (3.18 LI-2).
 pub(crate) fn load_grammar_spec(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Result<(crate::conlang::types::grammar::GrammarSpec, Option<crate::store::node::Node>)> {
-    use crate::conlang::types::grammar::GrammarSpec;
-    let Some(chapter) = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Grammar"))
-        .cloned()
-    else {
-        return Ok((GrammarSpec::default(), None));
-    };
-    for para in hierarchy.children_of(Some(chapter.id)) {
-        if para.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Ok(Some(bytes)) = store.get_content(para.id) else { continue };
-        if let Ok(Some(spec)) = GrammarSpec::from_hjson(&String::from_utf8_lossy(&bytes)) {
-            return Ok((spec, Some(para.clone())));
-        }
-    }
-    Ok((GrammarSpec::default(), None))
+    let m = super::model(store, hierarchy, lang_book)?;
+    Ok((m.grammar.clone(), m.grammar_node.clone()))
 }
 
 /// LANG-1 P3.4 — the grammar typological questionnaire.
@@ -440,7 +424,7 @@ pub(crate) fn grammar_questionnaire(
         spec.grammar.insert(f.id.to_string(), val.to_lowercase());
         let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
         let body = serde_json::to_string_pretty(&spec)
-            .map_err(|e| Error::Store(format!("serializing grammar: {e}")))?;
+            .map_err(|e| Error::Store(format!("serialising grammar: {e}")))?;
         upsert_grammar_paragraph(&store, &cfg, &lang_book, "typology", node, &body)?;
         eprintln!("{language}: set {} = {}", f.id, val.to_lowercase());
         return Ok(());
@@ -450,7 +434,7 @@ pub(crate) fn grammar_questionnaire(
         println!(
             "{}",
             serde_json::to_string_pretty(&spec.grammar)
-                .map_err(|e| Error::Store(format!("serializing grammar: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising grammar: {e}")))?
         );
         return Ok(());
     }
@@ -572,6 +556,7 @@ pub(crate) fn derive(
     if yes {
         let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
         let mut added = 0usize;
+        let mut writer = DictionaryWriter::open(&store, &cfg, &lang_book)?;
         for d in &derived {
             let entry = ImportEntry {
                 word: d.form.clone(),
@@ -580,12 +565,13 @@ pub(crate) fn derive(
                 etymology: format!("derived from {root} via {}", d.rule),
                 ..Default::default()
             };
-            match add_imported_dictionary_entry(&store, &cfg, &lang_book, &entry) {
+            match writer.add_imported(&entry) {
                 Ok(_) => added += 1,
                 Err(e) => eprintln!("  skipped {}: {e}", d.form),
             }
         }
-        eprintln!("\nadded {added} derived entr(y/ies) to {language}'s Dictionary");
+        writer.finish()?;
+        eprintln!("\nadded {} derived to {language}'s Dictionary", super::wording::entries(added));
     } else {
         eprintln!("\n(dry run — re-run with --yes to add the {} derived form(s))", derived.len());
     }
@@ -593,7 +579,7 @@ pub(crate) fn derive(
 }
 
 /// LANG-1 P3.2 — interlinear auto-gloss of conlang text.
-pub(crate) fn gloss_text(project: &Path, language: &str, text: &str) -> Result<()> {
+pub(crate) fn gloss_text(project: &Path, language: &str, text: &str, json: bool) -> Result<()> {
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
     // Phonology + morphology are optional: without them only bare forms gloss.
     let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
@@ -602,29 +588,30 @@ pub(crate) fn gloss_text(project: &Path, language: &str, text: &str) -> Result<(
 
     let index = crate::conlang::morphology::gloss::build_index(&phon, &morph, &entries);
     let items = index.gloss_text(text);
-    if items.is_empty() {
+    let shape = shapes::Glossed {
+        matched: items.iter().filter(|i| i.gloss.is_some()).count(),
+        words: items
+            .iter()
+            .map(|i| shapes::GlossPair { surface: i.surface.clone(), gloss: i.gloss.clone() })
+            .collect(),
+    };
+    if shape.words.is_empty() && !json {
         return Ok(());
     }
-
-    // Two aligned lines: the surface words over their glosses (Leipzig style).
-    let mut top = String::new();
-    let mut bot = String::new();
-    let mut matched = 0usize;
-    for item in &items {
-        let g = item.gloss.clone().unwrap_or_else(|| "?".to_string());
-        if item.gloss.is_some() {
-            matched += 1;
+    emit(json, &shape, |g| {
+        // Two aligned lines: the surface words over their glosses (Leipzig style).
+        let mut top = String::new();
+        let mut bot = String::new();
+        for p in &g.words {
+            let gl = p.gloss.as_deref().unwrap_or("?");
+            let width = p.surface.chars().count().max(gl.chars().count()) + 2;
+            top.push_str(&format!("{:<width$}", p.surface, width = width));
+            bot.push_str(&format!("{:<width$}", gl, width = width));
         }
-        let w = item.surface.chars().count();
-        let gw = g.chars().count();
-        let width = w.max(gw) + 2;
-        top.push_str(&format!("{:<width$}", item.surface, width = width));
-        bot.push_str(&format!("{:<width$}", g, width = width));
-    }
-    println!("{}", top.trim_end());
-    println!("{}", bot.trim_end());
-    eprintln!("\n{matched} / {} word(s) glossed", items.len());
-    Ok(())
+        println!("{}", top.trim_end());
+        println!("{}", bot.trim_end());
+        eprintln!("\n{} / {} word(s) glossed", g.matched, g.words.len());
+    })
 }
 
 /// IGT-1 (Wave 4) — `inkhaven language igt <lang> --text "…" [--save --name N]`:
@@ -656,7 +643,7 @@ pub(crate) fn igt_text(
         println!(
             "{}",
             serde_json::to_string_pretty(&igt)
-                .map_err(|e| Error::Store(format!("serializing igt: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising igt: {e}")))?
         );
         return Ok(());
     }
@@ -705,7 +692,7 @@ fn save_igt(
     // chapter seeds structured paragraphs).
     node.content_type = Some("hjson".to_string());
     let body =
-        serde_json::to_string_pretty(igt).map_err(|e| Error::Store(format!("serialize igt: {e}")))?;
+        serde_json::to_string_pretty(igt).map_err(|e| Error::Store(format!("serialising igt: {e}")))?;
     if let Some(rel) = &node.file {
         let abs = store.project_root().join(rel);
         crate::io_atomic::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write igt file: {e}")))?;
@@ -781,14 +768,14 @@ pub(crate) fn list_texts(
             println!(
                 "{}",
                 serde_json::to_string_pretty(&selected[0].1)
-                    .map_err(|e| Error::Store(format!("serializing igt: {e}")))?
+                    .map_err(|e| Error::Store(format!("serialising igt: {e}")))?
             );
         } else {
             let listing: Vec<_> = texts.iter().map(|(t, igt)| (t, &igt.text, &igt.translation)).collect();
             println!(
                 "{}",
                 serde_json::to_string_pretty(&listing)
-                    .map_err(|e| Error::Store(format!("serializing texts: {e}")))?
+                    .map_err(|e| Error::Store(format!("serialising texts: {e}")))?
             );
         }
         return Ok(());
@@ -843,7 +830,7 @@ fn save_hypothesis(
     let mut node =
         store.create_node(cfg, &hierarchy, NodeKind::Paragraph, &h.id, Some(&chapter), None, InsertPosition::End)?;
     node.content_type = Some("hjson".to_string());
-    let body = serde_json::to_string_pretty(h).map_err(|e| Error::Store(format!("serialize hypothesis: {e}")))?;
+    let body = serde_json::to_string_pretty(h).map_err(|e| Error::Store(format!("serialising hypothesis: {e}")))?;
     if let Some(rel) = &node.file {
         let abs = store.project_root().join(rel);
         crate::io_atomic::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write hypothesis file: {e}")))?;
@@ -893,7 +880,7 @@ pub(crate) fn hypothesis_add(
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&h).map_err(|e| Error::Store(format!("serializing hypothesis: {e}")))?
+            serde_json::to_string_pretty(&h).map_err(|e| Error::Store(format!("serialising hypothesis: {e}")))?
         );
     } else {
         eprintln!("recorded to {language}/Hypotheses as `{id}`");
@@ -916,7 +903,7 @@ pub(crate) fn hypotheses_list(project: &Path, language: &str, status: Option<&st
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&hyps).map_err(|e| Error::Store(format!("serializing hypotheses: {e}")))?
+            serde_json::to_string_pretty(&hyps).map_err(|e| Error::Store(format!("serialising hypotheses: {e}")))?
         );
         return Ok(());
     }
@@ -942,7 +929,7 @@ pub(crate) fn hypothesis_show(project: &Path, language: &str, id: &str, json: bo
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(h).map_err(|e| Error::Store(format!("serializing hypothesis: {e}")))?
+            serde_json::to_string_pretty(h).map_err(|e| Error::Store(format!("serialising hypothesis: {e}")))?
         );
         return Ok(());
     }
@@ -1000,7 +987,7 @@ pub(crate) fn hypothesis_check(project: &Path, language: &str, id: &str, limit: 
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&report).map_err(|e| Error::Store(format!("serializing trace: {e}")))?
+            serde_json::to_string_pretty(&report).map_err(|e| Error::Store(format!("serialising trace: {e}")))?
         );
         return Ok(());
     }
@@ -1032,7 +1019,7 @@ pub(crate) fn corpus_report(
         let out = serde_json::json!({ "stats": stats, "frequency": rows });
         println!(
             "{}",
-            serde_json::to_string_pretty(&out).map_err(|e| Error::Store(format!("serializing corpus: {e}")))?
+            serde_json::to_string_pretty(&out).map_err(|e| Error::Store(format!("serialising corpus: {e}")))?
         );
         return Ok(());
     }
@@ -1075,7 +1062,7 @@ pub(crate) fn concordance(
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&lines).map_err(|e| Error::Store(format!("serializing concordance: {e}")))?
+            serde_json::to_string_pretty(&lines).map_err(|e| Error::Store(format!("serialising concordance: {e}")))?
         );
         return Ok(());
     }
@@ -1117,7 +1104,7 @@ pub(crate) fn collocations(
         let rows: Vec<_> = cols.iter().take(top).collect();
         println!(
             "{}",
-            serde_json::to_string_pretty(&rows).map_err(|e| Error::Store(format!("serializing collocations: {e}")))?
+            serde_json::to_string_pretty(&rows).map_err(|e| Error::Store(format!("serialising collocations: {e}")))?
         );
         return Ok(());
     }
@@ -1145,6 +1132,7 @@ pub(crate) fn paradigm(
     root: &str,
     template: &str,
     gloss: Option<&str>,
+    json: bool,
 ) -> Result<()> {
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
     let phonology = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
@@ -1168,15 +1156,21 @@ pub(crate) fn paradigm(
         &phonology, &morph, tmpl, root, root_gloss,
     );
 
-    println!("paradigm `{}` of {root} ({root_gloss}) · {} cell(s)", tmpl.name, rows.len());
-    for r in &rows {
-        let feats = r
-            .features
-            .iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        println!("  {:<18} {:<24} {}", r.form, r.gloss, feats);
-    }
-    Ok(())
+    // The same cells `ink.lang.paradigm` returns.
+    let cells: Vec<shapes::ParadigmCell> = rows
+        .iter()
+        .map(|r| shapes::ParadigmCell { form: r.form.clone(), gloss: r.gloss.clone(), features: r.features.clone() })
+        .collect();
+    emit(json, &cells, |cells| {
+        println!("paradigm `{}` of {root} ({root_gloss}) · {} cell(s)", tmpl.name, cells.len());
+        for r in cells {
+            let feats = r
+                .features
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            println!("  {:<18} {:<24} {}", r.form, r.gloss, feats);
+        }
+    })
 }

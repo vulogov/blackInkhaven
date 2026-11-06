@@ -83,6 +83,11 @@ pub struct FixtureSpec {
     /// `--force` semantics from `inkhaven init`: wipe
     /// the target directory without prompting.
     pub force: bool,
+    /// 3.18 LI-2 — when > 0, add one constructed language (`Benchlang`:
+    /// a 13-phoneme inventory, a typology block, one suffix morpheme) with
+    /// this many generated dictionary entries, glossed with the English
+    /// pool's content words so the translation benches resolve.
+    pub conlang_words: usize,
 }
 
 impl Default for FixtureSpec {
@@ -100,6 +105,7 @@ impl Default for FixtureSpec {
             seed: 0xC0FFEE_DEAD_BEEF,
             languages: vec!["en".to_string()],
             force: false,
+            conlang_words: 0,
         }
     }
 }
@@ -126,6 +132,9 @@ pub struct FixtureStats {
     pub places_created: usize,
     #[allow(dead_code)]
     pub threads_created: usize,
+    /// 3.18 LI-2 — dictionary entries of the fixture conlang (0 unless
+    /// `conlang_words` was set).
+    pub conlang_words_created: usize,
 }
 
 pub fn run(path: &Path, spec: FixtureSpec) -> Result<FixtureStats> {
@@ -140,9 +149,103 @@ pub fn run(path: &Path, spec: FixtureSpec) -> Result<FixtureStats> {
 
     let mut rng = Xorshift64::new(spec.seed);
 
-    let stats = build_hierarchy(&store, &cfg, &spec, &mut rng)?;
+    let mut stats = build_hierarchy(&store, &cfg, &spec, &mut rng)?;
+    if spec.conlang_words > 0 {
+        stats.conlang_words_created = build_conlang(&store, &cfg, &spec, &mut rng)?;
+    }
     store.checkpoint()?;
     Ok(stats)
+}
+
+/// The fixture language's name.
+pub const CONLANG_NAME: &str = "Benchlang";
+
+const CONLANG_PHONOLOGY: &str = r#"{
+  rule_id: "inventory"
+  phonemes: [
+    { ipa: "p", romanize: "p", kind: "consonant" }
+    { ipa: "t", romanize: "t", kind: "consonant" }
+    { ipa: "k", romanize: "k", kind: "consonant" }
+    { ipa: "s", romanize: "s", kind: "consonant" }
+    { ipa: "m", romanize: "m", kind: "consonant" }
+    { ipa: "n", romanize: "n", kind: "consonant" }
+    { ipa: "l", romanize: "l", kind: "consonant" }
+    { ipa: "r", romanize: "r", kind: "consonant" }
+    { ipa: "a", romanize: "a", kind: "vowel" }
+    { ipa: "e", romanize: "e", kind: "vowel" }
+    { ipa: "i", romanize: "i", kind: "vowel" }
+    { ipa: "o", romanize: "o", kind: "vowel" }
+    { ipa: "u", romanize: "u", kind: "vowel" }
+  ]
+  classes: { C: ["p","t","k","s","m","n","l","r"], V: ["a","e","i","o","u"], N: ["m","n"] }
+  templates: { root: [ { pattern: "C V (C)", weight: 1.0 }, { pattern: "C V C V", weight: 0.5 } ] }
+  constraints: [ { kind: "no_geminate" } ]
+  allophony: [ { name: "nasal-voicing", rule: "k > g / N _" } ]
+  stress: "penultimate"
+}"#;
+
+const CONLANG_TYPOLOGY: &str = r#"{ grammar: { word_order: "sov", alignment: "nominative-accusative" } }"#;
+
+const CONLANG_MORPHOLOGY: &str = r#"{
+  morphemes: [
+    { id: "pl", gloss: "PL", form: "i", position: "suffix" }
+    { id: "pst", gloss: "PST", form: "ka", position: "suffix" }
+  ]
+}"#;
+
+/// Build `Benchlang` under the Language system book: the three blocks and
+/// `spec.conlang_words` entries. Words are CV(C)V strings drawn from the
+/// inventory with the fixture PRNG (deterministic per seed); glosses are the
+/// English pool's distinct content words in first-seen order, with the part
+/// of speech cycling noun / verb / adjective.
+fn build_conlang(store: &Store, cfg: &Config, spec: &FixtureSpec, rng: &mut Xorshift64) -> Result<usize> {
+    use crate::cli::language as lang;
+    let book = lang::init_language(store, cfg, CONLANG_NAME)?;
+    lang::create_chapter_paragraph(store, cfg, &book, "Phonology", "inventory", CONLANG_PHONOLOGY)?;
+    lang::create_chapter_paragraph(store, cfg, &book, "Grammar", "typology", CONLANG_TYPOLOGY)?;
+    lang::create_chapter_paragraph(store, cfg, &book, "Grammar", "morphology", CONLANG_MORPHOLOGY)?;
+
+    // Glosses: distinct content words of the English pool.
+    let mut glosses: Vec<String> = Vec::new();
+    for sentence in SENTENCE_POOL {
+        for w in sentence.split(|c: char| !c.is_alphabetic()) {
+            let w = w.to_lowercase();
+            if w.len() > 2 && !glosses.contains(&w) {
+                glosses.push(w);
+            }
+        }
+    }
+    let consonants = ["p", "t", "k", "s", "m", "n", "l", "r"];
+    let vowels = ["a", "e", "i", "o", "u"];
+    let pos = ["noun", "verb", "adjective"];
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut created = 0usize;
+    let mut i = 0usize;
+    let mut writer = lang::DictionaryWriter::open(store, cfg, &book)?;
+    while created < spec.conlang_words {
+        // CV(C)V or CVCV(C): long enough to be distinct past a few hundred.
+        let mut word = String::new();
+        let syllables = 2 + (rng.next_u64() % 2) as usize;
+        for s in 0..syllables {
+            word.push_str(pick(&consonants, rng));
+            word.push_str(pick(&vowels, rng));
+            if s + 1 == syllables && rng.next_u64() % 3 == 0 {
+                word.push_str(pick(&["n", "s", "l", "r"], rng));
+            }
+        }
+        if !seen.insert(word.clone()) {
+            continue;
+        }
+        let gloss = glosses.get(i % glosses.len().max(1)).cloned().unwrap_or_else(|| format!("sense{i}"));
+        let gloss = if i >= glosses.len() { format!("{gloss} {}", i / glosses.len() + 1) } else { gloss };
+        let p = pos[i % pos.len()];
+        let body = lang::seed_dictionary_entry_body(&word, p, &gloss, None, None);
+        writer.add(&word, p, &body)?;
+        created += 1;
+        i += 1;
+    }
+    writer.finish()?;
+    Ok(created)
 }
 
 fn build_hierarchy(
@@ -577,6 +680,7 @@ mod tests {
             comment_count: 5,
             tag_coverage: 0.1,
             target_words_per_paragraph: 50,
+            conlang_words: 0,
             seed: 0x1234_5678_9ABC_DEF0,
             languages: vec!["en".to_string()],
             force: true,
@@ -670,6 +774,27 @@ mod tests {
             generate_prose(&mut a, 100, SENTENCE_POOL),
             generate_prose(&mut b, 100, SENTENCE_POOL),
         );
+    }
+
+    /// 3.18 LI-2 — `conlang_words` adds `Benchlang` with the three blocks and
+    /// exactly that many distinct entries.
+    #[test]
+    #[ignore = "runs the full fixture pipeline, which embeds paragraphs and needs the ONNX model (network-fetched); run locally"]
+    fn small_fixture_with_conlang_has_the_language() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = FixtureSpec { conlang_words: 12, ..small_spec() };
+        let stats = run(dir.path(), spec).unwrap();
+        assert_eq!(stats.conlang_words_created, 12);
+        let layout = ProjectLayout::new(dir.path());
+        let cfg = Config::load_layered(&layout.config_path()).unwrap();
+        let store = Store::open(layout, &cfg).unwrap();
+        let h = Hierarchy::load(&store).unwrap();
+        let book = crate::cli::language::find_language_book(&h, CONLANG_NAME).unwrap();
+        let m = crate::conlang::model::LanguageModel::load(&store, &h, &book).unwrap();
+        assert_eq!(m.phon().phonemes.len(), 13);
+        assert_eq!(m.morph().morphemes.len(), 2);
+        assert_eq!(m.typology().get("word_order").map(String::as_str), Some("sov"));
+        assert_eq!(m.entries.len(), 12);
     }
 
     #[test]

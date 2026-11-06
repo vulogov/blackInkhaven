@@ -131,6 +131,10 @@ impl Phonology {
             }
         }
         self.allophony.iter_mut().for_each(AllophonyRule::normalize);
+        let (units, classes) = self.rule_vocabulary();
+        let (units, classes): (Vec<&str>, Vec<&str>) =
+            (units.iter().map(String::as_str).collect(), classes.iter().map(String::as_str).collect());
+        self.allophony.iter_mut().for_each(|r| r.resolve(&units, &classes));
         self.diphthongs.iter_mut().for_each(norm::nfc_in_place);
         for scheme in &mut self.romanizations {
             for m in &mut scheme.mappings {
@@ -150,6 +154,32 @@ impl Phonology {
                 members.iter_mut().for_each(norm::nfc_in_place);
             }
             t.sandhi.iter_mut().for_each(AllophonyRule::normalize);
+            let tones: Vec<&str> = t.tones.iter().map(String::as_str).collect();
+            let tclasses: Vec<&str> = t.classes.keys().map(String::as_str).collect();
+            t.sandhi.iter_mut().for_each(|r| r.resolve(&tones, &tclasses));
+        }
+    }
+
+    /// The symbol space rules over phonemes resolve against: phoneme IPA and
+    /// class names (owned copies, so a caller may hold `&mut self`).
+    fn rule_vocabulary(&self) -> (Vec<String>, Vec<String>) {
+        (
+            self.phonemes.iter().map(|p| p.ipa.clone()).collect(),
+            self.classes.keys().cloned().collect(),
+        )
+    }
+
+    /// NFC-normalise and resolve a rule set declared *outside* the phonology
+    /// block but applied over its inventory — diachronic sound changes, a
+    /// variety's `sound_changes`, a morpheme's ablaut `rules` (LI-4). The
+    /// phonology's own allophony and sandhi are resolved by [`Self::normalize`].
+    pub fn resolve_rules(&self, rules: &mut [AllophonyRule]) {
+        let (units, classes) = self.rule_vocabulary();
+        let (units, classes): (Vec<&str>, Vec<&str>) =
+            (units.iter().map(String::as_str).collect(), classes.iter().map(String::as_str).collect());
+        for r in rules {
+            r.normalize();
+            r.resolve(&units, &classes);
         }
     }
 
@@ -280,9 +310,48 @@ mod tests {
         assert_eq!(p.allophony[0].right, vec![PatternAtom::Symbol("\u{00E3}".into())]);
         let t = p.tone.as_ref().unwrap();
         assert_eq!(t.tones, vec!["\u{00E3}"]);
-        assert_eq!(t.sandhi[0].lhs, Some(PatternAtom::Symbol("\u{00E3}".into())));
+        assert_eq!(t.sandhi[0].lhs, vec![PatternAtom::Symbol("\u{00E3}".into())]);
         assert_eq!(p.segment("t\u{00E3}"), vec!["t", "\u{00E3}"]);
         assert!(p.phoneme("\u{00E3}").is_some());
+    }
+
+    #[test]
+    fn from_hjson_splits_joined_rule_tokens_against_the_inventory() {
+        // LI-4: `ai > e` and `a i > e` are the same rule; a declared `tʃ` is one
+        // unit; a class name is never split; tone sandhi resolves against tones.
+        let p = phon(r#"{
+            phonemes: [
+                { ipa: "t", kind: "consonant" }, { ipa: "s", kind: "consonant" }, { ipa: "tʃ", kind: "consonant" },
+                { ipa: "a", kind: "vowel" }, { ipa: "i", kind: "vowel" }, { ipa: "e", kind: "vowel" }
+            ],
+            classes: { V: ["a", "i", "e"], ia: ["a"] },
+            allophony: [
+                { rule: "ai > e / _ #" }, { rule: "a i > e / _ #" }, { rule: "t > ts / _ i" },
+                { rule: "tʃ > s / _ #" }, { rule: "V > ∅ / _ ia" }, { rule: "t > x / _ #" }
+            ],
+            tone: { kind: "contour", tones: ["1", "2", "3"], sandhi: [ { rule: "33 > 23 / _ #" } ] }
+        }"#);
+        let sym = |s: &str| PatternAtom::Symbol(s.into());
+        assert_eq!(p.allophony[0].lhs, vec![sym("a"), sym("i")]);
+        assert_eq!(p.allophony[0].lhs, p.allophony[1].lhs);
+        assert_eq!(p.allophony[0].rhs, p.allophony[1].rhs);
+        assert_eq!(p.allophony[2].rhs, vec!["t".to_string(), "s".to_string()]);
+        assert_eq!(p.allophony[3].lhs, vec![sym("tʃ")]);
+        // `ia` is a declared class (and also a cover `i a`): the class wins.
+        assert_eq!(p.allophony[4].right, vec![sym("ia")]);
+        // An unknown surface replacement is left as the author wrote it.
+        assert_eq!(p.allophony[5].rhs, vec!["x".to_string()]);
+        let t = p.tone.as_ref().unwrap();
+        assert_eq!(t.sandhi[0].lhs, vec![sym("3"), sym("3")]);
+        assert_eq!(t.sandhi[0].rhs, vec!["2".to_string(), "3".to_string()]);
+    }
+
+    #[test]
+    fn resolve_rules_covers_rule_sets_declared_outside_the_block() {
+        let p = phon(BASIC);
+        let mut rules = vec![serde_hjson::from_str::<AllophonyRule>("{ rule: \"pa > t / _ #\" }").unwrap()];
+        p.resolve_rules(&mut rules);
+        assert_eq!(rules[0].lhs, vec![PatternAtom::Symbol("p".into()), PatternAtom::Symbol("a".into())]);
     }
 
     #[test]

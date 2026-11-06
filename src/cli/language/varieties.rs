@@ -7,24 +7,27 @@ use crate::error::{Error, Result};
 use super::*;
 
 /// LANG-2 P1 — list a language's declared varieties.
-pub(crate) fn varieties(project: &Path, language: &str) -> Result<()> {
+pub(crate) fn varieties(project: &Path, language: &str, json: bool) -> Result<()> {
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
     let vs = load_varieties(&store, &hierarchy, &lang_book)?;
-    if vs.varieties.is_empty() {
+    if vs.varieties.is_empty() && !json {
         println!(
             "{language} declares no varieties — add a `{{ varieties: [ … ] }}` block to its \
              Grammar chapter (see Documentation/CONLANG.md)."
         );
         return Ok(());
     }
-    println!("{language} · {} variet(y/ies):", vs.varieties.len());
-    for v in &vs.varieties {
-        println!("  {:<14} {}", v.id, v.summary());
-        if let Some(note) = &v.note {
-            println!("  {:<14} {}", "", note);
+    // The same rows `ink.lang.varieties` returns.
+    let rows: Vec<shapes::VarietySummary> = vs.varieties.iter().map(shapes::VarietySummary::from).collect();
+    emit(json, &rows, |_| {
+        println!("{language} · {}:", super::wording::plural(vs.varieties.len(), "variety", "varieties"));
+        for v in &vs.varieties {
+            println!("  {:<14} {}", v.id, v.summary());
+            if let Some(note) = &v.note {
+                println!("  {:<14} {}", "", note);
+            }
         }
-    }
-    Ok(())
+    })
 }
 
 /// LANG-2 P1 — render a form / text in a variety.
@@ -67,57 +70,84 @@ pub(crate) fn lect(
 }
 
 /// LANG-2 P1 — a dialect-comparison table across every declared variety.
-pub(crate) fn dialects(project: &Path, language: &str, count: usize) -> Result<()> {
+pub(crate) fn dialects(project: &Path, language: &str, count: usize, json: bool) -> Result<()> {
     use crate::conlang::variety as varengine;
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
     let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
     let vs = load_varieties(&store, &hierarchy, &lang_book)?;
-    if vs.varieties.is_empty() {
+    if vs.varieties.is_empty() && !json {
         println!("{language} declares no varieties to compare.");
         return Ok(());
     }
     let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
     let sample: Vec<_> = entries.iter().take(count).collect();
-    if sample.is_empty() {
+    if sample.is_empty() && !json {
         println!("{language} has no dictionary entries to compare.");
         return Ok(());
     }
 
-    // Column header: gloss | base | <each variety id>.
-    let mut header = vec!["gloss".to_string(), "base".to_string()];
-    header.extend(vs.varieties.iter().map(|v| v.id.clone()));
-    // Build rows, tracking the widest cell per column for alignment.
-    let mut rows: Vec<Vec<String>> = Vec::new();
-    for e in &sample {
-        let mut row = vec![e.translation.clone(), e.word.clone()];
-        for v in &vs.varieties {
-            let (form, overridden) = varengine::render_concept(&phon, v, &e.translation, &e.word);
-            row.push(if overridden { format!("{form}*") } else { form });
-        }
-        rows.push(row);
-    }
-    let cols = header.len();
-    let widths: Vec<usize> = (0..cols)
-        .map(|c| {
-            header[c]
-                .chars()
-                .count()
-                .max(rows.iter().map(|r| r[c].chars().count()).max().unwrap_or(0))
-        })
-        .collect();
-    let fmt_row = |r: &[String]| {
-        r.iter()
-            .enumerate()
-            .map(|(c, cell)| format!("{:<width$}", cell, width = widths[c]))
-            .collect::<Vec<_>>()
-            .join("  ")
+    let table = shapes::DialectTable {
+        language: language.to_string(),
+        varieties: vs.varieties.iter().map(|v| v.id.clone()).collect(),
+        rows: sample
+            .iter()
+            .map(|e| shapes::DialectRow {
+                gloss: e.translation.clone(),
+                base: e.word.clone(),
+                forms: vs
+                    .varieties
+                    .iter()
+                    .map(|v| {
+                        let (form, overridden) =
+                            varengine::render_concept(&phon, v, &e.translation, &e.word);
+                        (v.id.clone(), shapes::DialectForm { form, overridden })
+                    })
+                    .collect(),
+            })
+            .collect(),
     };
-    println!("{language} · dialect comparison ({} entries, * = word override):", sample.len());
-    println!("  {}", fmt_row(&header));
-    for r in &rows {
-        println!("  {}", fmt_row(r));
-    }
-    Ok(())
+
+    emit(json, &table, |t| {
+        // Column header: gloss | base | <each variety id>.
+        let mut header = vec!["gloss".to_string(), "base".to_string()];
+        header.extend(t.varieties.iter().cloned());
+        let rows: Vec<Vec<String>> = t
+            .rows
+            .iter()
+            .map(|r| {
+                let mut row = vec![r.gloss.clone(), r.base.clone()];
+                for id in &t.varieties {
+                    row.push(match r.forms.get(id) {
+                        Some(f) if f.overridden => format!("{}*", f.form),
+                        Some(f) => f.form.clone(),
+                        None => String::new(),
+                    });
+                }
+                row
+            })
+            .collect();
+        let cols = header.len();
+        let widths: Vec<usize> = (0..cols)
+            .map(|c| {
+                header[c]
+                    .chars()
+                    .count()
+                    .max(rows.iter().map(|r| r[c].chars().count()).max().unwrap_or(0))
+            })
+            .collect();
+        let fmt_row = |r: &[String]| {
+            r.iter()
+                .enumerate()
+                .map(|(c, cell)| format!("{:<width$}", cell, width = widths[c]))
+                .collect::<Vec<_>>()
+                .join("  ")
+        };
+        println!("{language} · dialect comparison ({}, * = word override):", super::wording::entries(rows.len()));
+        println!("  {}", fmt_row(&header));
+        for r in &rows {
+            println!("  {}", fmt_row(r));
+        }
+    })
 }
 
 /// LANG-2 P2 — borrow (nativise) a donor form into a recipient language.

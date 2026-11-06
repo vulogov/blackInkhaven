@@ -36,6 +36,7 @@ pub fn register(vm: &mut VM) -> Result<()> {
         // ── read-only inspectors (store_read) ──
         ("ink.lang.list", w_list),
         ("ink.lang.generate_word", w_generate_word),
+        ("ink.lang.generate_words", w_generate_words),
         ("ink.lang.syllabify", w_syllabify),
         ("ink.lang.ipa", w_ipa),
         ("ink.lang.stress", w_stress),
@@ -90,6 +91,7 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.lang.generate_lexicon", w_generate_lexicon),
         // ── file / document output (fs_write; glyph_draft also ai_write) ──
         ("ink.lang.glyph_lint", w_glyph_lint),
+        ("ink.lang.export_translation", w_export),
         ("ink.lang.export", w_export),
         ("ink.lang.dictionary", w_dictionary),
         ("ink.lang.grammar_book", w_grammar_book),
@@ -131,9 +133,25 @@ fn ctx(tag: &str, name: &str) -> Result<(&'static Store, Hierarchy, Node)> {
     Ok((store, hierarchy, book))
 }
 
+/// 3.18 LI-2 — the cached `LanguageModel` of `book`, with a malformed
+/// phonology block surfaced as the error the block loaders raise.
+fn lang_model(
+    tag: &str,
+    store: &Store,
+    hierarchy: &Hierarchy,
+    book: &Node,
+) -> Result<std::sync::Arc<crate::conlang::model::LanguageModel>> {
+    let m = langapi::model(store, hierarchy, book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    if let Some(e) = &m.phonology_error {
+        return Err(anyhow!("{tag}: {e}"));
+    }
+    Ok(m)
+}
+
 // ── read-only inspectors ─────────────────────────────────────────────────
 
-// ( -- list-of-names )
+// ( -- list-of-{name entries grammar phonology samples} )  the rows
+// `inkhaven language list --json` prints (LI-9).
 fn w_list(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
     do_list(vm).map_err(to_bund_err)
 }
@@ -141,19 +159,20 @@ fn do_list(vm: &mut VM) -> Result<&mut VM> {
     let tag = "ink.lang.list";
     let store = active_store(tag)?;
     let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag}: {e}"))?;
-    let root = hierarchy.iter().find(|n| {
-        n.kind == NodeKind::Book
-            && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_LANGUAGES)
-    });
-    let mut names: Vec<Value> = Vec::new();
-    if let Some(root) = root {
-        for n in hierarchy.children_of(Some(root.id)) {
-            if n.kind == NodeKind::Book {
-                names.push(Value::from_string(n.title.clone()));
-            }
-        }
-    }
-    push(vm, Value::from_list(names));
+    let rows = langapi::language_summaries(&hierarchy).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let out: Vec<Value> = rows
+        .into_iter()
+        .map(|r| {
+            let mut h: HashMap<String, Value> = HashMap::new();
+            h.insert("name".into(), Value::from_string(r.name));
+            h.insert("entries".into(), Value::from_int(r.entries as i64));
+            h.insert("grammar".into(), Value::from_int(r.grammar as i64));
+            h.insert("phonology".into(), Value::from_int(r.phonology as i64));
+            h.insert("samples".into(), Value::from_int(r.samples as i64));
+            Value::from_dict(h)
+        })
+        .collect();
+    push(vm, Value::from_list(out));
     Ok(vm)
 }
 
@@ -176,6 +195,35 @@ fn do_generate_word(vm: &mut VM) -> Result<&mut VM> {
     let word = crate::conlang::generate::word::generate_word(&phon, role, seed as u64)
         .ok_or_else(|| anyhow!("{tag}: no `{role_s}` template to generate from"))?;
     push(vm, Value::from_string(word));
+    Ok(vm)
+}
+
+// ( lang role count -- list-of-words )  the batch `inkhaven language
+// generate-word --count N --json` prints (LI-9); deterministic for a language.
+fn w_generate_words(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_generate_words(vm).map_err(to_bund_err)
+}
+fn do_generate_words(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.generate_words";
+    require_depth(vm, 3, tag)?;
+    let count = value_to_i64(pull(vm, tag)?, "count", tag)?;
+    let role_s = value_to_string(pull(vm, tag)?, "role", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let role = TemplateRole::parse(&role_s)
+        .ok_or_else(|| anyhow!("{tag}: unknown role `{role_s}` (root/prefix/suffix/…)"))?;
+    let max = crate::conlang::generate::word::MAX_GENERATE_BATCH as i64;
+    if count < 1 || count > max {
+        return Err(anyhow!("{tag}: count must be 1 … {max}, got {count}"));
+    }
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .ok_or_else(|| anyhow!("{tag}: language `{name}` has no phonology block"))?;
+    if phon.templates_for(role).is_empty() {
+        return Err(anyhow!("{tag}: language `{name}` declares no `{role_s}` templates"));
+    }
+    let words = langapi::generate_checked(&phon, role, count as usize).map_err(|e| anyhow!("{tag}: {e}"))?;
+    push(vm, Value::from_list(words.into_iter().map(Value::from_string).collect()));
     Ok(vm)
 }
 
@@ -337,16 +385,9 @@ fn do_translate(vm: &mut VM) -> Result<&mut VM> {
     let text = value_to_string(pull(vm, tag)?, "text", tag)?;
     let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
     let (store, hierarchy, book) = ctx(tag, &name)?;
-    let phon = langapi::load_phonology(store, &hierarchy, &book)
-        .map_err(|e| anyhow!("{tag}: {e}"))?
-        .unwrap_or_default();
-    let morph = langapi::load_morphology(store, &hierarchy, &book)
-        .map_err(|e| anyhow!("{tag}: {e}"))?
-        .unwrap_or_default();
-    let (grammar_spec, _) =
-        langapi::load_grammar_spec(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
-    let entries =
-        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    // 3.18 LI-2 — the cached model: a script looping over this word loads the
+    // language once and reuses its gloss index.
+    let m = lang_model(tag, store, &hierarchy, &book)?;
     // Tier 2 (retrieval): layer the translation memory over the rule-based result.
     let mem = translate::memory::TranslationMemory::load(store.project_root(), &name)
         .map_err(|e| anyhow!("{tag}: {e}"))?;
@@ -356,7 +397,7 @@ fn do_translate(vm: &mut VM) -> Result<&mut VM> {
         store.embed_batch(&[text.as_str()]).ok().and_then(|mut v| (!v.is_empty()).then(|| v.remove(0)))
     };
     let t = translate::apply_memory(
-        translate::translate(&phon, &morph, &grammar_spec.grammar, &entries, &text),
+        translate::translate_with(m.gloss(), m.phon(), m.morph(), m.typology(), &text),
         &mem,
         query_embedding.as_deref(),
     );
@@ -400,17 +441,9 @@ fn do_reverse(vm: &mut VM) -> Result<&mut VM> {
     let surface = value_to_string(pull(vm, tag)?, "surface", tag)?;
     let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
     let (store, hierarchy, book) = ctx(tag, &name)?;
-    let phon = langapi::load_phonology(store, &hierarchy, &book)
-        .map_err(|e| anyhow!("{tag}: {e}"))?
-        .unwrap_or_default();
-    let morph = langapi::load_morphology(store, &hierarchy, &book)
-        .map_err(|e| anyhow!("{tag}: {e}"))?
-        .unwrap_or_default();
-    let (spec, _) =
-        langapi::load_grammar_spec(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
-    let entries =
-        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
-    let r = reverse::reverse(&phon, &morph, &spec.grammar, &entries, &surface);
+    // 3.18 LI-2 — the cached model's reverse index (paradigm expansion once).
+    let m = lang_model(tag, store, &hierarchy, &book)?;
+    let r = reverse::reverse_with(m.reverse_index(), m.typology(), &surface);
     langapi::emit_translation_output(&name, &surface, &r.english, r.confidence, "reverse", &r.unresolved, serde_json::Value::Null);
     let gloss = r.words.iter().map(|(w, g)| format!("{w}={g}")).collect::<Vec<_>>().join(" ");
     let mut h: HashMap<String, Value> = HashMap::new();
@@ -757,8 +790,14 @@ fn do_add_word(vm: &mut VM) -> Result<&mut VM> {
         translation,
         ..Default::default()
     };
-    langapi::add_imported_dictionary_entry(store, cfg, &book, &entry)
-        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    // 3.18 LI-3 — the same spelling check as every other door (LB-4): the
+    // Phonology inventory when declared, else Meta/overview.alphabet.
+    let mut writer = langapi::DictionaryWriter::open(store, cfg, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    if let Err(e) = writer.check(&entry.word) {
+        return Err(anyhow!("{tag}: `{}` {e} (checked against the {})", entry.word, writer.authority()));
+    }
+    writer.add_imported(&entry).map_err(|e| anyhow!("{tag}: {e}"))?;
+    writer.finish().map_err(|e| anyhow!("{tag}: {e}"))?;
     Ok(vm)
 }
 
@@ -1100,7 +1139,7 @@ fn do_idiolect(vm: &mut VM) -> Result<&mut VM> {
         .languages
         .first()
         .map(|p| p.language.clone())
-        .ok_or_else(|| anyhow!("{tag}: `{character}` commands no language"))?;
+        .ok_or_else(|| anyhow!("{tag}: character `{character}` has no linked language"))?;
     let var_id = link
         .native_variety
         .clone()
@@ -1237,6 +1276,8 @@ fn do_derive(vm: &mut VM, commit: bool) -> Result<&mut VM> {
     if commit {
         let cfg = active_config(tag)?;
         let mut added = 0i64;
+        let mut writer =
+            langapi::DictionaryWriter::open(store, cfg, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
         for d in &derived {
             let entry = langapi::ImportEntry {
                 word: d.form.clone(),
@@ -1245,10 +1286,11 @@ fn do_derive(vm: &mut VM, commit: bool) -> Result<&mut VM> {
                 etymology: format!("derived from {root} via {}", d.rule),
                 ..Default::default()
             };
-            if langapi::add_imported_dictionary_entry(store, cfg, &book, &entry).is_ok() {
+            if writer.add_imported(&entry).is_ok() {
                 added += 1;
             }
         }
+        writer.finish().map_err(|e| anyhow!("{tag}: {e}"))?;
         push(vm, Value::from_int(added));
     } else {
         let out: Vec<Value> = derived
@@ -2117,10 +2159,16 @@ fn do_dictionary(vm: &mut VM) -> Result<&mut VM> {
             example: (!e.example.trim().is_empty()).then(|| e.example.clone()),
         })
         .collect();
+    let alphabet: Vec<String> = lang_model(tag, store, &hierarchy, &book)?
+        .overview
+        .as_ref()
+        .map(|o| o.alphabet.clone())
+        .unwrap_or_default();
     let meta = DictMeta {
         language: &book.title,
         font_family: if typst { family.as_deref() } else { None },
         profile: Some(&profile),
+        alphabet: &alphabet,
     };
     let doc = if typst {
         output::dictionary_typst(&meta, &rendered)
@@ -2304,7 +2352,9 @@ fn do_glyph_draft(vm: &mut VM) -> Result<&mut VM> {
     Ok(vm)
 }
 
-// ( lang out-path -- out-path )  export the translation system as a .itm bundle
+// ( lang out-path -- out-path )  export the translation system as a .itm bundle.
+// Registered as `ink.lang.export_translation` (the CLI's `export-translation`)
+// with `ink.lang.export` kept as an alias (LI-9).
 fn w_export(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
     do_export(vm).map_err(to_bund_err)
 }

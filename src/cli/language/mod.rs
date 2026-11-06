@@ -45,10 +45,12 @@ mod morphology;
 mod phonology;
 mod render;
 mod scaffold;
+pub(crate) mod shapes;
 mod syntax;
 mod translate;
 mod typology;
 mod varieties;
+pub(crate) mod wording;
 mod writing;
 pub(crate) use authoring::*;
 pub(crate) use books::*;
@@ -63,6 +65,7 @@ pub(crate) use morphology::*;
 pub(crate) use phonology::*;
 pub(crate) use render::*;
 pub(crate) use scaffold::*;
+pub(crate) use shapes::emit;
 pub(crate) use syntax::*;
 pub(crate) use translate::*;
 pub(crate) use typology::*;
@@ -139,7 +142,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             project,
             &language,
             &kind,
-            count,
+            count as usize,
             seed,
             &meter,
             provider.as_deref(),
@@ -150,9 +153,16 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             format,
             output,
         } => export(project, &language, format, output.as_deref()),
-        LanguageCommand::List => list(project),
+        LanguageCommand::List { json } => list(project, json),
+        LanguageCommand::IndexMarkdown => {
+            print!("{}", crate::cli::language_index::render_markdown());
+            Ok(())
+        }
         LanguageCommand::RemoveWord { language, word } => {
             remove_word(project, &language, &word)
+        }
+        LanguageCommand::SortDictionary { language, dry_run } => {
+            lexicon::sort_dictionary(project, &language, dry_run)
         }
         LanguageCommand::DefineRule {
             language,
@@ -163,20 +173,22 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             language,
             role,
             count,
-        } => generate_word(project, &language, &role, count),
-        LanguageCommand::Syllabify { language, word } => {
-            syllabify_word(project, &language, &word)
+            json,
+        } => generate_word(project, &language, &role, count as usize, json),
+        LanguageCommand::Syllabify { language, word, json } => {
+            syllabify_word(project, &language, &word, json)
         }
-        LanguageCommand::Ipa { language, word } => ipa_surface(project, &language, &word),
-        LanguageCommand::Stress { language, word } => stress_word(project, &language, &word),
-        LanguageCommand::Scan { language, text } => scan_verse(project, &language, &text),
+        LanguageCommand::Ipa { language, word, json } => ipa_surface(project, &language, &word, json),
+        LanguageCommand::Stress { language, word, json } => stress_word(project, &language, &word, json),
+        LanguageCommand::Scan { language, text, json } => scan_verse(project, &language, &text, json),
         LanguageCommand::Romanize {
             language,
             text,
             scheme,
             reverse,
-        } => romanize_text(project, &language, &text, scheme.as_deref(), reverse),
-        LanguageCommand::Tone { language, tones } => tone_sandhi(project, &language, &tones),
+            json,
+        } => romanize_text(project, &language, &text, scheme.as_deref(), reverse, json),
+        LanguageCommand::Tone { language, tones, json } => tone_sandhi(project, &language, &tones, json),
         LanguageCommand::Audit { language, json } => audit(project, &language, json),
         LanguageCommand::Stats { language, json } => stats(project, &language, json),
         LanguageCommand::Metrics { language, json } => metrics(project, &language, json),
@@ -194,12 +206,12 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Distribution { language, json } => {
             distribution(project, &language, json)
         }
-        LanguageCommand::Sketch { language, out } => sketch(project, &language, out.as_deref()),
+        LanguageCommand::Sketch { language, output } => sketch(project, &language, output.as_deref()),
         LanguageCommand::SuggestPhonemes { language, json } => {
             suggest_phonemes(project, &language, json)
         }
-        LanguageCommand::Scaffold { from, out, provider } => {
-            scaffold_from(project, &from, out.as_deref(), provider.as_deref())
+        LanguageCommand::Scaffold { from, output, provider } => {
+            scaffold_from(project, &from, output.as_deref(), provider.as_deref())
         }
         LanguageCommand::Parse { language, word, json } => {
             parse_surface(project, &language, &word, json)
@@ -254,14 +266,14 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Trace { language, rule, limit, json } => {
             trace(project, &language, &rule, limit, json)
         }
-        LanguageCommand::Dictionary { language, format, out, font } => {
-            dictionary(project, &language, &format, out.as_deref(), font.as_deref())
+        LanguageCommand::Dictionary { language, format, output, font } => {
+            dictionary(project, &language, &format, output.as_deref(), font.as_deref())
         }
-        LanguageCommand::GrammarBook { language, format, out, font, study, provider } => {
-            grammar_book(project, &language, &format, out.as_deref(), font.as_deref(), study, provider.as_deref())
+        LanguageCommand::GrammarBook { language, format, output, font, study, provider } => {
+            grammar_book(project, &language, &format, output.as_deref(), font.as_deref(), study, provider.as_deref())
         }
-        LanguageCommand::Tutorial { language, format, out, font, provider } => {
-            tutorial(project, &language, &format, out.as_deref(), font.as_deref(), provider.as_deref())
+        LanguageCommand::Tutorial { language, format, output, font, provider } => {
+            tutorial(project, &language, &format, output.as_deref(), font.as_deref(), provider.as_deref())
         }
         LanguageCommand::LinkPlace {
             place,
@@ -282,7 +294,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             native_variety.as_deref(),
         ),
         LanguageCommand::Speakers { language } => speakers(project, &language),
-        LanguageCommand::Ecology { svg } => ecology(project, svg.as_deref()),
+        LanguageCommand::Ecology { output } => ecology(project, output.as_deref()),
         LanguageCommand::Idiolect {
             character,
             word,
@@ -296,7 +308,8 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             root,
             template,
             gloss,
-        } => paradigm(project, &language, &root, &template, gloss.as_deref()),
+            json,
+        } => paradigm(project, &language, &root, &template, gloss.as_deref(), json),
         LanguageCommand::Sentence {
             language,
             subject,
@@ -313,6 +326,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             negator,
             question,
             q_particle,
+            json,
         } => sentence(
             project,
             &language,
@@ -330,6 +344,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             negator.as_deref(),
             question,
             q_particle.as_deref(),
+            json,
         ),
         LanguageCommand::Translate { language, text, trace, json } => {
             translate(project, &language, &text, trace, json)
@@ -343,15 +358,15 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Remember { language, english, conlang } => {
             remember(project, &language, &english, &conlang)
         }
-        LanguageCommand::Memory { language } => memory_list(project, &language),
+        LanguageCommand::Memory { language, json } => memory_list(project, &language, json),
         LanguageCommand::Corpus { language, pool, limit, yes, json } => {
             corpus(project, &language, pool.as_deref(), limit, yes, json)
         }
         LanguageCommand::Eval { language, test_set, limit, json } => {
             eval(project, &language, test_set.as_deref(), limit, json)
         }
-        LanguageCommand::ExportTranslation { language, out } => {
-            export_translation(project, &language, out.as_deref())
+        LanguageCommand::ExportTranslation { language, output } => {
+            export_translation(project, &language, output.as_deref())
         }
         LanguageCommand::Relative {
             language,
@@ -422,14 +437,14 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             features,
             gloss,
         } => agree(project, &language, &word, &pos, &features, gloss.as_deref()),
-        LanguageCommand::Varieties { language } => varieties(project, &language),
+        LanguageCommand::Varieties { language, json } => varieties(project, &language, json),
         LanguageCommand::Lect {
             language,
             variety,
             word,
             text,
         } => lect(project, &language, &variety, word.as_deref(), text.as_deref()),
-        LanguageCommand::Dialects { language, count } => dialects(project, &language, count),
+        LanguageCommand::Dialects { language, count, json } => dialects(project, &language, count as usize, json),
         LanguageCommand::Borrow {
             language,
             form,
@@ -463,8 +478,8 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             topic,
             count,
             provider,
-        } => propose_loans(project, &language, &from, topic.as_deref(), count, provider.as_deref()),
-        LanguageCommand::Gloss { language, text } => gloss_text(project, &language, &text),
+        } => propose_loans(project, &language, &from, topic.as_deref(), count as usize, provider.as_deref()),
+        LanguageCommand::Gloss { language, text, json } => gloss_text(project, &language, &text, json),
         LanguageCommand::Igt { language, text, save, name, json } => {
             igt_text(project, &language, &text, save, name.as_deref(), json)
         }
@@ -523,7 +538,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             family,
             language,
             glyphs,
-            out,
+            output,
             upm,
             format,
         } => font_build(
@@ -531,7 +546,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             family.as_deref(),
             language.as_deref(),
             glyphs.as_deref(),
-            out.as_deref(),
+            output.as_deref(),
             upm,
             &format,
         ),
@@ -560,7 +575,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             codepoint,
             phoneme,
             slots,
-            out,
+            output,
             yes,
         } => font_compose(
             project,
@@ -570,7 +585,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             codepoint.as_deref(),
             phoneme.as_deref(),
             &slots,
-            out.as_deref(),
+            output.as_deref(),
             yes,
         ),
         LanguageCommand::SpatialTypst {
@@ -579,8 +594,8 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             name,
             slots,
             size,
-            out,
-        } => spatial_typst(project, &language, &template, &name, &slots, &size, out.as_deref()),
+            output,
+        } => spatial_typst(project, &language, &template, &name, &slots, &size, output.as_deref()),
         LanguageCommand::Transliterate { language, text, json } => {
             transliterate(project, &language, &text, json)
         }
@@ -591,7 +606,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             codepoint,
             name,
             provider,
-            out,
+            output,
             yes,
         } => glyph_draft(
             project,
@@ -601,7 +616,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             codepoint.as_deref(),
             name.as_deref(),
             provider.as_deref(),
-            out.as_deref(),
+            output.as_deref(),
             yes,
         ),
         LanguageCommand::GlyphLint { svg } => glyph_lint(&svg),
@@ -613,10 +628,10 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::RealismCheck { language, provider } => {
             realism_check(project, &language, provider.as_deref())
         }
-        LanguageCommand::FamilyTree => family_tree(project),
-        LanguageCommand::Cognates { proto, form } => cognates(project, &proto, &form),
-        LanguageCommand::SoundChange { language, form } => {
-            sound_change(project, &language, &form)
+        LanguageCommand::FamilyTree { json } => family_tree(project, json),
+        LanguageCommand::Cognates { proto, form, json } => cognates(project, &proto, &form, json),
+        LanguageCommand::SoundChange { language, form, json } => {
+            sound_change(project, &language, &form, json)
         }
         LanguageCommand::DeriveLexicon { language, yes } => {
             derive_lexicon_cmd(project, &language, yes)
@@ -660,7 +675,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             project,
             &language,
             topic.as_deref(),
-            count,
+            count as usize,
             era.as_deref(),
             register.as_deref(),
             provider.as_deref(),
@@ -680,166 +695,56 @@ form). Never assign two entries the same meaning. Keep `pos` a short lowercase t
 `domain` is one or two short semantic-domain tags.";
 
 
-/// Find + parse the `Morphology`-chapter HJSON block for a language sub-book.
+/// The language's morphology block — the first non-empty one under a
+/// `Morphology` or `Grammar` chapter — from the cached [`LanguageModel`]
+/// (3.18 LI-2; the 1.2.13 scaffold has no Morphology chapter, so the block
+/// usually lives under Grammar).
 pub(crate) fn load_morphology(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Result<Option<crate::conlang::types::morphology::Morphology>> {
-    // The 1.2.13 scaffold has no Morphology chapter, so the block lives in
-    // the Grammar chapter (or a hand-added Morphology chapter).
-    let chapters: Vec<_> = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .filter(|n| {
-            n.kind == NodeKind::Chapter
-                && (n.title.eq_ignore_ascii_case("Morphology")
-                    || n.title.eq_ignore_ascii_case("Grammar"))
-        })
-        .cloned()
-        .collect();
-    for chapter in chapters {
-        for para in hierarchy.children_of(Some(chapter.id)) {
-            if para.kind != NodeKind::Paragraph {
-                continue;
-            }
-            let Some(bytes) = store.get_content(para.id)? else { continue };
-            let body = String::from_utf8_lossy(&bytes);
-            match crate::conlang::types::morphology::Morphology::from_hjson(&body) {
-                Ok(Some(m))
-                    if !m.morphemes.is_empty()
-                        || !m.paradigms.is_empty()
-                        || !m.derivations.is_empty() =>
-                {
-                    return Ok(Some(m));
-                }
-                // A Grammar paragraph that isn't a morphology block (a
-                // define-rule rule) just won't match the shape — skip it.
-                Ok(_) | Err(_) => continue,
-            }
-        }
-    }
-    Ok(None)
+    Ok(model(store, hierarchy, lang_book)?.morphology.clone())
 }
 
-/// LANG-2 P1 — load the `{ varieties: [ … ] }` block from the Grammar chapter.
+/// LANG-2 P1 — every `{ varieties: [ … ] }` block under the Grammar chapter,
+/// merged by id (a hand-authored set and AI-proposed dialects written as
+/// separate paragraphs are all seen together). From the cached model.
 pub(crate) fn load_varieties(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Result<crate::conlang::types::variety::Varieties> {
-    use crate::conlang::types::variety::Varieties;
-    let chapters: Vec<_> = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .filter(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Grammar"))
-        .cloned()
-        .collect();
-    // Merge every `{ varieties: [ … ] }` block across the Grammar chapter, so a
-    // hand-authored set and AI-proposed dialects (written as separate paragraphs)
-    // are all seen together.
-    let mut merged = Varieties::default();
-    for chapter in chapters {
-        for para in hierarchy.children_of(Some(chapter.id)) {
-            if para.kind != NodeKind::Paragraph {
-                continue;
-            }
-            let Some(bytes) = store.get_content(para.id)? else { continue };
-            let body = String::from_utf8_lossy(&bytes);
-            if let Ok(Some(v)) = Varieties::from_hjson(&body) {
-                for var in v.varieties {
-                    if !merged.varieties.iter().any(|x| x.id.eq_ignore_ascii_case(&var.id)) {
-                        merged.varieties.push(var);
-                    }
-                }
-            }
-        }
-    }
-    Ok(merged)
+    Ok(model(store, hierarchy, lang_book)?.varieties.clone())
 }
 
-/// LANG-2 P3 — load the `{ contact: { … } }` block from the Grammar chapter
+/// LANG-2 P3 — the `{ contact: { … } }` block from the Grammar chapter
 /// (a language's areal / Sprachbund membership). `None` when absent.
 pub(crate) fn load_contact(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Result<Option<crate::conlang::types::contact::Contact>> {
-    use crate::conlang::types::contact::Contact;
-    let chapters: Vec<_> = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .filter(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Grammar"))
-        .cloned()
-        .collect();
-    for chapter in chapters {
-        for para in hierarchy.children_of(Some(chapter.id)) {
-            if para.kind != NodeKind::Paragraph {
-                continue;
-            }
-            let Ok(Some(bytes)) = store.get_content(para.id) else { continue };
-            if let Ok(Some(c)) = Contact::from_hjson(&String::from_utf8_lossy(&bytes)) {
-                return Ok(Some(c));
-            }
-        }
-    }
-    Ok(None)
+    Ok(model(store, hierarchy, lang_book)?.contact.clone())
 }
 
-/// LANG-2 P2 — load the `{ loan_phonology: { … } }` block from the Phonology
+/// LANG-2 P2 — the `{ loan_phonology: { … } }` block from the Phonology
 /// chapter (how this language nativises borrowings). Defaults when absent.
 pub(crate) fn load_loan_phonology(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Result<crate::conlang::types::contact::LoanPhonology> {
-    use crate::conlang::types::contact::LoanPhonology;
-    let chapters: Vec<_> = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .filter(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Phonology"))
-        .cloned()
-        .collect();
-    for chapter in chapters {
-        for para in hierarchy.children_of(Some(chapter.id)) {
-            if para.kind != NodeKind::Paragraph {
-                continue;
-            }
-            let Ok(Some(bytes)) = store.get_content(para.id) else { continue };
-            if let Ok(Some(lp)) = LoanPhonology::from_hjson(&String::from_utf8_lossy(&bytes)) {
-                return Ok(lp);
-            }
-        }
-    }
-    Ok(LoanPhonology::default())
+    Ok(model(store, hierarchy, lang_book)?.loan_phonology.clone())
 }
 
-/// Load the `{ diachronics: { proto, rules } }` block from the Phonology
-/// chapter.
+/// The `{ diachronics: { proto, rules } }` block from the Phonology chapter.
 pub(crate) fn load_diachronics(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Result<Option<crate::conlang::types::diachronic::Diachronics>> {
-    use crate::conlang::types::diachronic::Diachronics;
-    let Some(chapter) = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Phonology"))
-        .cloned()
-    else {
-        return Ok(None);
-    };
-    for para in hierarchy.children_of(Some(chapter.id)) {
-        if para.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Ok(Some(bytes)) = store.get_content(para.id) else { continue };
-        if let Ok(Some(d)) = Diachronics::from_hjson(&String::from_utf8_lossy(&bytes)) {
-            return Ok(Some(d));
-        }
-    }
-    Ok(None)
+    Ok(model(store, hierarchy, lang_book)?.diachronics.clone())
 }
 
 
@@ -912,7 +817,7 @@ pub(crate) fn set_grammar_feature(
     }
     spec.grammar.insert(f.id.to_string(), value.to_lowercase());
     let body = serde_json::to_string_pretty(&spec)
-        .map_err(|e| Error::Store(format!("serializing grammar: {e}")))?;
+        .map_err(|e| Error::Store(format!("serialising grammar: {e}")))?;
     upsert_grammar_paragraph(store, cfg, lang_book, "typology", node, &body)
 }
 
@@ -951,65 +856,25 @@ fn open_phonology(project: &Path, language: &str) -> Result<(Store, crate::conla
     Ok((store, phonology))
 }
 
-/// Load every parseable `DictionaryEntry` under a language's `Dictionary`
-/// chapter (across all alphabet subchapters).
+/// Every parseable `DictionaryEntry` under a language's `Dictionary`
+/// chapter (across all alphabet subchapters), from the cached model.
 pub(crate) fn load_dictionary(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Result<Vec<crate::language_entry::DictionaryEntry>> {
-    let Some(chapter) = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Dictionary"))
-        .cloned()
-    else {
-        return Ok(Vec::new());
-    };
-    let mut out = Vec::new();
-    for id in hierarchy.collect_subtree(chapter.id) {
-        let Some(node) = hierarchy.get(id) else { continue };
-        if node.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Ok(Some(bytes)) = store.get_content(node.id) else { continue };
-        let body = String::from_utf8_lossy(&bytes);
-        if let Ok(Some(entry)) = crate::language_entry::parse(&body) {
-            out.push(entry);
-        }
-    }
-    Ok(out)
+    Ok(model(store, hierarchy, lang_book)?.entries.clone())
 }
 
-/// IGT-1 (Wave 4) — load every stored interlinear under a language's `Texts`
-/// chapter, as `(title, Igt)` in tree order. Best-effort: unparseable paragraphs
-/// are skipped.
+/// IGT-1 (Wave 4) — every stored interlinear under a language's `Texts`
+/// chapter, as `(title, Igt)` in tree order. Best-effort: unparseable
+/// paragraphs are skipped. From the cached model.
 pub(crate) fn load_texts(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Vec<(String, crate::conlang::igt::Igt)> {
-    let Some(chapter) = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Texts"))
-        .cloned()
-    else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for id in hierarchy.collect_subtree(chapter.id) {
-        let Some(node) = hierarchy.get(id) else { continue };
-        if node.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Ok(Some(bytes)) = store.get_content(node.id) else { continue };
-        let body = String::from_utf8_lossy(&bytes);
-        if let Ok(igt) = serde_json::from_str::<crate::conlang::igt::Igt>(&body) {
-            out.push((node.title.clone(), igt));
-        }
-    }
-    out
+    model(store, hierarchy, lang_book).map(|m| m.texts.clone()).unwrap_or_default()
 }
 
 /// CORPUS-1 (Wave 4) — assemble the corpus from `source`: the stored interlinear
@@ -1141,7 +1006,7 @@ pub(crate) fn set_text_translation(
         .map_err(|e| Error::Store(format!("parsing stored text `{name}`: {e}")))?;
     igt.translation = translation.to_string();
 
-    let body = serde_json::to_string_pretty(&igt).map_err(|e| Error::Store(format!("serialize igt: {e}")))?;
+    let body = serde_json::to_string_pretty(&igt).map_err(|e| Error::Store(format!("serialising igt: {e}")))?;
     if let Some(rel) = &node.file {
         let abs = store.project_root().join(rel);
         crate::io_atomic::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write igt file: {e}")))?;
@@ -1152,34 +1017,15 @@ pub(crate) fn set_text_translation(
     Ok(true)
 }
 
-/// HYP-1 (Wave 4) — load every stored hypothesis under a language's `Hypotheses`
+/// HYP-1 (Wave 4) — every stored hypothesis under a language's `Hypotheses`
 /// chapter, in tree order. Best-effort: unparseable paragraphs are skipped.
+/// From the cached model.
 pub(crate) fn load_hypotheses(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Vec<crate::conlang::hypothesis::Hypothesis> {
-    let Some(chapter) = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Hypotheses"))
-        .cloned()
-    else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for id in hierarchy.collect_subtree(chapter.id) {
-        let Some(node) = hierarchy.get(id) else { continue };
-        if node.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Ok(Some(bytes)) = store.get_content(node.id) else { continue };
-        if let Ok(h) = serde_json::from_str::<crate::conlang::hypothesis::Hypothesis>(&String::from_utf8_lossy(&bytes))
-        {
-            out.push(h);
-        }
-    }
-    out
+    model(store, hierarchy, lang_book).map(|m| m.hypotheses.clone()).unwrap_or_default()
 }
 
 /// HYP-1 (Wave 4) — update a stored hypothesis in place with `mutate`, then
@@ -1214,7 +1060,7 @@ pub(crate) fn update_hypothesis(
             .map_err(|e| Error::Store(format!("parsing stored hypothesis `{id}`: {e}")))?;
     mutate(&mut h);
 
-    let body = serde_json::to_string_pretty(&h).map_err(|e| Error::Store(format!("serialize hypothesis: {e}")))?;
+    let body = serde_json::to_string_pretty(&h).map_err(|e| Error::Store(format!("serialising hypothesis: {e}")))?;
     if let Some(rel) = &node.file {
         let abs = store.project_root().join(rel);
         crate::io_atomic::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write hypothesis file: {e}")))?;
@@ -1274,7 +1120,7 @@ fn gaps(project: &Path, language: &str, scope: &str, json: bool) -> Result<()> {
         println!(
             "{}",
             serde_json::to_string_pretty(&out)
-                .map_err(|e| Error::Store(format!("serializing gap report: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising gap report: {e}")))?
         );
         return Ok(());
     }
@@ -1396,54 +1242,48 @@ pub(crate) fn pronounce(phon: &crate::conlang::Phonology, word: &str) -> Option<
 
 
 
-/// Find and parse the `Phonology`-chapter HJSON block for a language
-/// sub-book.  Scans every paragraph under the `Phonology` chapter and
-/// returns the first that parses as a phonology block (so the author can keep
-/// it in `overview`, a dedicated `inventory` paragraph, or wherever).
+/// The language's `Phonology` value — the first paragraph under the
+/// `Phonology` chapter that parses as a phoneme block (so the author can keep
+/// it in `overview`, a dedicated `inventory` paragraph, or wherever) — from
+/// the cached [`LanguageModel`] (3.18 LI-2).
+///
+/// A malformed block under Phonology is still a hard error. The validator's
+/// findings (LB-1 / LB-2: an unknown constraint kind, an undeclared class, a
+/// rule that can never match) are printed once per load of the model, so a
+/// command that asks for the phonology twice warns once; `language doctor`
+/// lists the same findings with their locations.
 pub(crate) fn load_phonology(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Result<Option<crate::conlang::Phonology>> {
-    let Some(chapter) = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Phonology"))
-        .cloned()
-    else {
-        return Ok(None);
-    };
-    for para in hierarchy.children_of(Some(chapter.id)) {
-        if para.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Some(bytes) = store.get_content(para.id)? else {
-            continue;
-        };
-        let body = String::from_utf8_lossy(&bytes);
-        match crate::conlang::Phonology::from_hjson(&body) {
-            Ok(Some(p)) if !p.phonemes.is_empty() => {
-                // LB-1 / LB-2: structural problems (an unknown constraint kind,
-                // an undeclared class, a rule that can never match) no longer
-                // fail the load. Warn once per finding; `language doctor`
-                // lists the same findings with their locations.
-                for f in p.validate() {
-                    eprintln!(
-                        "phonology {}: Phonology/{}: {}: {}",
-                        f.severity.as_str(),
-                        para.title,
-                        f.location,
-                        f.message
-                    );
-                }
-                return Ok(Some(p));
-            }
-            Ok(_) => continue,
-            // A malformed block under Phonology is worth surfacing.
-            Err(e) => return Err(Error::Config(format!("Phonology/{}: {e}", para.title))),
+    let (m, fresh) = crate::conlang::model::cached(store, hierarchy, lang_book)?;
+    if let Some(e) = &m.phonology_error {
+        return Err(Error::Config(e.clone()));
+    }
+    if fresh {
+        for f in &m.findings {
+            eprintln!(
+                "phonology {}: Phonology/{}: {}: {}",
+                f.severity.as_str(),
+                m.phonology_title,
+                f.location,
+                f.message
+            );
         }
     }
-    Ok(None)
+    Ok(m.phonology.clone())
+}
+
+/// The cached [`LanguageModel`] of `lang_book` (3.18 LI-2). The block
+/// loaders above are views over it; commands that need several blocks, or
+/// the gloss / reverse / analyzer indexes, take the model directly.
+pub(crate) fn model(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Result<std::sync::Arc<crate::conlang::model::LanguageModel>> {
+    Ok(crate::conlang::model::cached(store, hierarchy, lang_book)?.0)
 }
 
 
@@ -1571,9 +1411,7 @@ fn remove_word(project: &Path, language: &str, word: &str) -> Result<()> {
             n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language)
         })
         .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!("language `{language}` not found"))
-        })?;
+        .ok_or_else(|| wording::language_not_found(language))?;
     // The bucket add-word would derive is searched first, then every bucket
     // (entries filed under a pre-3.17 bucket are still found by name).
     let (subchapter, entry) = find_dictionary_entry(&store, &hierarchy, &lang_book, word)?

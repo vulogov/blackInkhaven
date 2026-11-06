@@ -415,7 +415,20 @@ pub fn translate(
     entries: &[DictionaryEntry],
     text: &str,
 ) -> Translation {
-    let idx = GlossIndex::build(entries);
+    translate_with(&GlossIndex::build(entries), phon, morph, typology, text)
+}
+
+/// [`translate`] with a prebuilt gloss index (3.18 LI-2) — the
+/// `LanguageModel`'s, or one built once for a batch of sentences.
+pub fn translate_with(
+    idx: &GlossIndex,
+    phon: &Phonology,
+    morph: &Morphology,
+    typology: &BTreeMap<String, String>,
+    text: &str,
+) -> Translation {
+    let perf = crate::store::perf_trace_enabled();
+    let t0 = std::time::Instant::now();
     let spans = split_clauses(text);
 
     let mut trace: Vec<TraceEntry> = Vec::new();
@@ -426,12 +439,13 @@ pub fn translate(
     let mut confidence: Option<f32> = None;
 
     for span in &spans {
-        let r = translate_clause(&idx, phon, morph, typology, &span.text, &mut trace, &mut unresolved);
+        let r = translate_clause(idx, phon, morph, typology, &span.text, &mut trace, &mut unresolved);
         surfaces.push(r.surface);
         literals.push(r.literal);
         words.extend(r.words);
         confidence = Some(confidence.map_or(r.confidence, |c| c.min(r.confidence)));
     }
+    crate::store::perf_mark(perf, "conlang.translate", t0.elapsed());
 
     Translation {
         source: text.to_string(),

@@ -110,6 +110,35 @@ impl Hierarchy {
         Self { by_id, order, children }
     }
 
+    /// 3.18 LI-3 — add a node this process just created, keeping the
+    /// `(depth, order, slug)` iteration order and the parent → children
+    /// index as `load` would build them. Lets a batch writer that
+    /// creates many siblings keep one snapshot current instead of
+    /// reloading the whole store after each `create_node`.
+    pub fn insert(&mut self, node: Node) {
+        let id = node.id;
+        let parent_id = node.parent_id;
+        let key = |n: &Node| (n.path.len(), n.order, n.slug.clone());
+        let node_key = key(&node);
+        if self.by_id.insert(id, node).is_some() {
+            // Replacing: drop the stale positions first.
+            self.order.retain(|x| *x != id);
+            for ids in self.children.values_mut() {
+                ids.retain(|x| *x != id);
+            }
+        }
+        let at = self
+            .order
+            .partition_point(|other| key(&self.by_id[other]) <= node_key);
+        self.order.insert(at, id);
+        let siblings = self.children.entry(parent_id).or_default();
+        let at = siblings.partition_point(|other| {
+            let o = &self.by_id[other];
+            (o.order, o.slug.as_str()) <= (node_key.1, node_key.2.as_str())
+        });
+        siblings.insert(at, id);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.by_id.is_empty()
     }
@@ -629,5 +658,72 @@ mod placement_tests {
             h.validate_placement(&cfg, Some(&parent), NodeKind::Book).is_err(),
             "Book child under Notes (a non-Language system book) should still be rejected"
         );
+    }
+}
+
+#[cfg(test)]
+mod insert_tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn node(id: Uuid, kind: &str, slug: &str, path: &[&str], parent: Option<Uuid>, order: u32) -> Node {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "kind": kind,
+            "title": slug,
+            "slug": slug,
+            "path": path,
+            "parent_id": parent,
+            "order": order,
+            "file": null,
+            "modified_at": "2026-01-01T00:00:00Z",
+        }))
+        .expect("test node deserialises")
+    }
+
+    /// 3.18 LI-3 — `insert` lands a new sibling where `load` would: in
+    /// `(order, slug)` position among its siblings and in the global
+    /// `(depth, order, slug)` iteration order.
+    #[test]
+    fn insert_keeps_sibling_and_iteration_order() {
+        let book = Uuid::now_v7();
+        let (a, c) = (Uuid::now_v7(), Uuid::now_v7());
+        let mut h = Hierarchy::from_nodes_for_test(vec![
+            node(book, "book", "lang", &[], None, 1),
+            node(a, "subchapter", "a", &["lang"], Some(book), 1),
+            node(c, "subchapter", "c", &["lang"], Some(book), 3),
+        ]);
+        let b = Uuid::now_v7();
+        h.insert(node(b, "subchapter", "b", &["lang"], Some(book), 2));
+        let kids: Vec<Uuid> = h.children_of(Some(book)).iter().map(|n| n.id).collect();
+        assert_eq!(kids, vec![a, b, c]);
+        let all: Vec<Uuid> = h.iter().map(|n| n.id).collect();
+        assert_eq!(all, vec![book, a, b, c]);
+        assert_eq!(h.next_order(Some(book)), 4);
+
+        // A child of the new node: deeper, so it iterates after every depth-1 node.
+        let p = Uuid::now_v7();
+        h.insert(node(p, "paragraph", "p", &["lang", "b"], Some(b), 1));
+        let all: Vec<Uuid> = h.iter().map(|n| n.id).collect();
+        assert_eq!(all, vec![book, a, b, c, p]);
+        assert_eq!(h.children_of(Some(b)).len(), 1);
+        assert_eq!(h.collect_subtree(b), vec![b, p]);
+    }
+
+    #[test]
+    fn insert_replaces_an_existing_node_in_place() {
+        let book = Uuid::now_v7();
+        let a = Uuid::now_v7();
+        let mut h = Hierarchy::from_nodes_for_test(vec![
+            node(book, "book", "lang", &[], None, 1),
+            node(a, "subchapter", "a", &["lang"], Some(book), 1),
+        ]);
+        let mut moved = node(a, "subchapter", "a", &["lang"], Some(book), 5);
+        moved.title = "renamed".into();
+        h.insert(moved);
+        assert_eq!(h.children_of(Some(book)).len(), 1);
+        assert_eq!(h.iter().count(), 2);
+        assert_eq!(h.get(a).unwrap().title, "renamed");
+        assert_eq!(h.get(a).unwrap().order, 5);
     }
 }

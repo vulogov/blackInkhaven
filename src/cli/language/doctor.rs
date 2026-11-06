@@ -99,11 +99,7 @@ pub(crate) fn doctor(project: &Path, language: &str, json: bool) -> Result<()> {
             n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language)
         })
         .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "language `{language}` not found — run `inkhaven language init {language}` first"
-            ))
-        })?;
+        .ok_or_else(|| super::wording::language_not_found(language))?;
 
     // Walk each chapter's paragraphs.  We don't reach
     // for the in-memory TUI helpers because doctor /
@@ -338,7 +334,7 @@ pub(crate) fn doctor(project: &Path, language: &str, json: bool) -> Result<()> {
             }),
         );
         let s = serde_json::to_string_pretty(&Value::Object(report))
-            .map_err(|e| Error::Config(format!("json serialise: {e}")))?;
+            .map_err(|e| Error::Config(format!("serialising json: {e}")))?;
         println!("{s}");
         return Ok(());
     }

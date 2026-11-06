@@ -73,8 +73,8 @@ pub(super) fn build_rows(store: &Store, hierarchy: &Hierarchy, project_root: &Pa
             None => rows.push(stat("  Phonology     : not defined yet".into())),
         }
         rows.push(stat(format!(
-            "  Lexicon       : {} entr(y/ies)",
-            count_dictionary(store, hierarchy, lang)
+            "  Lexicon       : {}",
+            crate::cli::language::wording::entries(count_dictionary(store, hierarchy, lang))
         )));
         let (places, chars) = links.speakers_of(&lang.title);
         rows.push(stat(format!(
@@ -142,67 +142,29 @@ pub(super) fn resolve_language(store: &Store, hierarchy: &Hierarchy, ident: &str
 }
 
 fn meta_iso(store: &Store, hierarchy: &Hierarchy, lang_book: &Node) -> Option<String> {
-    let meta = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Meta"))?;
-    let overview = hierarchy
-        .children_of(Some(meta.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Paragraph && n.title.eq_ignore_ascii_case("overview"))?;
-    let bytes = store.get_content(overview.id).ok()??;
-    let m = crate::language_entry::parse_meta_overview(&String::from_utf8_lossy(&bytes)).ok()??;
-    let iso = m.iso_code.trim();
-    (!iso.is_empty()).then(|| iso.to_string())
+    // 3.18 LI-2 — the cached model already parsed `Meta/overview`.
+    let (m, _) = crate::conlang::model::cached(store, hierarchy, lang_book).ok()?;
+    let iso = m.overview.as_ref()?.iso_code.trim().to_string();
+    (!iso.is_empty()).then_some(iso)
 }
 
 /// Load a language's dictionary as `(headword, gloss)` pairs for the
 /// `:lang:` insertion picker.
 pub(super) fn load_entries(store: &Store, hierarchy: &Hierarchy, lang_book: &Node) -> Vec<(String, String)> {
-    let Some(chapter) = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Dictionary"))
-    else {
+    // 3.18 LI-2 — from the cached model (silent: no stderr in the TUI).
+    let Ok((m, _)) = crate::conlang::model::cached(store, hierarchy, lang_book) else {
         return Vec::new();
     };
-    let mut out = Vec::new();
-    for id in hierarchy.collect_subtree(chapter.id) {
-        let Some(node) = hierarchy.get(id) else { continue };
-        if node.kind != NodeKind::Paragraph {
-            continue;
-        }
-        if let Ok(Some(bytes)) = store.get_content(node.id) {
-            if let Ok(Some(e)) = crate::language_entry::parse(&String::from_utf8_lossy(&bytes)) {
-                let word = e.word.trim().to_string();
-                if !word.is_empty() {
-                    out.push((word, e.translation.trim().to_string()));
-                }
-            }
-        }
-    }
-    out
+    m.entries
+        .iter()
+        .map(|e| (e.word.trim().to_string(), e.translation.trim().to_string()))
+        .filter(|(w, _)| !w.is_empty())
+        .collect()
 }
 
 fn load_phonology(store: &Store, hierarchy: &Hierarchy, lang_book: &Node) -> Option<Phonology> {
-    let chapter = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Phonology"))?;
-    for para in hierarchy.children_of(Some(chapter.id)) {
-        if para.kind != NodeKind::Paragraph {
-            continue;
-        }
-        if let Ok(Some(bytes)) = store.get_content(para.id) {
-            let body = String::from_utf8_lossy(&bytes);
-            if let Ok(Some(p)) = Phonology::from_hjson(&body) {
-                if !p.phonemes.is_empty() {
-                    return Some(p);
-                }
-            }
-        }
-    }
-    None
+    // 3.18 LI-2 — from the cached model (silent: no stderr in the TUI).
+    crate::conlang::model::cached(store, hierarchy, lang_book).ok().and_then(|(m, _)| m.phonology.clone())
 }
 
 #[cfg(test)]
@@ -236,25 +198,6 @@ mod tests {
 }
 
 fn count_dictionary(store: &Store, hierarchy: &Hierarchy, lang_book: &Node) -> usize {
-    let Some(chapter) = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Dictionary"))
-    else {
-        return 0;
-    };
-    hierarchy
-        .collect_subtree(chapter.id)
-        .into_iter()
-        .filter_map(|id| hierarchy.get(id))
-        .filter(|n| n.kind == NodeKind::Paragraph)
-        .filter(|n| {
-            store
-                .get_content(n.id)
-                .ok()
-                .flatten()
-                .and_then(|b| crate::language_entry::parse(&String::from_utf8_lossy(&b)).ok().flatten())
-                .is_some()
-        })
-        .count()
+    // 3.18 LI-2 — the cached model already parsed every entry.
+    crate::conlang::model::cached(store, hierarchy, lang_book).map(|(m, _)| m.entries.len()).unwrap_or(0)
 }

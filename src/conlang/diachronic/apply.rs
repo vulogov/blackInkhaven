@@ -84,6 +84,19 @@ mod tests {
     }
 
     #[test]
+    fn a_sequence_change_monophthongises() {
+        // LI-4: `a i > e` consumes two proto segments and emits one.
+        let p = phon();
+        let r = rules(&["a i > e / _ #"]);
+        assert_eq!(derive_form(&p, &r, "kai"), "ke");
+        assert_eq!(derive_form(&p, &r, "kait"), "kait"); // not final
+        // Written joined, resolved against the proto inventory.
+        let mut joined = rules(&["ai > e / _ #"]);
+        p.resolve_rules(&mut joined);
+        assert_eq!(derive_form(&p, &joined, "kai"), "ke");
+    }
+
+    #[test]
     fn feeding_order_matters() {
         // p → t / _ #, then t → f / _ #  ⇒  final p ends up f (rule 1 feeds 2).
         let p = phon();

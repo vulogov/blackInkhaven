@@ -39,6 +39,8 @@ pub struct RoundTrip {
 }
 
 /// Translate `english` with the rule-based engine, then reverse the result.
+/// The one-shot form; a batch uses [`round_trip_with`] with indexes built once.
+#[allow(dead_code)]
 pub fn round_trip(
     phon: &Phonology,
     morph: &Morphology,
@@ -46,9 +48,23 @@ pub fn round_trip(
     entries: &[DictionaryEntry],
     english: &str,
 ) -> RoundTrip {
-    let fwd = super::translate(phon, morph, typology, entries, english);
+    let gloss = super::lexmap::GlossIndex::build(entries);
+    let rev = super::reverse::ReverseIndex::build(phon, morph, entries);
+    round_trip_with(&gloss, &rev, phon, morph, typology, english)
+}
+
+/// [`round_trip`] with prebuilt indexes (3.18 LI-2).
+pub fn round_trip_with(
+    gloss: &super::lexmap::GlossIndex,
+    rev_idx: &super::reverse::ReverseIndex,
+    phon: &Phonology,
+    morph: &Morphology,
+    typology: &BTreeMap<String, String>,
+    english: &str,
+) -> RoundTrip {
+    let fwd = super::translate_with(gloss, phon, morph, typology, english);
     let covered = fwd.unresolved.is_empty() && !fwd.target.trim().is_empty();
-    let rev = super::reverse::reverse(phon, morph, typology, entries, &fwd.target);
+    let rev = super::reverse::reverse_with(rev_idx, typology, &fwd.target);
     RoundTrip {
         english: english.to_string(),
         conlang: fwd.target,
@@ -65,10 +81,13 @@ pub fn round_trip_all(
     entries: &[DictionaryEntry],
     test_set: &[String],
 ) -> Vec<RoundTrip> {
+    // 3.18 LI-2 — both indexes once for the whole set, not twice per sentence.
+    let gloss = super::lexmap::GlossIndex::build(entries);
+    let rev = super::reverse::ReverseIndex::build(phon, morph, entries);
     test_set
         .iter()
         .filter(|s| !s.trim().is_empty())
-        .map(|s| round_trip(phon, morph, typology, entries, s.trim()))
+        .map(|s| round_trip_with(&gloss, &rev, phon, morph, typology, s.trim()))
         .collect()
 }
 

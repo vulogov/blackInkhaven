@@ -167,9 +167,11 @@ pub struct Config {
     /// a no-op with a status hint).
     #[serde(default)]
     pub shell: ShellConfig,
-    /// Bund scripting sandbox policy. Defaults deny destructive
-    /// categories (fs_write, net, shell, code_eval); writers opt
-    /// in by listing the categories or words they want to allow.
+    /// Bund scripting sandbox policy. Defaults deny the destructive
+    /// categories (`DEFAULT_DENIED_CATEGORIES`: store_write,
+    /// editor_write, ai_write, theme_write, fs_write, net, shell,
+    /// code_eval, keymap); writers opt in by listing the categories
+    /// or words they want to allow.
     /// See `src/scripting/policy.rs`.
     #[serde(default)]
     pub scripting: crate::scripting::policy::Policy,

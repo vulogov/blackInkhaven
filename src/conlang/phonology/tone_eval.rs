@@ -47,6 +47,14 @@ mod tests {
     }
 
     #[test]
+    fn a_two_tone_target_rewrites_the_pair() {
+        // LI-4: a sequence target over tone labels — a 3-3 pair becomes 2-3 as a unit.
+        let s = system(&["3 3 > 2 3 / _ #"]);
+        assert_eq!(apply_sandhi(&s, &seq(&["3", "3"])), seq(&["2", "3"]));
+        assert_eq!(apply_sandhi(&s, &seq(&["3", "3", "1"])), seq(&["3", "3", "1"])); // not final
+    }
+
+    #[test]
     fn tone_classes_in_context() {
         // A H tone lowers to L after any non-high tone (class NonHigh).
         let mut s = system(&["H > L / NonHigh _"]);

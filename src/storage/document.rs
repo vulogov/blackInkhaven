@@ -13,6 +13,8 @@
 use anyhow::{anyhow, Result};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::path::Path;
 use uuid::Uuid;
 
@@ -45,6 +47,11 @@ pub struct DocumentStorage {
     /// (`canon.cbor`). Derived + advisory, on the same doctrine as the vector
     /// index: source content is durable, the ledger is a rebuildable projection.
     canon:   crate::canon::CanonLedger,
+    /// 3.18 LI-3 — while > 0, `sync` / `sync_in_background` are no-ops:
+    /// a batch writer (the dictionary import) holds it across its rows so
+    /// the HNSW index is serialised once at the end, not once per node.
+    /// Shared by every clone of the handle.
+    sync_holds: Arc<AtomicUsize>,
 }
 
 impl DocumentStorage {
@@ -68,7 +75,28 @@ impl DocumentStorage {
             vectors: VectorEngine::with_embedding(&paths.vec, engine)?,
             edges:   EdgeStore::new(&paths.edges_db, pool)?,
             canon:   crate::canon::CanonLedger::new(&paths.canon),
+            sync_holds: Arc::new(AtomicUsize::new(0)),
         })
+    }
+
+    /// 3.18 LI-3 — defer index flushes until the matching [`Self::release_sync`].
+    /// Nestable; the index is flushed by the caller that brings the count
+    /// back to zero.
+    pub fn hold_sync(&self) {
+        self.sync_holds.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// Undo one [`Self::hold_sync`]; returns `true` when no hold remains
+    /// (the caller then flushes).
+    pub fn release_sync(&self) -> bool {
+        let before = self.sync_holds.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(before > 0, "release_sync without hold_sync");
+        before <= 1
+    }
+
+    /// Whether a batch currently defers index flushes.
+    pub fn sync_held(&self) -> bool {
+        self.sync_holds.load(Ordering::Acquire) > 0
     }
 
     /// CL-P2 — deterministically harvest a paragraph's authored tags into canon
@@ -309,6 +337,11 @@ impl DocumentStorage {
         self.blobs.get_blob(id)
     }
 
+    /// 3.18 LI-2 — the bodies of many documents in one query per 256 ids.
+    pub fn get_content_batch(&self, ids: &[Uuid]) -> Result<HashMap<Uuid, Vec<u8>>> {
+        self.blobs.get_blobs(ids)
+    }
+
     /// Embed arbitrary texts on demand via the loaded engine (conlang
     /// near-synonym detection); not backed by the stored index.
     pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
@@ -322,6 +355,12 @@ impl DocumentStorage {
 
     pub fn list_metadata(&self) -> Result<Vec<(Uuid, JsonValue)>> {
         self.meta.list_all()
+    }
+
+    /// 3.18 LI-1 — count metadata rows whose top-level string field
+    /// `field` equals `value`, evaluated in DuckDB (no row parse).
+    pub fn count_metadata_by_field(&self, field: &str, value: &str) -> Result<usize> {
+        self.meta.count_by_field(field, value)
     }
 
     // ── search ─────────────────────────────────────────────────────
@@ -346,6 +385,9 @@ impl DocumentStorage {
     /// the background tick. Cheap when the index is clean (dirty
     /// flag short-circuit inside `VectorEngine::sync`).
     pub fn sync(&self) -> Result<()> {
+        if self.sync_held() {
+            return Ok(());
+        }
         self.vectors.sync()
     }
 
@@ -355,6 +397,9 @@ impl DocumentStorage {
     /// durable, and the index is a rebuildable derived artifact. See
     /// [`crate::storage::vector::VectorEngine::sync_in_background`].
     pub fn sync_in_background(&self) {
+        if self.sync_held() {
+            return;
+        }
         self.vectors.sync_in_background()
     }
 

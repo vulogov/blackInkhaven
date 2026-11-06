@@ -26,19 +26,24 @@ font and shows your words in their native form.
 #section("The dictionary")
 
 ```sh
-inkhaven language dictionary Eldar --format typ --font Eldar --out dict.typ
+inkhaven language dictionary Eldar --format typ --font Eldar -o dict.typ
 ```
 
 This renders your lexicon as a real dictionary: a title page, a table of contents,
-an overview of the language, and a two-column, alphabetised list of every word
-with its pronunciation, part of speech, and meaning. When you pass `--font`, each
+an overview of the language, and a two-column list of every word with its
+pronunciation, part of speech, and meaning, in *your* alphabet's order — the
+`alphabet` you declared in the Meta block (Appendix B) sets the sequence of the
+letter sections and of the words inside them; letters you did not declare follow,
+by code point. The Dictionary chapter in the editor keeps the same order:
+`add-word` files each entry in place, and `inkhaven language sort-dictionary
+Eldar` (preview with `--dry-run`) puts an older dictionary back in order. When you pass `--font`, each
 headword also appears in your native script beside its romanized form. Compile it
 with Typst and you have a printable dictionary of your language.
 
 #section("The reference grammar")
 
 ```sh
-inkhaven language grammar-book Eldar --format typ --font Eldar --out grammar.typ
+inkhaven language grammar-book Eldar --format typ --font Eldar -o grammar.typ
 ```
 
 The companion volume: a reference grammar drawn entirely from your language's
@@ -71,7 +76,7 @@ term the grammar uses, grounded in your language's own examples:
 
 ```sh
 inkhaven language grammar-book Eldar --format typ --font Eldar \
-    --study --provider deepseek --out grammar.typ
+    --study --provider deepseek -o grammar.typ
 ```
 
 The reference itself stays exactly as before — only the study guide is
@@ -85,7 +90,7 @@ language, written by the AI from your data:
 
 ```sh
 inkhaven language tutorial Eldar --format typ --font Eldar \
-    --provider deepseek --out learn.typ
+    --provider deepseek -o learn.typ
 ```
 
 The model authors a graded course: a warm introduction, a pronunciation guide,

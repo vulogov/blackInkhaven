@@ -548,6 +548,64 @@ pub fn active_store() -> Option<&'static Store> {
     ACTIVE_STORE.get()
 }
 
+/// Has the Adam VM been built in this process?
+pub fn adam_initialised() -> bool {
+    ADAM.get().is_some()
+}
+
+/// 3.18 LI-1 — could a hook lambda possibly be defined right now?
+///
+/// `hooks::fire` used to call [`init_adam`] unconditionally, which
+/// built the whole VM, applied the policy (and, before LI-1, logged
+/// ninety WARN lines) and scanned the store for scripts — all to
+/// discover, in a project with no scripts, that no lambda exists.
+/// This predicate answers that question without building anything:
+///
+/// - the VM already exists → `true` (a lambda may have been
+///   defined interactively);
+/// - `scripting.bootstrap` is configured → `true`;
+/// - the active store holds at least one `Script` node → `true`
+///   (whether it is *trusted* is still decided inside `init_adam`,
+///   so the pending-opt-in / deny notices are unchanged);
+/// - no store, or a store without scripts → `false`.
+///
+/// A store error counts as "present" so the hook path degrades to
+/// its pre-LI-1 behaviour rather than silently dropping hooks.
+pub fn scripting_present() -> bool {
+    if adam_initialised() {
+        return true;
+    }
+    let bootstrap_configured = POLICY
+        .get()
+        .map(|p| !p.bootstrap.trim().is_empty())
+        .unwrap_or(false);
+    let script_count = active_store()
+        .map(|s| s.count_nodes_of_kind(crate::store::NodeKind::Script).map_err(|e| e.to_string()));
+    scripting_present_with(bootstrap_configured, script_count)
+}
+
+/// The decision behind [`scripting_present`], separated from the
+/// process globals so it can be unit-tested.
+fn scripting_present_with(
+    bootstrap_configured: bool,
+    script_count: Option<std::result::Result<usize, String>>,
+) -> bool {
+    if bootstrap_configured {
+        return true;
+    }
+    match script_count {
+        None => false,
+        Some(Ok(n)) => n > 0,
+        Some(Err(e)) => {
+            tracing::debug!(
+                target: "inkhaven::scripting",
+                "script count failed ({e}); building the VM to be safe"
+            );
+            true
+        }
+    }
+}
+
 /// Result of an `eval` call: any text written to bundcore's
 /// (overridden) `print` / `println` stream, plus whatever value
 /// remained on the top of the workbench when the script finished.
@@ -651,4 +709,37 @@ pub(crate) fn value_to_json(v: &Value) -> serde_json::Value {
     }
     // Last resort: NONE, NODATA, unrecognised variants.
     serde_json::Value::Null
+}
+
+#[cfg(test)]
+mod presence_tests {
+    use super::scripting_present_with;
+
+    /// 3.18 LI-1 — the hook path builds the VM only when something
+    /// could have defined a lambda: a bootstrap script or a Script node.
+    #[test]
+    fn no_store_and_no_bootstrap_means_nothing_to_fire() {
+        assert!(!scripting_present_with(false, None));
+    }
+
+    #[test]
+    fn a_store_without_scripts_means_nothing_to_fire() {
+        assert!(!scripting_present_with(false, Some(Ok(0))));
+    }
+
+    #[test]
+    fn a_single_script_node_is_enough() {
+        assert!(scripting_present_with(false, Some(Ok(1))));
+    }
+
+    #[test]
+    fn bootstrap_wins_even_without_a_store() {
+        assert!(scripting_present_with(true, None));
+        assert!(scripting_present_with(true, Some(Ok(0))));
+    }
+
+    #[test]
+    fn a_store_error_falls_back_to_building_the_vm() {
+        assert!(scripting_present_with(false, Some(Err("duckdb: locked".into()))));
+    }
 }

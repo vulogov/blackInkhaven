@@ -49,10 +49,14 @@ HJSON blocks you add to those chapters; the book stays the home of record.
 }
 ```
 
-**SPE rule notation** (allophony, tone sandhi): `LHS > RHS / LEFT _ RIGHT`.
-`_` marks the target, `#` a word boundary, `∅`/`0` the empty string (insertion
-on the left, deletion on the right). A context token is a class name when one
-is declared, else a literal phoneme.
+**SPE rule notation** (allophony, tone sandhi, sound changes, ablaut):
+`LHS > RHS / LEFT _ RIGHT`. `_` marks the target, `#` a word boundary, `∅`/`0`
+the empty string (insertion on the left, deletion on the right). A token is a
+class name when one is declared, else a literal phoneme. Target and
+replacement are sequences like the contexts: `a i > e / _ #` monophthongises,
+`t > t s / _ i` affricates into two segments. A joined token that is not a
+declared phoneme or class (`ai > e`, `t > ts`) is split against the inventory,
+so both spellings are the same rule; a declared `ai` phoneme stays one segment.
 
 Inspectors: `generate-word`, `syllabify --word`, `ipa --word` (surface),
 `stress --word`, `romanize --text [--reverse] [--scheme]`, `tone --tones`.
@@ -65,12 +69,12 @@ the same findings under *Blocks* with their location (`constraints[2]`,
 `templates.root[0] "C V N"`, `allophony[1] "ai > e / _"`; `--json` carries
 them under `blocks.findings`). Errors are things that silently never apply: an
 unknown constraint kind, a class named in a constraint or template but not
-declared under `classes`, a rule target or context that is neither a phoneme
-nor a class, or a target that spans two phonemes (`ai > e` — declare `ai` as a
-phoneme or write one rule per segment). Warnings cover a class member or
-bigram outside the inventory, a duplicate phoneme, and a replacement that
-spans several phonemes. Malformed HJSON under Phonology or Grammar is reported
-by paragraph title.
+declared under `classes`, or a rule target or context that is neither a
+phoneme nor a class. Warnings cover a class member or bigram outside the
+inventory, a duplicate phoneme, and a joined rule token whose split is
+ambiguous (`abc` over an inventory with both `ab` and `bc`: it is read greedily
+as `ab c`, and the warning shows the other reading — write it with spaces).
+Malformed HJSON under Phonology or Grammar is reported by paragraph title.
 
 **Segmentation is case- and normalisation-insensitive.** Every word, headword,
 grapheme, class member and rule atom is NFC-normalised when loaded or typed, and
@@ -462,6 +466,16 @@ with no alphabet entry covering it, on its first base letter (`ą́tal` and
 `atal` both file under `A`). A homograph (same spelling, different `type`) is
 allowed and titled `pata (2)`.
 
+**The alphabet orders the book.** Buckets sit in `Meta/overview.alphabet`
+order (an undeclared bucket such as `Ŋ` after every declared one), entries
+inside a bucket collate letter by letter by the declaration (`Ch` is a letter
+between `B` and `D`, `ŋ` sorts after `z`, `pata (2)` follows `pata`), and
+`export`, `dictionary` and the two-column render use the same order with one
+section per alphabet entry. Every door keeps the order as it adds words;
+`language sort-dictionary <lang> [--dry-run]` repairs a dictionary built
+before 3.18 or rearranged by hand, renaming the `NN-` file prefixes in one pass
+per bucket and listing each move.
+
 | Command | Does |
 |---|---|
 | `language generate-lexicon --topic … --count … [--semantic] [--yes]` | AI generation behind the dedup gate (illegal / homophone / duplicate-meaning / near-synonym) |
@@ -501,10 +515,16 @@ covers *sun*). Point `--scope` at an HJSON file for a topic of your own:
 
 The missing list is shaped to hand straight to `generate-lexicon --topic …`.
 
+**Output paths.** Every `language` command that writes a file the user names
+takes `-o, --output <PATH>` (3.18). The older `--out` spelling, and `--svg` on
+`ecology`, still parse as hidden aliases. `font-build` without `--output`
+writes under `<project>/exports/<lang>/fonts/` and prints the path. See
+[`CLI.md`](CLI.md) for the convention.
+
 ## Dictionary output
 
 ```
-inkhaven language dictionary Avesha --format md|typ [--out dict.typ] [--font Eldar]
+inkhaven language dictionary Avesha --format md|typ [-o dict.typ] [--font Eldar]
 ```
 
 Renders the dictionary as a real document. **Markdown** (`md`) is a clean,
@@ -517,7 +537,7 @@ language has a `font` block) each headword appears in the **native script**
 --font-path <dir> dict.typ` to get a PDF that embeds and renders the conscript.
 
 ```
-inkhaven language grammar-book Avesha --format md|typ [--out g.typ] [--font Eldar] \
+inkhaven language grammar-book Avesha --format md|typ [-o g.typ] [--font Eldar] \
     [--study --provider …]
 ```
 
@@ -540,7 +560,7 @@ itself stays deterministic; only the study guide is AI-authored (needs a
 provider).
 
 ```
-inkhaven language tutorial Avesha --format md|typ [--out learn.typ] [--font Eldar] [--provider …]
+inkhaven language tutorial Avesha --format md|typ [-o learn.typ] [--font Eldar] [--provider …]
 ```
 
 An **AI-written learner's textbook** — a complete graded course the model
@@ -561,7 +581,7 @@ and [Tutorial 74](Tutorials/74-conlang-end-to-end.md).
 
 ## Interchange (export)
 
-`inkhaven language export <lang> --format <fmt> [--out F]` writes the lexicon to
+`inkhaven language export <lang> --format <fmt> [-o F]` writes the lexicon to
 a portable artefact:
 
 ```
@@ -572,7 +592,7 @@ inkhaven language export Avesha --format ipa-chart
 
 - `json` — full structured dump (dictionary, grammar, phonology, samples).
 - `anki` / `csv` — flashcard / round-trippable CSV (the `--import` path re-ingests `csv`).
-- `dictionary-twocol` / `grammar` / `phrasebook` — printable Typst (need `--out`).
+- `dictionary-twocol` / `grammar` / `phrasebook` — printable Typst (need `--output`).
 - **`xliff`** — XLIFF 1.2 translation memory: each entry is a `trans-unit`
   (working-language *source* → invented-word *target*), loadable into CAT tools
   (OmegaT, memoQ, Weblate). The source language code follows the project working
@@ -661,12 +681,12 @@ Glyph artwork lives in the project glyph store
 ```
 inkhaven language glyph-lint --svg ./a.svg                 # suitability preflight
 inkhaven language glyph-draft Eldar --describe "a vertical stroke \
-    with a hook" --phoneme p [--out p.svg] [--yes]         # AI text-to-SVG draft
+    with a hook" --phoneme p [-o p.svg] [--yes]            # AI text-to-SVG draft
 inkhaven language font-import-glyph Eldar --svg ./a.svg \
     --phoneme a [--codepoint U+E000] [--name a]            # bind + store + record
 inkhaven language font-config Eldar [--json]               # show the bindings
 inkhaven language font-build --language Eldar \
-    [--format ufo|ttf|both] [--out Eldar] [--upm 1000]     # compile from the book
+    [--format ufo|ttf|both] [-o Eldar] [--upm 1000]        # compile from the book
 ```
 
 - **`glyph-lint`** reports whether an SVG is fit for a font outline (filled
@@ -676,7 +696,7 @@ inkhaven language font-build --language Eldar \
   won't honour (cut counters with a reverse-wound subpath instead).
 - **`glyph-draft`** asks the AI to draft an SVG glyph from a description, runs it
   through the same preflight, and previews the result. Advisory: it prints the
-  SVG (or writes `--out`) and the verdict; only `--yes` (and only a *usable*
+  SVG (or writes `--output`) and the verdict; only `--yes` (and only a *usable*
   draft) binds it into the `font` block — the same path as `font-import-glyph`.
 - **`font-import-glyph`** preflights the SVG (refusing unusable artwork), copies
   it into the glyph store, and binds it — to a `--phoneme` and a Unicode
@@ -709,7 +729,7 @@ glyph drops into each cell and the whole is baked into one precomposed glyph.
 inkhaven language font-templates Eldar                     # list templates
 inkhaven language font-compose Eldar --template lr \
     --name ka --codepoint U+AC00 --phoneme ka \
-    --slot left=lead --slot right=vowel [--out ka.svg] [--yes]
+    --slot left=lead --slot right=vowel [-o ka.svg] [--yes]
 ```
 
 Built-in templates: `lr` (left/right), `tb` (top/bottom), `quad` (2×2),
@@ -726,7 +746,7 @@ every quadrat into the font is impractical:
 
 ```
 inkhaven language spatial-typst Glyphic --template tb \
-    --name quadrat_sunbar --slot top=sun --slot bottom=bar [--size 2em] [--out q.typ]
+    --name quadrat_sunbar --slot top=sun --slot bottom=bar [--size 2em] [-o q.typ]
 ```
 
 This emits a Typst `#let <name> = box(...)[ … ]` that `place`s each component
@@ -892,7 +912,7 @@ exports as one small, portable file you can publish alongside a book:
 
 ```
 inkhaven language export-translation Eldar              # → eldar-translation.itm
-inkhaven language export-translation Eldar --out qya.itm
+inkhaven language export-translation Eldar -o qya.itm
 ```
 
 The `.itm` bundle is a zip of the **translation memory** (`memory.tsv` — the
@@ -1012,6 +1032,149 @@ HJSON. A whole language, end to end:
 
 The same language then opens, inspects, and renders identically through the
 `inkhaven language …` CLI and the editor.
+
+## Command index
+
+Every `inkhaven language` subcommand, one line each, generated from the CLI's own help by `inkhaven language _index-markdown` (regenerate it with the README at release time; the `docs_language_surface` test fails when this file names a command or flag that does not exist). `--json` marks a command whose result also comes as JSON; `-o` marks one that writes a file.
+
+### Set-up and lexicon
+
+- `init` — Scaffold a new language sub-book under the top-level `Language` system book
+- `list` — List every defined language with summary counts (dictionary entries, grammar / phonology rules, sample texts) · `--json`
+- `doctor` — Health report for a language sub-book · `--json`
+- `scaffold` — Scaffold a starter phoneme inventory from a short description (AI), as pasteable Phonology-chapter HJSON · `-o`
+- `suggest-phonemes` — Recommend phonemes that would round out the inventory (the voiced counterpart missing beside a voiceless obstruent, a near-universal segment the inventory lacks), via the feature matrix · `--json`
+- `define-rule` — Define-or-edit a grammar or phonology rule in `$EDITOR`
+- `grammar` — The grammar questionnaire · `--json`
+- `add-word` — Add a dictionary entry to a language's `Dictionary` chapter
+- `remove-word` — Remove a dictionary entry from a language
+- `query` — Query a language's dictionary by the rich entry fields: register, semantic domain, in-world era, part of speech, and a free substring over headword + gloss · `--json`
+- `sort-dictionary` — Put a language's Dictionary into the declared alphabet's order
+- `import` — Import a dictionary from another conlang/linguistics tool
+- `export` — Export a language's content to a portable artefact · `-o`
+- `generate-lexicon` — AI-assisted dictionary generation
+- `derive-lexicon` — Derive a daughter language's lexicon from its proto by applying the daughter's diachronic sound-change chain to every proto dictionary entry
+- `derive` — Propose derived lexemes for a root: apply the language's derivational rules (agent nouns, diminutives, …) to the root, with allophony, and print the new word + sense + POS for each rule that fires
+- `gaps` — Semantic-gap finder · `--json`
+- `audit` — Audit a language's dictionary for consistency: headwords that break the phonotactics, homophones (entries sharing a surface form), and duplicate meanings (accidental synonyms) · `--json`
+- `stats` — A descriptive profile of a language: inventory balance (consonants / vowels), phoneme frequency across the lexicon, the syllable-length distribution, which onsets/codas get used, and the part-of-speech spread · `--json`
+- `scan-manuscript` — Scan the manuscript for candidate **undefined** conlang words: words that look like the language (segment fully into its inventory + pass its phonotactics) but aren't in the dictionary · `--json`
+
+### Phonology
+
+- `generate-word` — Generate candidate words from a language's phonotactic templates · `--json`
+- `syllabify` — Syllabify a word against a language's phonology · `--json`
+- `ipa` — Derive the surface pronunciation of a word by applying the language's allophony rules to its underlying form · `--json`
+- `stress` — Place primary stress on a word per the language's stress rule · `--json`
+- `romanize` — Convert between IPA and a named romanization scheme · `--json`
+- `tone` — Apply the language's tone-sandhi rules to a sequence of per-syllable tones · `--json`
+- `scan` — Scan a line (or several) of verse: syllabify each word, mark it stressed or unstressed, and name the metre (iambic tetrameter, trochaic trimeter, …) · `--json`
+- `trace` — The Consequence Tracer · `--json`
+
+### Morphology and syntax
+
+- `paradigm` — Generate the full paradigm of a root: apply a paradigm template's morpheme sequence (from the `Morphology` chapter) to the root, run the language's allophony across the affix boundaries, and print the surface form + Leipzig gloss for every cell · `--json`
+- `agree` — Apply **agreement** (concord): inflect a dependent word (an adjective, a verb) to agree with the grammatical features of its head (its noun, its subject)
+- `sentence` — Assemble a **sentence** from a subject, verb, and object · `--json`
+- `relative` — Build a noun phrase with a **relative clause** ("the bird that sees the stone"), obeying the `relative_clause` typology (prenominal vs postnominal)
+- `complement` — Build a sentence with a **complement clause**: a whole clause serving as the object of a matrix verb of speech or cognition ("I know that the bird sees the stone")
+- `coordinate` — **coordinate** noun phrases or clauses with a conjunction ("the bird and the stone", "the bird sees and the river falls")
+- `gloss` — Interlinear auto-gloss of conlang text · `--json`
+- `igt` — Interlinear glossed text: auto-gloss a sentence and lay it out as an aligned Leipzig block (the morpheme-segmented sentence, the gloss, a literal translation) · `--json`
+- `parse` — The morphological parser: analyse a surface word into root + affixes by reversing the morphology (strip known affixes until what remains is a dictionary root) · `--json`
+- `tree` — Build the X-bar phrase-structure tree (CP → TP → VP) of a clause from its subject / verb / object(s), placing heads and complements by the language's word order · `--json`
+- `movement` — Syntactic movement: front a constituent (wh-movement / topicalisation) over the X-bar tree, leaving a coindexed trace · `--json`
+- `binding` — Binding theory: decide whether one argument may refer to another, by c-command and the binding principles (a reflexive object may bind to the subject, a pronoun may not, a name is a Principle-C violation) · `--json`
+- `link` — Argument linking: work out a clause's thematic roles, RRG macroroles (actor / undergoer) and grammatical relations from the verb's valence · `--json`
+- `check` — The Oracle: judge a candidate word for well-formedness by linguistic level — phonotactics (unknown segments, constraint violations) and morphology (does it analyse as root + affixes?) · `--json`
+- `check-clause` — The Oracle over a whole clause (levels 3–4): subject–verb agreement and argument structure · `--json`
+- `check-agreement` — The Oracle's agreement check over any head–dependent pair: does a dependent word (an adjective, a determiner, a verb) correctly inflect for its head's features, under the declared agreement rule? · `--json`
+
+### Analysis
+
+- `metrics` — Deterministic quantitative metrics for a language: phoneme-distribution entropy, the Zipf fit of that distribution, phonotactic saturation, and mora weight · `--json`
+- `universals` — Judge the language's grammar block against the typological baseline: head-directionality harmony, the classic implicational universals (Greenberg 2/3/4, the OV↔GenN / OV↔RelN correlations), and a word-order + morphotype survey · `--json`
+- `grammar-check` — Validate the typed grammar blocks (`ug_parameters`, `verb_classes`) in the Grammar chapter and check them for consistency against the WALS feature answers (e.g · `--json`
+- `pairs` — Find minimal pairs in the lexicon and report the distinctive feature each turns on (the functional load of the language's contrasts), via the distinctive-feature matrix · `--json`
+- `naturalness` — Judge the phoneme inventory against cross-linguistic tendencies (voicing-pair symmetry, place-series coverage, near-universal segments, size), via the distinctive-feature matrix · `--json`
+- `harmony` — Detect vowel harmony (backness, rounding) by measuring how consistently the vowels within a word agree, via the feature matrix · `--json`
+- `distribution` — Where each phoneme appears (syllable onset / nucleus / coda and the word edges), and any restricted (defective) distributions — a consonant confined to codas, or barred from a word edge · `--json`
+- `sketch` — A one-page grammar sketch: a deterministic prose overview of the language, assembling the phonology, typology and lexicon analyses · `-o`
+
+### Hypotheses
+
+- `hypothesize` — Record a diachronic/comparative hypothesis (a sound change, a cognacy claim, a borrowing) in the language's `Hypotheses` chapter, starting at `proposed` · `--json`
+- `hypotheses` — List the language's hypothesis register, optionally filtered by status · `--json`
+- `hypothesis` — Show one stored hypothesis in full · `--json`
+- `hypothesis-status` — Move a hypothesis along as the evidence comes in (proposed → supported / refuted / retired)
+- `hypothesis-check` — Run the Consequence Tracer over a sound-change hypothesis's claim: which words the change predicts, and which merge into homophones · `--json`
+
+### Corpus and texts
+
+- `texts` — The language's stored interlinear texts · `--json`
+- `frequency` — A word-frequency list plus descriptive statistics over the language's stored interlinear texts (type–token ratio, Zipf fit) · `--json`
+- `concordance` — A KWIC concordance of a word across the stored texts: every occurrence with its context · `--json`
+- `collocations` — The collocates of a word: the neighbours that fall within its window across the stored texts, ranked by co-occurrence and scored by PMI (a distinctive collocate outranks a merely-frequent word) · `--json`
+- `corpus` — Generate a **synthetic corpus**: translate an English source pool with the RBMT and keep the sentences the language fully covers, seeding the translation memory (Amendment A1) · `--json`
+- `eval` — **evaluate** translation quality without a human reference (Amendment A1 / RFC §8.8): *round-trip* semantic similarity (translate then reverse, compared to the source by embedding cosine) and *coverage* (the fraction of the test set the lexicon fully translates) · `--json`
+
+### Translation
+
+- `translate` — **translate** English into the conlang · `--json`
+- `reverse` — **reverse** a conlang sentence back into English (Tier 1 RBMT) · `--json`
+- `cross` — **cross-translate** one conlang into another by pivoting through English (reverse the source, then translate into the target) · `--json`
+- `remember` — **remember** a confirmed English→conlang translation (the correction loop, Amendment A1)
+- `memory` — List a language's **translation memory** (the remembered English→conlang pairs `translate` draws on) · `--json`
+- `export-translation` — **export** the language's translation system as a portable `.itm` bundle (Amendment A1 / RFC §8.9): a single zip of the translation memory + lexicon + manifest + README, to ship alongside a published work · `-o`
+
+### Diachronics
+
+- `family-tree` — Print the language-family tree (each language under its declared `proto`) · `--json`
+- `cognates` — The cognate set of a proto-form: its reflex in every daughter language (each daughter's sound-change chain applied to the proto-form) · `--json`
+- `sound-change` — Apply a language's diachronic sound-change chain to a proto-form and print the resulting daughter form · `--json`
+- `reconstruct` — AI comparative reconstruction: given cognate forms from daughter languages, propose the most plausible proto-form (with sound correspondences + reasoning)
+- `realism-check` — AI genealogical-realism check: assess whether a language's diachronic sound-change chain is typologically plausible (attested) or unnatural, rule by rule
+
+### Varieties and contact
+
+- `varieties` — List the **varieties** (dialects / registers / sociolects) declared for a language, with their axis, prestige, and the size of their sound-change + word-override deltas · `--json`
+- `lect` — Render a form *in a variety* (`lect`)
+- `dialects` — A **dialect-comparison** table: the first `--count` dictionary headwords rendered across the base form and every declared variety (the classic dialectology display) · `--json`
+- `propose-dialect` — (AI) **propose a dialect/register**: the model suggests a coherent set of sound changes + a few lexical swaps for the requested flavour; the deterministic engine validates them (so the variety is always phonologically legal) and previews the result
+- `borrow` — **borrow** a word into a language: nativise a donor form to the recipient's inventory + phonotactics (perceive → repair via the `loan_phonology` block)
+- `propose-loans` — (AI) **propose realistic loanwords**: which concepts a language would borrow from a donor in a topic domain, each with a plausible donor form, then nativised by the deterministic adapter (P2)
+- `areal` — Show **areal** (Sprachbund) convergence
+- `areal-check` — (AI) assess whether a language's declared **areal** (Sprachbund) features are typologically plausible — the contact analogue of `realism-check`
+- `idiolect` — Render a form / text in a **character's idiolect** — their native variety of their primary language (from the links sidecar)
+- `link-place` — Link a Place to a language it's spoken in
+- `link-character` — Declare a Character's proficiency in a language (native / fluent / conversational / broken / reading_only)
+- `speakers` — List the Places and Characters linked to a language
+- `ecology` — The language **ecology**: who speaks what (and which variety) where · `-o`
+
+### Creative text and idiom
+
+- `compose` — Creative text generators
+- `idioms` — List a language's idioms and declared metaphors
+- `idiom-add` — Add an idiom (a phrase with a literal word-by-word gloss and a separate idiomatic meaning)
+- `metaphor-add` — Declare a conceptual metaphor (a source→target domain mapping, e.g
+
+### Books
+
+- `dictionary` — Render the dictionary as a document · `-o`
+- `grammar-book` — Render a reference grammar as a document · `-o`
+- `tutorial` — Generate a learner's textbook with the AI: a complete graded course (pronunciation guide, vocabulary, grammar lessons with worked examples, a reading, and exercises) authored by the model from the language's own data · `-o`
+
+### Writing systems and fonts
+
+- `font-config` — Show a language's `font` config: family, units-per-em, and every glyph binding with its codepoint, phoneme, and artwork status · `--json`
+- `font-templates` — List the spatial templates available to a language: built-in arrangements (`lr`/`tb`/`quad`/`stack3`) plus any custom `templates` defined in its `font` block
+- `font-import-glyph` — Import a glyph SVG into a language's writing system: preflight it, copy it into the project glyph store, and bind it to a phoneme and/or Unicode codepoint in the language's `font` config block
+- `font-build` — Compile a directory of glyph SVGs into a UFO font source · `-o`
+- `font-compose` — Compose component glyphs into a precomposed block (a Hangul-style syllable square, an Egyptian quadrat) per a spatial template, baking them into one glyph · `-o`
+- `transliterate` — Input method: transliterate romanized/phonemic text into the script's codepoints using the `font` block's glyph→phoneme bindings (longest key wins, so digraph keys like `th`/`ka` beat their prefixes) · `--json`
+- `spatial-typst` — Binding-time B: emit a Typst quadrat that arranges component glyphs spatially at layout time (the hieroglyphic path — no precomposed font glyph) · `-o`
+- `glyph-draft` — AI text-to-SVG glyph draft: describe a glyph and the model drafts an SVG, which is run through the suitability preflight · `-o`
+- `glyph-lint` — Check whether a glyph SVG is suitable for font compilation: does it parse, does it have a fillable outline (not stroke-only / empty), is it free of raster images, is it monochrome
 
 ## Principles
 

@@ -102,7 +102,7 @@ The translation memory is portable. Export it as a self-contained `.itm` pack â€
 a backup, for a collaborator, or to move it between projects:
 
 ```
-inkhaven language export-translation Eldar --out eldar.itm
+inkhaven language export-translation Eldar -o eldar.itm
 ```
 
 Everything the engine learned travels in that one file, so a language you translate

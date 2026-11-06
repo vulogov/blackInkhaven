@@ -21,6 +21,7 @@ pub mod parse;
 pub mod sketch;
 pub mod suggest;
 pub mod metrics;
+pub mod model;
 pub mod movement;
 pub mod trace;
 pub mod universals;

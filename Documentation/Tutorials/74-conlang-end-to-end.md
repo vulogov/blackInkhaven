@@ -92,7 +92,7 @@ inspect any SVG first with `glyph-lint`.
 ## 5. The font
 
 ```sh
-inkhaven language font-build --language Avesha --format ttf --out Avesha
+inkhaven language font-build --language Avesha --format ttf -o Avesha
 ```
 
 This compiles the bound glyphs to a TrueType font **fully in-process** — the SVG
@@ -107,9 +107,9 @@ components at layout time) — one `SpatialTemplate` engine, two binding times.
 ## 6. The books
 
 ```sh
-inkhaven language dictionary   Avesha --format typ --font Avesha --out dict.typ
-inkhaven language grammar-book Avesha --format typ --font Avesha --out grammar.typ
-inkhaven language tutorial     Avesha --format typ --font Avesha --provider deepseek --out learn.typ
+inkhaven language dictionary   Avesha --format typ --font Avesha -o dict.typ
+inkhaven language grammar-book Avesha --format typ --font Avesha -o grammar.typ
+inkhaven language tutorial     Avesha --format typ --font Avesha --provider deepseek -o learn.typ
 ```
 
 Each renders in Markdown or Typst. The **dictionary** is a paginated two-column

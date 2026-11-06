@@ -9,41 +9,51 @@ A few order their arguments differently — `cross <from> <to>`,
 `list`, `family-tree`, and `ecology` take no language at all.
 Add `--help` to any command for its full signature.
 
+Two conventions hold across the family (Inkhaven 3.18). A command that writes a
+file you name takes `-o F` (long form `--output`; the older `--out`, and `--svg`
+on `ecology`, still work as hidden aliases); leave it off and a printable
+command prints, while a font lands under the project's `exports/` folder. A
+command whose result a script might read takes `--json`: the result is then one
+JSON document on stdout and nothing else, with any confirmation on stderr.
+Every `--count` must be at least 1.
+
 #section("Setup")
 
 / `init <name>`: Create a language sub-book with its five chapters.
-/ `scaffold --from "<description>" [--out F]`: (AI) Propose a starter phoneme inventory from a short description, as pasteable Phonology-chapter HJSON (preview-only).
-/ `list`: List every defined language with summary counts.
+/ `scaffold --from "<description>" [-o F]`: (AI) Propose a starter phoneme inventory from a short description, as pasteable Phonology-chapter HJSON (preview-only).
+/ `list [--json]`: List every defined language with summary counts (`--json`: `[{name, entries, grammar, phonology, samples}]`).
 / `doctor <lang> [--json]`: A health check — phonotactic and lexical problems plus how much of your manuscript's language-words the lexicon already covers.
 
 #section("Phonology")
 
-/ `generate-word <lang> --role root --count N`: Invent word-shapes that obey your templates and constraints.
-/ `syllabify <lang> --word W`: Show how a word divides into syllables.
-/ `ipa <lang> --word W`: Show a word's *surface* pronunciation after allophony.
-/ `stress <lang> --word W`: Mark which syllable carries stress.
-/ `romanize <lang> --text T [--reverse] [--scheme S]`: Convert between spelling and sounds.
-/ `tone <lang> --tones "3 3 3"`: Apply tone-sandhi rules to a tone sequence.
+/ `generate-word <lang> --role root --count N [--json]`: Invent word-shapes that obey your templates and constraints (`N` is 1 … 100 000; an empty batch is an error that names the count).
+/ `syllabify <lang> --word W [--json]`: Show how a word divides into syllables.
+/ `ipa <lang> --word W [--json]`: Show a word's *surface* pronunciation after allophony.
+/ `stress <lang> --word W [--json]`: Mark which syllable carries stress.
+/ `romanize <lang> --text T [--reverse] [--scheme S] [--json]`: Convert between spelling and sounds.
+/ `tone <lang> --tones "3 3 3" [--json]`: Apply tone-sandhi rules to a tone sequence.
+/ `scan <lang> --text "…" [--json]`: Scan a line or stanza of verse — each syllable's beat and the metre it fits.
 
 #section("Lexicon")
 
 / `add-word <lang> <word> --type POS --translation M`: Add a dictionary entry (or `--import file.csv`).
 / `remove-word <lang> <word>`: Delete an entry.
+/ `sort-dictionary <lang> [--dry-run]`: Put the Dictionary chapter into the declared alphabet's order (buckets and entries); `--dry-run` lists the moves.
 / `query <lang> [--pos] [--register] [--domain] [--era] [--text] [--json]`: Search the lexicon.
 / `generate-lexicon <lang> --topic T --count N [--semantic] [--yes]`: AI-generate themed words behind the dedup gate.
 / `audit <lang> [--json]`: Report phonotactic violations, homophones, duplicate meanings.
 / `scan-manuscript <lang> [--json]`: Find language-like words in your prose that are not yet defined.
 / `stats <lang> [--json]`: A descriptive profile of the language's sounds and words.
 / `gaps <lang> [--scope swadesh_100|file.hjson] [--json]`: Report which reference concepts the lexicon is still missing.
-/ `compose <lang> --kind names|prose|poem|blessing|curse|incantation [--count N] [--meter 5,7,5] [--seed N] [--provider P]`: Generate creative text grounded in your language.
+/ `compose <lang> --kind names|prose|poem|blessing|curse|incantation|ceremony [--count N] [--meter 5,7,5] [--seed N] [--provider P]`: Generate creative text grounded in your language.
 / `import <lang> --file F --format toolbox|polyglot [--yes]`: Import a lexicon from another tool (previews without `--yes`).
-/ `export <lang> --format json|csv|anki|xliff|linguex|ipa-chart|dictionary-twocol|grammar|phrasebook [--out F]`: Export the lexicon to a portable or typeset format.
+/ `export <lang> --format json|csv|anki|xliff|linguex|ipa-chart|dictionary-twocol|grammar|phrasebook [-o F]`: Export the lexicon to a portable or typeset format.
 
 #section("Grammar")
 
-/ `paradigm <lang> --root R --template T --gloss G`: Generate a word's inflected forms.
+/ `paradigm <lang> --root R --template T --gloss G [--json]`: Generate a word's inflected forms.
 / `agree <lang> --word W --pos P --features "number=pl,case=nom" [--gloss G]`: Inflect a dependent word to agree with its head's features.
-/ `gloss <lang> --text "…"`: Interlinear (word-by-word) gloss of a sentence.
+/ `gloss <lang> --text "…" [--json]`: Interlinear (word-by-word) gloss of a sentence.
 / `igt <lang> --text "…" [--save] [--name N] [--json]`: Interlinear glossed text — auto-gloss a sentence and lay it out as an aligned Leipzig block (the morpheme-segmented sentence, the gloss, a literal translation). `--save` stores it in the language's `Texts` chapter; `--json` emits the structured IGT.
 / `texts <lang> [--name N] [--set-translation "…"] [--format text|latex] [--json]`: The language's stored interlinear texts. With no `--name`, list them; with `--name`, print that one. `--set-translation` replaces the named text's free translation (curating the auto literal one; the gloss is untouched). `--format latex` emits a `linguex` LaTeX document (`\gll` / `\glt`) of the selected text or all — ready to paste into a grammar sketch or paper.
 / `frequency <lang> [--lemma] [--source texts|prose|all] [--top N] [--json]`: A word-frequency list and descriptive statistics (tokens, types, type–token ratio, the Zipf fit) over the corpus. `--lemma` counts a root's inflected forms together.
@@ -59,7 +69,7 @@ The corpus `--source` selects what the three commands read: `texts` (the stored 
 / `derive <lang> --root R --gloss G --pos P [--yes]`: Coin derived words from a root.
 / `grammar <lang> [--set feature=value]`: View or set the typology questionnaire.
 / `define-rule <lang>`: Open your `$EDITOR` to hand-author a grammar or phonology rule — the direct authoring path when a rule is easier written than configured.
-/ `sentence <lang> --subject W --verb W --object W [--*-adj W] [--*-number N] [--negate --negator W] [--question --q-particle W]`: Assemble a clause — order, case, agreement, optional negation / yes-no question — with an interlinear gloss.
+/ `sentence <lang> --subject W --verb W --object W [--*-adj W] [--*-number N] [--negate --negator W] [--question --q-particle W] [--json]`: Assemble a clause — order, case, agreement, optional negation / yes-no question — with an interlinear gloss.
 / `relative <lang> --head H --role subject|object --verb V [--with O] [--relativizer W]`: Build a noun phrase modified by a relative clause.
 / `coordinate <lang> [--np W …] [--clause "subj verb obj" …] --conjunction W`: Join nouns or clauses with a conjunction.
 / `complement <lang> --subject S --verb V [--complementizer W] --comp-subject S2 --comp-verb V2 [--comp-object O2]`: Make a clause the object of a matrix verb ("I know that …").
@@ -69,10 +79,10 @@ The corpus `--source` selects what the three commands read: `texts` (the stored 
 
 #section("Diachronics")
 
-/ `sound-change <lang> --form W`: Evolve one proto-form through the language's sound-change chain.
+/ `sound-change <lang> --form W [--json]`: Evolve one proto-form through the language's sound-change chain.
 / `derive-lexicon <lang> [--yes]`: Evolve the proto's whole dictionary into this daughter.
-/ `family-tree`: Draw the genealogical tree of all languages.
-/ `cognates <proto> --form W`: Trace a proto-form's reflex in every daughter.
+/ `family-tree [--json]`: Draw the genealogical tree of all languages (and the contact edges).
+/ `cognates <proto> --form W [--json]`: Trace a proto-form's reflex in every daughter.
 / `reconstruct --forms "…" [--gloss G]`: (AI) Propose a proto-form from cognates.
 / `realism-check <lang>`: (AI) Assess whether the sound-change chain is plausible.
 / `trace <lang> --rule "s > ʃ / _ i" [--limit N] [--json]`: Preview a pending sound change across the lexicon — which words shift, which merge into new homophones — without committing it.
@@ -93,7 +103,7 @@ The corpus `--source` selects what the three commands read: `texts` (the stored 
 / `universals <lang> [--json]`: Check the grammar's head-directionality harmony and the classic implicational universals (Greenberg/Dryer).
 / `grammar-check <lang> [--json]`: Validate the typed grammar blocks (`ug_parameters`, `verb_classes`) and their consistency with the WALS feature answers.
 / `check <lang> --word W [--json]`: The Oracle — judge a candidate word for well-formedness by level (phonotactics, morphology).
-/ `sketch <lang> [--out F]`: A one-page prose overview of the language, assembling all of the above.
+/ `sketch <lang> [-o F]`: A one-page prose overview of the language, assembling all of the above.
 
 #section("Morphology and syntax")
 
@@ -113,15 +123,15 @@ The corpus `--source` selects what the three commands read: `texts` (the stored 
 
 #section("Sociolinguistics and contact")
 
-/ `varieties <lang>`: List the language's dialects, registers, and sociolects with their deltas.
+/ `varieties <lang> [--json]`: List the language's dialects, registers, and sociolects with their deltas.
 / `lect <lang> <variety> --word W | --text "…"`: Render a form or text in a chosen variety.
-/ `dialects <lang> [--count N]`: Print the dialectology comparison table (a `*` marks a word override).
+/ `dialects <lang> [--count N] [--json]`: Print the dialectology comparison table (a `*` marks a word override).
 / `borrow <recipient> --form W --from L [--gloss G] [--yes]`: Adapt a donor word to the recipient's sounds (add it with `--yes`).
 / `areal [lang]`: Show one language's convergence overlay, or (no language) the whole-region Sprachbund view.
 / `propose-dialect <lang> --describe "…" [--id N] [--provider P] [--yes]`: (AI) Suggest a coherent dialect; rules are validated and previewed.
 / `propose-loans <recipient> --from L --topic T --count N [--provider P]`: (AI) Propose borrowings, each nativised by the adapter.
 / `areal-check <lang>`: (AI) Judge whether a declared Sprachbund is typologically plausible.
-/ `ecology [--svg F]`: Report who speaks what variety where (or write a node-link atlas).
+/ `ecology [-o F.svg]`: Report who speaks what variety where (or write a node-link atlas).
 / `idiolect <character> --word W | --text "…"`: Render a form or text in a character's native variety.
 
 #section("Translation")
@@ -136,15 +146,15 @@ you built — with a growing memory of the sentences you approve.
 / `memory <lang> [--json]`: Show the translation memory — the approved pairs the engine reuses.
 / `corpus <lang> [--json]`: Show the parallel corpus gathered from your Sample-texts chapter.
 / `eval <lang> [--json]`: Score the engine against the corpus — how much it gets right, and where it fails.
-/ `export-translation <lang> --out F`: Write an `.itm` translation-memory pack for backup or interchange.
+/ `export-translation <lang> -o F`: Write an `.itm` translation-memory pack for backup or interchange.
 
 #section("Writing systems")
 
 / `glyph-lint --svg F`: Check whether an SVG is suitable as a font glyph.
-/ `glyph-draft <lang> --describe "…" --phoneme P [--codepoint C] [--out F] [--yes]`: (AI) Draft a glyph from a description.
+/ `glyph-draft <lang> --describe "…" --phoneme P [--codepoint C] [-o F] [--yes]`: (AI) Draft a glyph from a description.
 / `font-import-glyph <lang> --svg F --phoneme P [--codepoint C] [--name N]`: Bind a glyph into the font.
 / `font-config <lang> [--json]`: List the font's glyph bindings and artwork status.
-/ `font-build --language <lang> --format ufo|ttf|both [--out F] [--upm N]`: Compile the font.
+/ `font-build --language <lang> --format ufo|ttf|both [-o F] [--upm N]`: Compile the font.
 / `font-templates <lang>`: List spatial templates for composed blocks.
 / `font-compose <lang> --template T --name N --slot SLOT=GLYPH … [--yes]`: Bake a composed block glyph.
 / `spatial-typst <lang> --template T --name N --slot SLOT=GLYPH …`: Emit a layout-time Typst quadrat.
@@ -152,9 +162,9 @@ you built — with a growing memory of the sentences you approve.
 
 #section("Output")
 
-/ `dictionary <lang> --format md|typ [--out F] [--font Fam]`: Render the dictionary.
-/ `grammar-book <lang> --format md|typ [--out F] [--font Fam] [--study --provider P]`: Render the reference grammar (with optional AI study guide).
-/ `tutorial <lang> --format md|typ [--out F] [--font Fam] [--provider P]`: (AI) Render a learner's textbook.
+/ `dictionary <lang> --format md|typ [-o F] [--font Fam]`: Render the dictionary.
+/ `grammar-book <lang> --format md|typ [-o F] [--font Fam] [--study --provider P]`: Render the reference grammar (with optional AI study guide).
+/ `tutorial <lang> --format md|typ [-o F] [--font Fam] [--provider P]`: (AI) Render a learner's textbook.
 
 #section("Worldbuilding links")
 
