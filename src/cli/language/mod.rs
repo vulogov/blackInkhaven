@@ -45,6 +45,7 @@ mod morphology;
 mod phonology;
 mod render;
 mod scaffold;
+pub(crate) mod shapes;
 mod syntax;
 mod translate;
 mod typology;
@@ -64,6 +65,7 @@ pub(crate) use morphology::*;
 pub(crate) use phonology::*;
 pub(crate) use render::*;
 pub(crate) use scaffold::*;
+pub(crate) use shapes::emit;
 pub(crate) use syntax::*;
 pub(crate) use translate::*;
 pub(crate) use typology::*;
@@ -151,7 +153,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             format,
             output,
         } => export(project, &language, format, output.as_deref()),
-        LanguageCommand::List => list(project),
+        LanguageCommand::List { json } => list(project, json),
         LanguageCommand::RemoveWord { language, word } => {
             remove_word(project, &language, &word)
         }
@@ -167,20 +169,22 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             language,
             role,
             count,
-        } => generate_word(project, &language, &role, count as usize),
-        LanguageCommand::Syllabify { language, word } => {
-            syllabify_word(project, &language, &word)
+            json,
+        } => generate_word(project, &language, &role, count as usize, json),
+        LanguageCommand::Syllabify { language, word, json } => {
+            syllabify_word(project, &language, &word, json)
         }
-        LanguageCommand::Ipa { language, word } => ipa_surface(project, &language, &word),
-        LanguageCommand::Stress { language, word } => stress_word(project, &language, &word),
-        LanguageCommand::Scan { language, text } => scan_verse(project, &language, &text),
+        LanguageCommand::Ipa { language, word, json } => ipa_surface(project, &language, &word, json),
+        LanguageCommand::Stress { language, word, json } => stress_word(project, &language, &word, json),
+        LanguageCommand::Scan { language, text, json } => scan_verse(project, &language, &text, json),
         LanguageCommand::Romanize {
             language,
             text,
             scheme,
             reverse,
-        } => romanize_text(project, &language, &text, scheme.as_deref(), reverse),
-        LanguageCommand::Tone { language, tones } => tone_sandhi(project, &language, &tones),
+            json,
+        } => romanize_text(project, &language, &text, scheme.as_deref(), reverse, json),
+        LanguageCommand::Tone { language, tones, json } => tone_sandhi(project, &language, &tones, json),
         LanguageCommand::Audit { language, json } => audit(project, &language, json),
         LanguageCommand::Stats { language, json } => stats(project, &language, json),
         LanguageCommand::Metrics { language, json } => metrics(project, &language, json),
@@ -300,7 +304,8 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             root,
             template,
             gloss,
-        } => paradigm(project, &language, &root, &template, gloss.as_deref()),
+            json,
+        } => paradigm(project, &language, &root, &template, gloss.as_deref(), json),
         LanguageCommand::Sentence {
             language,
             subject,
@@ -317,6 +322,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             negator,
             question,
             q_particle,
+            json,
         } => sentence(
             project,
             &language,
@@ -334,6 +340,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             negator.as_deref(),
             question,
             q_particle.as_deref(),
+            json,
         ),
         LanguageCommand::Translate { language, text, trace, json } => {
             translate(project, &language, &text, trace, json)
@@ -347,7 +354,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Remember { language, english, conlang } => {
             remember(project, &language, &english, &conlang)
         }
-        LanguageCommand::Memory { language } => memory_list(project, &language),
+        LanguageCommand::Memory { language, json } => memory_list(project, &language, json),
         LanguageCommand::Corpus { language, pool, limit, yes, json } => {
             corpus(project, &language, pool.as_deref(), limit, yes, json)
         }
@@ -426,14 +433,14 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             features,
             gloss,
         } => agree(project, &language, &word, &pos, &features, gloss.as_deref()),
-        LanguageCommand::Varieties { language } => varieties(project, &language),
+        LanguageCommand::Varieties { language, json } => varieties(project, &language, json),
         LanguageCommand::Lect {
             language,
             variety,
             word,
             text,
         } => lect(project, &language, &variety, word.as_deref(), text.as_deref()),
-        LanguageCommand::Dialects { language, count } => dialects(project, &language, count as usize),
+        LanguageCommand::Dialects { language, count, json } => dialects(project, &language, count as usize, json),
         LanguageCommand::Borrow {
             language,
             form,
@@ -468,7 +475,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             count,
             provider,
         } => propose_loans(project, &language, &from, topic.as_deref(), count as usize, provider.as_deref()),
-        LanguageCommand::Gloss { language, text } => gloss_text(project, &language, &text),
+        LanguageCommand::Gloss { language, text, json } => gloss_text(project, &language, &text, json),
         LanguageCommand::Igt { language, text, save, name, json } => {
             igt_text(project, &language, &text, save, name.as_deref(), json)
         }
@@ -617,10 +624,10 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::RealismCheck { language, provider } => {
             realism_check(project, &language, provider.as_deref())
         }
-        LanguageCommand::FamilyTree => family_tree(project),
-        LanguageCommand::Cognates { proto, form } => cognates(project, &proto, &form),
-        LanguageCommand::SoundChange { language, form } => {
-            sound_change(project, &language, &form)
+        LanguageCommand::FamilyTree { json } => family_tree(project, json),
+        LanguageCommand::Cognates { proto, form, json } => cognates(project, &proto, &form, json),
+        LanguageCommand::SoundChange { language, form, json } => {
+            sound_change(project, &language, &form, json)
         }
         LanguageCommand::DeriveLexicon { language, yes } => {
             derive_lexicon_cmd(project, &language, yes)

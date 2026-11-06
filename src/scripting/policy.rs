@@ -545,6 +545,7 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.poem.suppress", category::STORE_WRITE),
     ("ink.lang.list", category::STORE_READ),
     ("ink.lang.generate_word", category::STORE_READ),
+    ("ink.lang.generate_words", category::STORE_READ),
     ("ink.lang.syllabify", category::STORE_READ),
     ("ink.lang.ipa", category::STORE_READ),
     ("ink.lang.stress", category::STORE_READ),
@@ -601,6 +602,7 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // reads an SVG (fs_read). `glyph_draft` writes a file AND calls the LLM, so
     // it is gated fs_write here and additionally checks ai_write at run time.
     ("ink.lang.glyph_lint", category::FS_READ),
+    ("ink.lang.export_translation", category::FS_WRITE),
     ("ink.lang.export", category::FS_WRITE),
     ("ink.lang.dictionary", category::FS_WRITE),
     ("ink.lang.grammar_book", category::FS_WRITE),
@@ -1233,6 +1235,8 @@ mod tests {
             "ink.lang.grammar_book",
             "ink.lang.font_build",
             "ink.lang.glyph_draft",
+            "ink.lang.export_translation",
+            "ink.lang.export",
         ] {
             assert_eq!(cat(w), Some(category::FS_WRITE), "{w} must be fs_write");
             assert!(denied.contains(cat(w).unwrap()), "{w} denied by default");

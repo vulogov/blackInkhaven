@@ -36,6 +36,7 @@ pub fn register(vm: &mut VM) -> Result<()> {
         // ── read-only inspectors (store_read) ──
         ("ink.lang.list", w_list),
         ("ink.lang.generate_word", w_generate_word),
+        ("ink.lang.generate_words", w_generate_words),
         ("ink.lang.syllabify", w_syllabify),
         ("ink.lang.ipa", w_ipa),
         ("ink.lang.stress", w_stress),
@@ -90,6 +91,7 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.lang.generate_lexicon", w_generate_lexicon),
         // ── file / document output (fs_write; glyph_draft also ai_write) ──
         ("ink.lang.glyph_lint", w_glyph_lint),
+        ("ink.lang.export_translation", w_export),
         ("ink.lang.export", w_export),
         ("ink.lang.dictionary", w_dictionary),
         ("ink.lang.grammar_book", w_grammar_book),
@@ -148,7 +150,8 @@ fn lang_model(
 
 // ── read-only inspectors ─────────────────────────────────────────────────
 
-// ( -- list-of-names )
+// ( -- list-of-{name entries grammar phonology samples} )  the rows
+// `inkhaven language list --json` prints (LI-9).
 fn w_list(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
     do_list(vm).map_err(to_bund_err)
 }
@@ -156,19 +159,20 @@ fn do_list(vm: &mut VM) -> Result<&mut VM> {
     let tag = "ink.lang.list";
     let store = active_store(tag)?;
     let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag}: {e}"))?;
-    let root = hierarchy.iter().find(|n| {
-        n.kind == NodeKind::Book
-            && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_LANGUAGES)
-    });
-    let mut names: Vec<Value> = Vec::new();
-    if let Some(root) = root {
-        for n in hierarchy.children_of(Some(root.id)) {
-            if n.kind == NodeKind::Book {
-                names.push(Value::from_string(n.title.clone()));
-            }
-        }
-    }
-    push(vm, Value::from_list(names));
+    let rows = langapi::language_summaries(&hierarchy).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let out: Vec<Value> = rows
+        .into_iter()
+        .map(|r| {
+            let mut h: HashMap<String, Value> = HashMap::new();
+            h.insert("name".into(), Value::from_string(r.name));
+            h.insert("entries".into(), Value::from_int(r.entries as i64));
+            h.insert("grammar".into(), Value::from_int(r.grammar as i64));
+            h.insert("phonology".into(), Value::from_int(r.phonology as i64));
+            h.insert("samples".into(), Value::from_int(r.samples as i64));
+            Value::from_dict(h)
+        })
+        .collect();
+    push(vm, Value::from_list(out));
     Ok(vm)
 }
 
@@ -191,6 +195,35 @@ fn do_generate_word(vm: &mut VM) -> Result<&mut VM> {
     let word = crate::conlang::generate::word::generate_word(&phon, role, seed as u64)
         .ok_or_else(|| anyhow!("{tag}: no `{role_s}` template to generate from"))?;
     push(vm, Value::from_string(word));
+    Ok(vm)
+}
+
+// ( lang role count -- list-of-words )  the batch `inkhaven language
+// generate-word --count N --json` prints (LI-9); deterministic for a language.
+fn w_generate_words(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_generate_words(vm).map_err(to_bund_err)
+}
+fn do_generate_words(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.lang.generate_words";
+    require_depth(vm, 3, tag)?;
+    let count = value_to_i64(pull(vm, tag)?, "count", tag)?;
+    let role_s = value_to_string(pull(vm, tag)?, "role", tag)?;
+    let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
+    let role = TemplateRole::parse(&role_s)
+        .ok_or_else(|| anyhow!("{tag}: unknown role `{role_s}` (root/prefix/suffix/…)"))?;
+    let max = crate::conlang::generate::word::MAX_GENERATE_BATCH as i64;
+    if count < 1 || count > max {
+        return Err(anyhow!("{tag}: count must be 1 … {max}, got {count}"));
+    }
+    let (store, hierarchy, book) = ctx(tag, &name)?;
+    let phon = langapi::load_phonology(store, &hierarchy, &book)
+        .map_err(|e| anyhow!("{tag}: {e}"))?
+        .ok_or_else(|| anyhow!("{tag}: language `{name}` has no phonology block"))?;
+    if phon.templates_for(role).is_empty() {
+        return Err(anyhow!("{tag}: language `{name}` declares no `{role_s}` templates"));
+    }
+    let words = langapi::generate_checked(&phon, role, count as usize).map_err(|e| anyhow!("{tag}: {e}"))?;
+    push(vm, Value::from_list(words.into_iter().map(Value::from_string).collect()));
     Ok(vm)
 }
 
@@ -2319,7 +2352,9 @@ fn do_glyph_draft(vm: &mut VM) -> Result<&mut VM> {
     Ok(vm)
 }
 
-// ( lang out-path -- out-path )  export the translation system as a .itm bundle
+// ( lang out-path -- out-path )  export the translation system as a .itm bundle.
+// Registered as `ink.lang.export_translation` (the CLI's `export-translation`)
+// with `ink.lang.export` kept as an alias (LI-9).
 fn w_export(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
     do_export(vm).map_err(to_bund_err)
 }

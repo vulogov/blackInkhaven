@@ -497,14 +497,41 @@ pub(crate) fn scaffold_language_chapters(
     }
     Ok(())
 }
-pub(crate) fn list(project: &Path) -> Result<()> {
-    use crate::store::node::NodeKind;
+pub(crate) fn list(project: &Path, json: bool) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = Config::load_layered(&layout.config_path())?;
     let store = Store::open(layout, &cfg)?;
     let hierarchy = Hierarchy::load(&store)?;
 
+    let rows = language_summaries(&hierarchy)?;
+    if rows.is_empty() && !json {
+        eprintln!("{}", super::wording::NO_LANGUAGES);
+        return Ok(());
+    }
+    emit(json, &rows, |rows| {
+        let max_name = rows.iter().map(|r| r.name.chars().count()).max().unwrap_or(8);
+        let name_w = max_name.max(8);
+        println!(
+            "  {:<width$}  {:>6}  {:>7}  {:>9}  {:>7}",
+            "name", "words", "grammar", "phonology", "samples",
+            width = name_w,
+        );
+        println!("  {}", "-".repeat(name_w + 36));
+        for r in rows {
+            println!(
+                "  {:<width$}  {:>6}  {:>7}  {:>9}  {:>7}",
+                r.name, r.entries, r.grammar, r.phonology, r.samples,
+                width = name_w,
+            );
+        }
+    })
+}
+
+/// One row per language: the paragraph counts under its scaffold chapters.
+/// `language list` prints these and `ink.lang.list` returns them.
+pub(crate) fn language_summaries(hierarchy: &Hierarchy) -> Result<Vec<super::shapes::LanguageSummary>> {
+    use crate::store::node::NodeKind;
     let lang_root = hierarchy
         .iter()
         .find(|n| {
@@ -518,21 +545,16 @@ pub(crate) fn list(project: &Path) -> Result<()> {
             )
         })?;
     let languages = hierarchy.children_of(Some(lang_root.id));
-    if languages.is_empty() {
-        eprintln!("{}", super::wording::NO_LANGUAGES);
-        return Ok(());
-    }
-    // Compute counts up-front so the column widths
-    // can size to the data.  Tuple shape:
-    // (name, entries, grammar, phonology, samples).
-    let mut rows: Vec<(String, usize, usize, usize, usize)> =
-        Vec::with_capacity(languages.len());
+    let mut rows = Vec::with_capacity(languages.len());
     for lang in &languages {
         let chapters = hierarchy.children_of(Some(lang.id));
-        let mut entries = 0usize;
-        let mut grammar = 0usize;
-        let mut phonology = 0usize;
-        let mut samples = 0usize;
+        let mut row = super::shapes::LanguageSummary {
+            name: lang.title.clone(),
+            entries: 0,
+            grammar: 0,
+            phonology: 0,
+            samples: 0,
+        };
         for chapter in &chapters {
             let title_lc = chapter.title.to_lowercase();
             let paragraph_count = hierarchy
@@ -542,32 +564,14 @@ pub(crate) fn list(project: &Path) -> Result<()> {
                 .filter(|n| n.kind == NodeKind::Paragraph)
                 .count();
             match title_lc.as_str() {
-                "dictionary" => entries = paragraph_count,
-                "grammar" => grammar = paragraph_count,
-                "phonology" => phonology = paragraph_count,
-                "sample texts" => samples = paragraph_count,
+                "dictionary" => row.entries = paragraph_count,
+                "grammar" => row.grammar = paragraph_count,
+                "phonology" => row.phonology = paragraph_count,
+                "sample texts" => row.samples = paragraph_count,
                 _ => {}
             }
         }
-        rows.push((lang.title.clone(), entries, grammar, phonology, samples));
+        rows.push(row);
     }
-    let max_name = rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(8);
-    let name_w = max_name.max(8);
-    println!(
-        "  {:<width$}  {:>6}  {:>7}  {:>9}  {:>7}",
-        "name", "words", "grammar", "phonology", "samples",
-        width = name_w,
-    );
-    println!(
-        "  {}",
-        "-".repeat(name_w + 36)
-    );
-    for (name, entries, grammar, phonology, samples) in &rows {
-        println!(
-            "  {:<width$}  {:>6}  {:>7}  {:>9}  {:>7}",
-            name, entries, grammar, phonology, samples,
-            width = name_w,
-        );
-    }
-    Ok(())
+    Ok(rows)
 }

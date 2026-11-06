@@ -579,7 +579,7 @@ pub(crate) fn derive(
 }
 
 /// LANG-1 P3.2 — interlinear auto-gloss of conlang text.
-pub(crate) fn gloss_text(project: &Path, language: &str, text: &str) -> Result<()> {
+pub(crate) fn gloss_text(project: &Path, language: &str, text: &str, json: bool) -> Result<()> {
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
     // Phonology + morphology are optional: without them only bare forms gloss.
     let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
@@ -588,29 +588,30 @@ pub(crate) fn gloss_text(project: &Path, language: &str, text: &str) -> Result<(
 
     let index = crate::conlang::morphology::gloss::build_index(&phon, &morph, &entries);
     let items = index.gloss_text(text);
-    if items.is_empty() {
+    let shape = shapes::Glossed {
+        matched: items.iter().filter(|i| i.gloss.is_some()).count(),
+        words: items
+            .iter()
+            .map(|i| shapes::GlossPair { surface: i.surface.clone(), gloss: i.gloss.clone() })
+            .collect(),
+    };
+    if shape.words.is_empty() && !json {
         return Ok(());
     }
-
-    // Two aligned lines: the surface words over their glosses (Leipzig style).
-    let mut top = String::new();
-    let mut bot = String::new();
-    let mut matched = 0usize;
-    for item in &items {
-        let g = item.gloss.clone().unwrap_or_else(|| "?".to_string());
-        if item.gloss.is_some() {
-            matched += 1;
+    emit(json, &shape, |g| {
+        // Two aligned lines: the surface words over their glosses (Leipzig style).
+        let mut top = String::new();
+        let mut bot = String::new();
+        for p in &g.words {
+            let gl = p.gloss.as_deref().unwrap_or("?");
+            let width = p.surface.chars().count().max(gl.chars().count()) + 2;
+            top.push_str(&format!("{:<width$}", p.surface, width = width));
+            bot.push_str(&format!("{:<width$}", gl, width = width));
         }
-        let w = item.surface.chars().count();
-        let gw = g.chars().count();
-        let width = w.max(gw) + 2;
-        top.push_str(&format!("{:<width$}", item.surface, width = width));
-        bot.push_str(&format!("{:<width$}", g, width = width));
-    }
-    println!("{}", top.trim_end());
-    println!("{}", bot.trim_end());
-    eprintln!("\n{matched} / {} word(s) glossed", items.len());
-    Ok(())
+        println!("{}", top.trim_end());
+        println!("{}", bot.trim_end());
+        eprintln!("\n{} / {} word(s) glossed", g.matched, g.words.len());
+    })
 }
 
 /// IGT-1 (Wave 4) — `inkhaven language igt <lang> --text "…" [--save --name N]`:
@@ -1131,6 +1132,7 @@ pub(crate) fn paradigm(
     root: &str,
     template: &str,
     gloss: Option<&str>,
+    json: bool,
 ) -> Result<()> {
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
     let phonology = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
@@ -1154,15 +1156,21 @@ pub(crate) fn paradigm(
         &phonology, &morph, tmpl, root, root_gloss,
     );
 
-    println!("paradigm `{}` of {root} ({root_gloss}) · {} cell(s)", tmpl.name, rows.len());
-    for r in &rows {
-        let feats = r
-            .features
-            .iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        println!("  {:<18} {:<24} {}", r.form, r.gloss, feats);
-    }
-    Ok(())
+    // The same cells `ink.lang.paradigm` returns.
+    let cells: Vec<shapes::ParadigmCell> = rows
+        .iter()
+        .map(|r| shapes::ParadigmCell { form: r.form.clone(), gloss: r.gloss.clone(), features: r.features.clone() })
+        .collect();
+    emit(json, &cells, |cells| {
+        println!("paradigm `{}` of {root} ({root_gloss}) · {} cell(s)", tmpl.name, cells.len());
+        for r in cells {
+            let feats = r
+                .features
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            println!("  {:<18} {:<24} {}", r.form, r.gloss, feats);
+        }
+    })
 }

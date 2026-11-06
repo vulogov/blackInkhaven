@@ -3761,7 +3761,11 @@ pub enum LanguageCommand {
     /// texts).  Companion to `inkhaven language
     /// doctor` for a quick at-a-glance overview of
     /// every language in the project.
-    List,
+    List {
+        /// Emit the table as a JSON list of `{name, entries, grammar, phonology, samples}` (the same rows `ink.lang.list` returns).
+        #[arg(long)]
+        json: bool,
+    },
     /// 1.3.19 LANG-1 P6 — semantic-gap finder.
     /// Diff the lexicon against a reference concept
     /// scope and report which concepts are still
@@ -3908,6 +3912,9 @@ pub enum LanguageCommand {
         /// 1 … 100 000 (`MAX_GENERATE_BATCH`); clap refuses anything else.
         #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..=crate::conlang::generate::word::MAX_GENERATE_BATCH as i64))]
         count: u32,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 P1.2 — syllabify a word against a language's phonology.
@@ -3924,6 +3931,9 @@ pub enum LanguageCommand {
         /// IPA).  Segmented greedily against the phoneme inventory.
         #[arg(long)]
         word: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 P1.3 — derive the surface pronunciation of a word by applying
@@ -3937,6 +3947,9 @@ pub enum LanguageCommand {
         /// The word, in the language's romanization (or raw IPA).
         #[arg(long)]
         word: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 P1.4 — place primary stress on a word per the language's
@@ -3950,6 +3963,9 @@ pub enum LanguageCommand {
         /// The word, in the language's romanization (or raw IPA).
         #[arg(long)]
         word: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// 1.8.2 — scan a line (or several) of verse: syllabify each word, mark it
@@ -3965,6 +3981,9 @@ pub enum LanguageCommand {
         /// stanza also gets a dominant-metre summary).
         #[arg(long)]
         text: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 P1.5 — convert between IPA and a named romanization scheme.
@@ -3985,6 +4004,9 @@ pub enum LanguageCommand {
         /// Convert text → IPA instead of IPA → text.
         #[arg(long)]
         reverse: bool,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 P1.6 — apply the language's tone-sandhi rules to a sequence of
@@ -3997,6 +4019,9 @@ pub enum LanguageCommand {
         /// Space-separated underlying tone labels (`3 3 3`, `H L H`).
         #[arg(long)]
         tones: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 P2.1 — audit a language's dictionary for consistency: headwords
@@ -4681,7 +4706,11 @@ pub enum LanguageCommand {
 
     /// LANG-1 P4.2 — print the language-family tree (each language under its
     /// declared `proto`).
-    FamilyTree,
+    FamilyTree {
+        /// Emit `{languages: [{name, proto}], contact: [{a, b, region}]}` instead of the drawn tree.
+        #[arg(long)]
+        json: bool,
+    },
 
     /// LANG-1 P4.2 — the cognate set of a proto-form: its reflex in every
     /// daughter language (each daughter's sound-change chain applied to the
@@ -4692,6 +4721,9 @@ pub enum LanguageCommand {
         /// The proto-form to trace.
         #[arg(long)]
         form: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 P4.1 — apply a language's diachronic sound-change chain to a
@@ -4703,6 +4735,9 @@ pub enum LanguageCommand {
         /// The proto-form to evolve (in the proto's romanization).
         #[arg(long)]
         form: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 P4.1 — derive a daughter language's lexicon from its proto by
@@ -4806,6 +4841,9 @@ pub enum LanguageCommand {
         /// The conlang text to gloss (whitespace-separated words).
         #[arg(long)]
         text: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// 1.7 IGT-1 (Wave 4) — interlinear glossed text: auto-gloss a sentence and
@@ -5017,6 +5055,9 @@ pub enum LanguageCommand {
         /// Gloss for the root (defaults to the root itself).
         #[arg(long)]
         gloss: Option<String>,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// LANG-1 syntax — assemble a **sentence** from a subject, verb, and object.
@@ -5077,6 +5118,9 @@ pub enum LanguageCommand {
         /// the language uses one.
         #[arg(long)]
         q_particle: Option<String>,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// 1.3.19 LANG-1 P9 — build a noun phrase with a
@@ -5223,6 +5267,9 @@ pub enum LanguageCommand {
     Varieties {
         /// Target language name (case-insensitive).
         language: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// 1.3.22 LANG-2 P1 — render a form *in a variety* (`lect`).  Applies the
@@ -5300,6 +5347,9 @@ pub enum LanguageCommand {
     Memory {
         /// Target language name (case-insensitive).
         language: String,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// 1.3.23 LANG-3 P1 — generate a **synthetic corpus**: translate an English
@@ -5380,6 +5430,9 @@ pub enum LanguageCommand {
         /// How many headwords to compare.
         #[arg(long, default_value_t = 12, value_parser = clap::value_parser!(u32).range(1..))]
         count: u32,
+        /// Emit the result as JSON instead of text.
+        #[arg(long)]
+        json: bool,
     },
 
     /// 1.3.22 LANG-2 P2 — **borrow** a word into a language: nativise a donor

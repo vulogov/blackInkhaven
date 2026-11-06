@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | LANG-IMPROVE-1 |
-| **Status** | LI-1 … LI-8 landed on 3.18.0-dev; LI-9, LI-10 proposed |
+| **Status** | LI-1 … LI-9 landed on 3.18.0-dev; LI-10 proposed |
 | **Created** | 2026-11-05 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 3.18.0 |
@@ -564,6 +564,28 @@ count -- list )`; `ink.lang.list` returns `[{name, entries, phonemes}]`.
 
 **Test.** Each new `--json` output deserialises back into the type; the
 `ink.lang.*` alias table test extended.
+
+**Status: landed (3.18.0-dev).** `src/cli/language/shapes.rs` holds the one
+`emit(json, &T, text)` every handler routes through and the seventeen shapes,
+each `Serialize + Deserialize` with a round-trip test pinning its keys. Rule
+followed: where the Bund word already returns a structure the CLI emits the
+same keys (`list`, `generate-word`, `syllabify`, `paradigm`, `sentence`,
+`memory`, `varieties`, `cognates`); where it returns one string the CLI emits an
+object with the fields its text output shows (`ipa`, `stress`, `tone`, `gloss`,
+`sound-change`, `family-tree`); `romanize`, `scan` and `dialects` have no Bund
+twin. With `--json` the empty cases (`list`, `memory`, `varieties`, `dialects`,
+`family-tree`, `gloss`) print `[]` / an empty object instead of the prose hint.
+Bund: `ink.lang.export_translation` is registered beside `ink.lang.export`
+(same word, both classified `fs_write`; the policy test pins both),
+`ink.lang.generate_words ( lang role count -- list )` shares `generate_checked`
+with the CLI (same 1 … 100 000 bound, same error on an empty batch), and
+`ink.lang.list` returns `[{name, entries, grammar, phonology, samples}]` — the
+CLI table's columns rather than the proposal's `{name, entries, phonemes}`, via
+a shared `language_summaries`. Deviation: there is no separate alias table in
+the Bund stdlib (every word answers to its `lang.*` short name automatically),
+so the extension went into the policy classification test instead.
+`Documentation/CLI.md` gains the `--json` convention; `WORD_REFERENCE.md` the
+three word changes.
 
 ### LI-10 · Docs name commands that do not exist, and omit many that do
 

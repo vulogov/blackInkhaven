@@ -8,7 +8,7 @@ use crate::error::{Error, Result};
 use super::*;
 
 /// LANG-1 P1.6 — apply tone sandhi to an explicit tone sequence.
-pub(crate) fn tone_sandhi(project: &Path, language: &str, tones: &str) -> Result<()> {
+pub(crate) fn tone_sandhi(project: &Path, language: &str, tones: &str, json: bool) -> Result<()> {
     let (_store, phonology) = open_phonology(project, language)?;
     let system = phonology.tone.as_ref().ok_or_else(|| {
         Error::Config(format!(
@@ -17,8 +17,7 @@ pub(crate) fn tone_sandhi(project: &Path, language: &str, tones: &str) -> Result
     })?;
     let input: Vec<String> = tones.split_whitespace().map(String::from).collect();
     let surface = crate::conlang::phonology::tone_eval::apply_sandhi(system, &input);
-    println!("{}", surface.join(" "));
-    Ok(())
+    emit(json, &shapes::ToneSandhi { input, surface }, |t| println!("{}", t.surface.join(" ")))
 }
 
 /// LANG-1 P1.5 — convert between IPA and a named romanization scheme.
@@ -28,6 +27,7 @@ pub(crate) fn romanize_text(
     text: &str,
     scheme: Option<&str>,
     reverse: bool,
+    json: bool,
 ) -> Result<()> {
     use crate::conlang::phonology::romanize;
 
@@ -42,19 +42,31 @@ pub(crate) fn romanize_text(
         })
     })?;
 
-    if reverse {
+    let (direction, output) = if reverse {
         let seq = romanize::deromanize(scheme_ref, &phonology, text);
-        println!("/{}/", seq.join(""));
+        ("text_to_ipa", seq.join(""))
     } else {
         let seq: Vec<String> = text.split_whitespace().map(String::from).collect();
-        println!("{}", romanize::romanize(scheme_ref, &phonology, &seq));
-    }
-    Ok(())
+        ("ipa_to_text", romanize::romanize(scheme_ref, &phonology, &seq))
+    };
+    let shape = shapes::Romanized {
+        input: text.to_string(),
+        scheme: scheme_ref.name.clone(),
+        direction: direction.to_string(),
+        output,
+    };
+    emit(json, &shape, |r| {
+        if reverse {
+            println!("/{}/", r.output);
+        } else {
+            println!("{}", r.output);
+        }
+    })
 }
 
 /// LANG-1 P1.4 — place primary stress on a word per the language's stress
 /// rule and print the syllabification with `ˈ` before the stressed syllable.
-pub(crate) fn stress_word(project: &Path, language: &str, word: &str) -> Result<()> {
+pub(crate) fn stress_word(project: &Path, language: &str, word: &str, json: bool) -> Result<()> {
     use crate::conlang::phonology::{stress_eval, syllable};
 
     let (_store, phonology) = open_phonology(project, language)?;
@@ -75,26 +87,23 @@ pub(crate) fn stress_word(project: &Path, language: &str, word: &str) -> Result<
             .map(|p| p.grapheme().to_string())
             .unwrap_or_else(|| ipa.clone())
     };
-    let out = sylls
+    let syllables: Vec<String> = sylls
+        .iter()
+        .map(|s| s.onset.iter().chain(&s.nucleus).chain(&s.coda).map(&g).collect())
+        .collect();
+    let marked = syllables
         .iter()
         .enumerate()
-        .map(|(i, s)| {
-            let body: String = s.onset.iter().chain(&s.nucleus).chain(&s.coda).map(&g).collect();
-            if Some(i) == stressed {
-                format!("ˈ{body}")
-            } else {
-                body
-            }
-        })
+        .map(|(i, body)| if Some(i) == stressed { format!("ˈ{body}") } else { body.clone() })
         .collect::<Vec<_>>()
         .join(".");
-    println!("{out}");
-    Ok(())
+    let shape = shapes::StressedWord { word: word.to_string(), syllables, stressed, marked };
+    emit(json, &shape, |s| println!("{}", s.marked))
 }
 
 /// 1.8.2 — scan a line (or stanza) of verse: mark each syllable's beat and name
 /// the metre. Stress per word resolves through explicit mark → lexicon → rule.
-pub(crate) fn scan_verse(project: &Path, language: &str, text: &str) -> Result<()> {
+pub(crate) fn scan_verse(project: &Path, language: &str, text: &str, json: bool) -> Result<()> {
     use crate::conlang::scansion;
 
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
@@ -110,75 +119,94 @@ pub(crate) fn scan_verse(project: &Path, language: &str, text: &str) -> Result<(
     if lines.is_empty() {
         return Err(Error::Config("no verse to scan (the text is empty)".into()));
     }
+    let dominant = if lines.len() > 1 { scansion::dominant_meter(&lines) } else { None };
+    let shape = shapes::Scansion {
+        lines: lines.iter().map(shapes::ScannedLine::from).collect(),
+        dominant_meter: dominant.as_ref().map(shapes::MeterShape::from),
+    };
 
-    println!("scan · {language}   (/ stressed  × unstressed  · flexible)\n");
-    for line in &lines {
-        // Two aligned rows: the syllables, and their beat glyphs beneath.
-        let mut top: Vec<String> = Vec::new();
-        let mut bot: Vec<String> = Vec::new();
-        for (wi, w) in line.words.iter().enumerate() {
-            if wi > 0 {
-                top.push("|".into());
-                bot.push("|".into());
+    emit(json, &shape, |_| {
+        println!("scan · {language}   (/ stressed  × unstressed  · flexible)\n");
+        for line in &lines {
+            // Two aligned rows: the syllables, and their beat glyphs beneath.
+            let mut top: Vec<String> = Vec::new();
+            let mut bot: Vec<String> = Vec::new();
+            for (wi, w) in line.words.iter().enumerate() {
+                if wi > 0 {
+                    top.push("|".into());
+                    bot.push("|".into());
+                }
+                for s in &w.syllables {
+                    let width = s.text.chars().count().max(1);
+                    top.push(format!("{:<width$}", s.text, width = width));
+                    bot.push(format!("{:^width$}", s.beat.glyph(), width = width));
+                }
             }
-            for s in &w.syllables {
-                let width = s.text.chars().count().max(1);
-                top.push(format!("{:<width$}", s.text, width = width));
-                bot.push(format!("{:^width$}", s.beat.glyph(), width = width));
+            println!("  {}", top.join(" "));
+            println!("  {}", bot.join(" "));
+            let n = line.beats().len();
+            match &line.meter {
+                Some(m) => println!("  → {} · {n} syllable(s) · fit {:.2}\n", m.name, m.conformance),
+                None => println!("  → irregular / free · {n} syllable(s)\n"),
             }
         }
-        println!("  {}", top.join(" "));
-        println!("  {}", bot.join(" "));
-        let n = line.beats().len();
-        match &line.meter {
-            Some(m) => println!("  → {} · {n} syllable(s) · fit {:.2}\n", m.name, m.conformance),
-            None => println!("  → irregular / free · {n} syllable(s)\n"),
+        if lines.len() > 1 {
+            match &dominant {
+                Some(m) => println!("dominant metre · {} (fit {:.2})", m.name, m.conformance),
+                None => println!("dominant metre · irregular"),
+            }
         }
-    }
-
-    if lines.len() > 1 {
-        match scansion::dominant_meter(&lines) {
-            Some(m) => println!("dominant metre · {} (fit {:.2})", m.name, m.conformance),
-            None => println!("dominant metre · irregular"),
-        }
-    }
-    Ok(())
+    })
 }
 
 /// LANG-1 P1.3 — derive and print a word's surface pronunciation by applying
 /// the language's allophony rules to its underlying form.
-pub(crate) fn ipa_surface(project: &Path, language: &str, word: &str) -> Result<()> {
+pub(crate) fn ipa_surface(project: &Path, language: &str, word: &str, json: bool) -> Result<()> {
     let (_store, phonology) = open_phonology(project, language)?;
     let underlying = phonology.segment(word);
     let surface = crate::conlang::phonology::allophony_eval::surface_form(&phonology, &underlying);
 
-    let render_ipa = |seq: &[String]| seq.join("");
-    let render_roman = |seq: &[String]| -> String {
-        seq.iter()
-            .map(|ipa| {
-                phonology
-                    .phoneme(ipa)
-                    .map(|p| p.grapheme().to_string())
-                    .unwrap_or_else(|| ipa.clone())
-            })
-            .collect()
+    let romanized: String = surface
+        .iter()
+        .map(|ipa| {
+            phonology
+                .phoneme(ipa)
+                .map(|p| p.grapheme().to_string())
+                .unwrap_or_else(|| ipa.clone())
+        })
+        .collect();
+    let shape = shapes::IpaSurface {
+        word: word.to_string(),
+        underlying: underlying.join(""),
+        surface: surface.join(""),
+        romanized,
     };
-
-    println!("underlying  /{}/", render_ipa(&underlying));
-    println!("surface     [{}]", render_ipa(&surface));
-    println!("romanized    {}", render_roman(&surface));
-    Ok(())
+    emit(json, &shape, |s| {
+        println!("underlying  /{}/", s.underlying);
+        println!("surface     [{}]", s.surface);
+        println!("romanized    {}", s.romanized);
+    })
 }
 
 /// LANG-1 P1.2 — syllabify a word against a language's phonology and print
 /// the `CV.CVC`-style breakdown. Loads the Phonology block, segments the
 /// word into phonemes (longest-grapheme match), and runs the sonority-aware
 /// syllabifier.
-pub(crate) fn syllabify_word(project: &Path, language: &str, word: &str) -> Result<()> {
+pub(crate) fn syllabify_word(project: &Path, language: &str, word: &str, json: bool) -> Result<()> {
     let (_store, phonology) = open_phonology(project, language)?;
     let seq = phonology.segment(word);
     let sylls = crate::conlang::phonology::syllable::syllabify(&phonology, &seq);
-    println!("{}", crate::conlang::phonology::syllable::render(&phonology, &sylls));
+    // The same list `ink.lang.syllabify` returns: one grapheme string per syllable.
+    let g = |ipa: &String| {
+        phonology.phoneme(ipa).map(|p| p.grapheme().to_string()).unwrap_or_else(|| ipa.clone())
+    };
+    let syllables: Vec<String> = sylls
+        .iter()
+        .map(|s| s.onset.iter().chain(&s.nucleus).chain(&s.coda).map(&g).collect())
+        .collect();
+    emit(json, &syllables, |_| {
+        println!("{}", crate::conlang::phonology::syllable::render(&phonology, &sylls));
+    })?;
     eprintln!(
         "{} → {} syllable(s), {} phoneme(s)",
         word,
@@ -215,7 +243,7 @@ pub(crate) fn generate_checked(
     Ok(words)
 }
 
-pub(crate) fn generate_word(project: &Path, language: &str, role: &str, count: usize) -> Result<()> {
+pub(crate) fn generate_word(project: &Path, language: &str, role: &str, count: usize, json: bool) -> Result<()> {
     let role = crate::conlang::TemplateRole::parse(role).ok_or_else(|| {
         Error::Config(format!(
             "unknown role `{role}` — use root | prefix | suffix | infix | circumfix | compound"
@@ -232,9 +260,12 @@ pub(crate) fn generate_word(project: &Path, language: &str, role: &str, count: u
     }
 
     let words = generate_checked(&phonology, role, count)?;
-    for w in &words {
-        println!("{w}");
-    }
+    // The same list `ink.lang.generate_words` returns.
+    emit(json, &words, |ws| {
+        for w in ws {
+            println!("{w}");
+        }
+    })?;
     eprintln!(
         "generated {} / {} requested `{}` word(s) for {}",
         words.len(),

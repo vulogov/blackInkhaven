@@ -446,23 +446,29 @@ pub(crate) fn remember(project: &Path, language: &str, english: &str, conlang: &
 }
 
 /// 1.3.23 LANG-3 P1 — list a language's translation memory.
-pub(crate) fn memory_list(project: &Path, language: &str) -> Result<()> {
+pub(crate) fn memory_list(project: &Path, language: &str, json: bool) -> Result<()> {
     use crate::conlang::translate::memory::TranslationMemory;
     let _ = open_lang_book(project, language)?;
     let mem = TranslationMemory::load(project, language)
         .map_err(|e| Error::Store(format!("loading translation memory: {e}")))?;
-    if mem.is_empty() {
+    if mem.is_empty() && !json {
         println!(
             "{language} has no remembered translations yet — add one with \
-             `language remember {language} --english … --conlang …`."
+             `inkhaven language remember {language} --english … --conlang …`."
         );
         return Ok(());
     }
-    println!("{language} · {} remembered translation(s):", mem.len());
-    for (en, con) in mem.entries() {
-        println!("  {en}  →  {con}");
-    }
-    Ok(())
+    // The same list `ink.lang.memory` returns.
+    let pairs: Vec<shapes::MemoryPair> = mem
+        .entries()
+        .map(|(en, con)| shapes::MemoryPair { english: en.to_string(), conlang: con.to_string() })
+        .collect();
+    emit(json, &pairs, |pairs| {
+        println!("{language} · {}:", super::wording::plural(pairs.len(), "remembered translation", "remembered translations"));
+        for p in pairs {
+            println!("  {}  →  {}", p.english, p.conlang);
+        }
+    })
 }
 
 /// 1.3.23 LANG-3 P1 — generate a synthetic corpus and (with --yes) seed memory.
@@ -693,6 +699,7 @@ pub(crate) fn sentence(
     negator: Option<&str>,
     question: bool,
     q_particle: Option<&str>,
+    json: bool,
 ) -> Result<()> {
     use crate::conlang::syntax::{self, Clause, NounPhrase};
 
@@ -731,20 +738,34 @@ pub(crate) fn sentence(
     let rendered = syntax::assemble(&phon, &morph, &grammar_spec.grammar, &clause);
 
     let order = grammar_spec.grammar.get("word_order").map(String::as_str).unwrap_or("svo");
-    println!("{} ({} order)", rendered.surface, order.to_uppercase());
-    // Interlinear: surface words over their glosses.
-    let surf: Vec<&str> = rendered.words.iter().map(|(w, _)| w.as_str()).collect();
-    let gl: Vec<&str> = rendered.words.iter().map(|(_, g)| g.as_str()).collect();
-    let widths: Vec<usize> =
-        rendered.words.iter().map(|(w, g)| w.chars().count().max(g.chars().count()) + 2).collect();
-    let mut line1 = String::from("  ");
-    let mut line2 = String::from("  ");
-    for (i, w) in surf.iter().enumerate() {
-        line1.push_str(&format!("{:<width$}", w, width = widths[i]));
-        line2.push_str(&format!("{:<width$}", gl[i], width = widths[i]));
-    }
-    println!("{line1}");
-    println!("{line2}");
-    println!("  '{}'", rendered.literal);
-    Ok(())
+    // The keys `ink.lang.sentence` returns, plus the order and the word pairs.
+    let shape = shapes::Sentence {
+        surface: rendered.surface.clone(),
+        gloss: rendered.words.iter().map(|(_, g)| g.as_str()).collect::<Vec<_>>().join(" "),
+        literal: rendered.literal.clone(),
+        order: order.to_uppercase(),
+        words: rendered
+            .words
+            .iter()
+            .map(|(w, g)| shapes::GlossPair { surface: w.clone(), gloss: Some(g.clone()) })
+            .collect(),
+    };
+    emit(json, &shape, |s| {
+        println!("{} ({} order)", s.surface, s.order);
+        // Interlinear: surface words over their glosses.
+        let widths: Vec<usize> = s
+            .words
+            .iter()
+            .map(|p| p.surface.chars().count().max(p.gloss.as_deref().unwrap_or("").chars().count()) + 2)
+            .collect();
+        let mut line1 = String::from("  ");
+        let mut line2 = String::from("  ");
+        for (i, p) in s.words.iter().enumerate() {
+            line1.push_str(&format!("{:<width$}", p.surface, width = widths[i]));
+            line2.push_str(&format!("{:<width$}", p.gloss.as_deref().unwrap_or(""), width = widths[i]));
+        }
+        println!("{line1}");
+        println!("{line2}");
+        println!("  '{}'", s.literal);
+    })
 }
