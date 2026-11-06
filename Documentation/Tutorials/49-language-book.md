@@ -762,9 +762,11 @@ When the back-translation drifts beyond register
 (e.g., "the river flows" → "the river of regal
 pomp"), the grammar rules or dictionary entries
 have an inconsistency the manuscript will
-eventually trip over.  This is the in-TUI version
-of what'll eventually be the headless `inkhaven
-language test` corpus-driven drift detector.
+eventually trip over.  The headless versions are
+`inkhaven language eval <name>` (scores round-trip
+quality over a test set) and `inkhaven language
+corpus <name>` (translates a pool and, with
+`--yes`, seeds the translation memory).
 
 ## Step 10 — health check
 
@@ -955,15 +957,18 @@ didn't ship):
 
 Most of these shipped in later releases:
 
-- `inkhaven language test <name>` — the headless
-  roundtrip drift CLI (shipped).
+- `inkhaven language eval <name>` and
+  `inkhaven language corpus <name>` — the headless
+  round-trip quality score and the synthetic-corpus
+  generator (shipped; a separate `test` subcommand
+  was never built).
 - `inkhaven language translate` and
   `inkhaven language reverse` — sentence-level RBMT
   translation between a conlang and English, in
   both directions (shipped).
 - Structured exports via `inkhaven language export
-  --format dictionary|grammar|anki|json` (shipped;
-  a dedicated `phrasebook` format is still open).
+  --format json|anki|dictionary-twocol|csv|grammar|phrasebook|xliff|linguex|ipa-chart`
+  (all shipped, `phrasebook` included).
 
 Still open — render / UX work, not data-model:
 

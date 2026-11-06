@@ -38,6 +38,7 @@ pub mod event;
 pub mod event_critique;
 pub mod comments;
 pub mod language;
+pub mod language_index;
 pub mod inner_socrates;
 pub mod inner_editor;
 pub mod companions;
@@ -3833,12 +3834,12 @@ pub enum LanguageCommand {
         /// title match).
         word: String,
     },
-    /// put a language's Dictionary into
-    /// declared alphabet order (3.18 LI-5): bucket
-    /// subchapters by `Meta/overview.alphabet`
-    /// position and the entries inside each bucket
-    /// letter by letter, renaming the `NN-` file
-    /// prefixes in one pass per parent. Every door
+    /// Put a language's Dictionary into the declared
+    /// alphabet's order. Bucket subchapters sort by
+    /// `Meta/overview.alphabet` position and the
+    /// entries inside each bucket letter by letter,
+    /// renaming the `NN-` file prefixes in one pass
+    /// per parent (3.18 LI-5). Every door
     /// that adds words keeps this order; this
     /// command repairs a dictionary built before
     /// 3.18 or edited by hand.
@@ -3893,6 +3894,14 @@ pub enum LanguageCommand {
         #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
         output: Option<PathBuf>,
     },
+
+    /// Maintainer: print the `## Command index` section of
+    /// `Documentation/CONLANG.md` (every visible `language` subcommand, grouped,
+    /// one line each from its `about`). The release checklist pastes it in; the
+    /// `docs_language_surface` test fails when a documented command or flag no
+    /// longer exists.
+    #[command(hide = true, name = "_index-markdown")]
+    IndexMarkdown,
 
     /// LANG-1 P1.1 — generate candidate words from a language's
     /// phonotactic templates.  Reads the typed phoneme block in the
@@ -5272,10 +5281,6 @@ pub enum LanguageCommand {
         json: bool,
     },
 
-    /// 1.3.22 LANG-2 P1 — render a form *in a variety* (`lect`).  Applies the
-    /// variety's sound changes (the same engine diachronics uses,
-    /// synchronically) to a `--word` or a `--text` run, showing the base →
-    /// variety diff.  A variety is a *dialect*, *register*, or *sociolect*.
     /// 1.3.23 LANG-3 P0 — **translate** English into the conlang. Tier 1 (the
     /// deterministic rule-based spine): each English word is mapped to a
     /// headword by its lexicon gloss, and the LANG-1 syntax engine orders,
@@ -5408,6 +5413,10 @@ pub enum LanguageCommand {
         output: Option<PathBuf>,
     },
 
+    /// 1.3.22 LANG-2 P1 — render a form *in a variety* (`lect`).  Applies the
+    /// variety's sound changes (the same engine diachronics uses,
+    /// synchronically) to a `--word` or a `--text` run, showing the base →
+    /// variety diff.  A variety is a *dialect*, *register*, or *sociolect*.
     Lect {
         /// Target language name (case-insensitive).
         language: String,

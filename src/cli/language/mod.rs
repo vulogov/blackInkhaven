@@ -154,6 +154,10 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             output,
         } => export(project, &language, format, output.as_deref()),
         LanguageCommand::List { json } => list(project, json),
+        LanguageCommand::IndexMarkdown => {
+            print!("{}", crate::cli::language_index::render_markdown());
+            Ok(())
+        }
         LanguageCommand::RemoveWord { language, word } => {
             remove_word(project, &language, &word)
         }

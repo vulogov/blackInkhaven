@@ -145,7 +145,7 @@ those words to the Dictionary first.
 | Producer | Kind(s) | How |
 | -------- | ------- | --- |
 | **Editor translation** — `Ctrl+B D` | `translation_result`, `translation_uncovered_word_report` | Deterministic (rule-based) LANG-3 translation of the open paragraph. The AI translation `Ctrl+B Q` still streams into the AI pane. |
-| **CLI / Bund translation** | `translation_result`, … | `inkhaven language translate / reverse / cross`, and the `lang.translate` / `reverse` / `cross` Bund words. |
+| **CLI / Bund translation** | `translation_result`, … | `inkhaven language translate / reverse / cross`, and the `ink.lang.translate` / `ink.lang.reverse` / `ink.lang.cross` Bund words. |
 | **Lexicon generation** | `lexicon_proposal` | `inkhaven language generate-lexicon` (dry run) and `ink.lang.generate_lexicon`. Promote with `Enter`. |
 | **Variety rendering** | `variety_rendering` | `inkhaven language lect` and `ink.lang.lect`. |
 | **Bund scripts** | `bund_print`, `bund_log`, *any* | `ink.io.print` / `log` / `notify`. A bare `print` / `println` is also mirrored here (one message per line) so script output is visible in the pane, not only in the transient floating Bund pane. |

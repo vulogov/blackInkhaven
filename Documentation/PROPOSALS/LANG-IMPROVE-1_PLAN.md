@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | LANG-IMPROVE-1 |
-| **Status** | LI-1 … LI-9 landed on 3.18.0-dev; LI-10 proposed |
+| **Status** | LI-1 … LI-10 landed on 3.18.0-dev — the track is complete |
 | **Created** | 2026-11-05 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 3.18.0 |
@@ -618,6 +618,26 @@ group (`hypothesize`, `hypotheses`, `hypothesis`, `hypothesis-status`,
 
 **Test.** The drift test itself (it fails on today's tree and passes after the
 six fixes).
+
+**Status: landed (3.18.0-dev).** The six mismatches are fixed (tutorial 49 now
+points at `eval` / `corpus` and lists the nine real export formats;
+`OUTPUT_PANE.md` names `ink.lang.translate`; the `--out` lines in `CONLANG.md`
+had already gone with LI-6). `src/cli/language_index.rs` renders the
+`## Command index` section of `CONLANG.md` from clap's own tree — every visible
+`language` subcommand filed under one of twelve headings in a `GROUPS` table,
+one line each from its `about` with the tracker tag stripped, `--json` / `-o`
+marks — and a test fails when a subcommand is not filed (or a filed one is
+gone). Deviations: the generator is the hidden subcommand `inkhaven language
+_index-markdown` (the `language` command is a bare `#[command(subcommand)]`
+tuple variant, so a `--index-markdown` flag would have meant restructuring every
+`Command::Language(cmd)` match), and the drift test lives in that module as a
+unit test rather than `tests/docs_language_surface.rs` (the crate has no lib
+target; a unit test introspects clap directly, and the real-store convention
+already keeps everything in the one test binary). The drift test scans
+`CONLANG.md`, `CLI.md` and every tutorial for `inkhaven language <name> …` and
+`` `language <name>` `` table cells, with the `--flags` written in the same
+invocation; on the pre-fix tree it reported `inkhaven language test`, and it
+passes now. The release sequence regenerates the index with the README.
 
 ---
 
