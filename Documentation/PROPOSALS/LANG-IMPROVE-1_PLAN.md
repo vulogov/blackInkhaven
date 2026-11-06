@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | LANG-IMPROVE-1 |
-| **Status** | LI-1 … LI-7 landed on 3.18.0-dev; LI-8 … LI-10 proposed |
+| **Status** | LI-1 … LI-8 landed on 3.18.0-dev; LI-9, LI-10 proposed |
 | **Created** | 2026-11-05 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 3.18.0 |
@@ -524,6 +524,25 @@ confirmations on stderr, data on stdout (the rule `--json` already follows);
 British spelling as the rest of the tree. One commit.
 
 **Test.** Snapshot tests on the eight messages.
+
+**Status: landed (3.18.0-dev).** One module, `src/cli/language/wording.rs`,
+now owns the repeated sentences: `language_not_found` /
+`proto_language_not_found` (every "not found" in the family — nine sites —
+says `run \`inkhaven language init <name>\` first`), `NO_LANGUAGES` (both
+listings, both on stderr), `character_has_no_language`, `font_build_command`
+/ `typst_font_hint` (the four hints quote `inkhaven language font-build …`),
+`entries` / `plural` (`1 entry`, `12 entries`; `entr(y/ies)` is gone from the
+CLI and the TUI hub), and the `COMPOSE_KINDS` table that `compose_kind`
+resolves aliases from and the `unknown --kind` error lists — the match in
+`compose` now runs on the canonical name, so the list cannot drift.
+`StressPlacement` and `StressRule` implement `Display`; the grammar-book and
+tutorial prompts print `STRESS RULE: penultimate`. Every "wrote … → path"
+confirmation (books, writing, translate export, sort-dictionary) moved to
+stderr; stdout carries data only. `serializing` / `serialize` / `analyzable` /
+`realization` in messages are now the tree's British spelling (identifiers
+untouched). Snapshot tests in `wording::tests` pin the eight sentences. The
+Bund `ink.lang.*` copy of the character message was aligned without the CLI
+hint.
 
 ### LI-9 · `--json` where a script needs it
 

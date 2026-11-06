@@ -23,6 +23,7 @@ pub(crate) fn compose(
     provider: Option<&str>,
 ) -> Result<()> {
     use crate::conlang::creative;
+    let kind = super::wording::compose_kind(kind)?;
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
     let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
     let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
@@ -31,7 +32,7 @@ pub(crate) fn compose(
     let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
 
     match kind.to_ascii_lowercase().as_str() {
-        "names" | "name" => {
+        "names" => {
             let names = creative::names(&phon, count, seed);
             if names.is_empty() {
                 return Err(Error::Config(
@@ -44,7 +45,7 @@ pub(crate) fn compose(
                 println!("  {n}");
             }
         }
-        "prose" | "sample" | "sample-text" => {
+        "prose" => {
             let lines = creative::prose(&phon, &morph, typology, &entries, count, seed);
             if lines.is_empty() {
                 return Err(Error::Config(
@@ -56,7 +57,7 @@ pub(crate) fn compose(
                 println!("• {}\n", format_clause(r));
             }
         }
-        "poem" | "poetry" | "verse" => {
+        "poem" => {
             // Clamp each line's syllable count to a sane range — an unbounded
             // value (a dropped digit → `--meter 5000000000`) would spin the poem
             // generator for billions of tries and overflow `target * 4`.
@@ -117,11 +118,7 @@ pub(crate) fn compose(
                 "\n(advisory — generated text, not saved; review before use)"
             );
         }
-        other => {
-            return Err(Error::Config(format!(
-                "unknown --kind `{other}` (expected names | prose | poem | blessing | curse | incantation)"
-            )));
-        }
+        other => unreachable!("compose_kind returned an unlisted kind `{other}`"),
     }
     Ok(())
 }
@@ -138,7 +135,7 @@ pub(crate) fn stats(project: &Path, language: &str, json: bool) -> Result<()> {
         println!(
             "{}",
             serde_json::to_string_pretty(&prof)
-                .map_err(|e| Error::Store(format!("serializing profile: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising profile: {e}")))?
         );
         return Ok(());
     }
@@ -158,8 +155,8 @@ pub(crate) fn stats(project: &Path, language: &str, json: bool) -> Result<()> {
         prof.phoneme_inventory, prof.consonants, prof.vowels
     );
     println!(
-        "  lexicon   · {} entr(y/ies), {} analyzable",
-        prof.word_count, prof.analyzable_words
+        "  lexicon   · {}, {} analysable",
+        super::wording::entries(prof.word_count), prof.analyzable_words
     );
     if prof.analyzable_words > 0 {
         println!(
@@ -199,12 +196,12 @@ pub(crate) fn audit(project: &Path, language: &str, json: bool) -> Result<()> {
 
     if json {
         println!("{}", serde_json::to_string_pretty(&report).map_err(|e| {
-            Error::Store(format!("serializing lexicon report: {e}"))
+            Error::Store(format!("serialising lexicon report: {e}"))
         })?);
         return Ok(());
     }
 
-    println!("lexicon audit · {language} · {} entr(y/ies)", report.total);
+    println!("lexicon audit · {language} · {}", super::wording::entries(report.total));
     if report.issue_count() == 0 {
         println!("  ✓ no issues");
         return Ok(());
@@ -276,9 +273,7 @@ pub(crate) fn define_rule(
             n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language)
         })
         .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!("language `{language}` not found"))
-        })?;
+        .ok_or_else(|| super::wording::language_not_found(language))?;
     let category_chapter = hierarchy
         .children_of(Some(lang_book.id))
         .into_iter()
@@ -287,7 +282,7 @@ pub(crate) fn define_rule(
         .ok_or_else(|| {
             Error::Config(format!(
                 "`{category_norm}` chapter not found under language `{language}` — \
-                 was it scaffolded? Try `inkhaven language init {language}`"
+                 was it scaffolded? run `inkhaven language init {language}` first"
             ))
         })?;
 

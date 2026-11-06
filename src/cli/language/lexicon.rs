@@ -65,7 +65,7 @@ pub(crate) fn scan_manuscript(project: &Path, language: &str, json: bool) -> Res
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing scan: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising scan: {e}")))?
         );
         return Ok(());
     }
@@ -134,12 +134,12 @@ pub(crate) fn query(
         println!(
             "{}",
             serde_json::to_string_pretty(&matches)
-                .map_err(|e| Error::Store(format!("serializing query: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising query: {e}")))?
         );
         return Ok(());
     }
 
-    println!("{} / {} entr(y/ies) match", matches.len(), entries.len());
+    println!("{} / {} match", matches.len(), super::wording::entries(entries.len()));
     for e in &matches {
         let mut tags = Vec::new();
         if !e.registers.is_empty() {
@@ -249,8 +249,8 @@ pub(crate) fn generate_lexicon(
     }
 
     println!(
-        "proposed {} entr(y/ies) for {language}{} ({} rejected by the dedup gate):",
-        kept.len(),
+        "proposed {} for {language}{} ({} rejected by the dedup gate):",
+        super::wording::entries(kept.len()),
         topic.map(|t| format!(" · topic: {t}")).unwrap_or_default(),
         rejected.len()
     );
@@ -293,11 +293,11 @@ pub(crate) fn generate_lexicon(
             }
         }
         writer.finish()?;
-        eprintln!("\nadded {added} entr(y/ies) to {language}'s Dictionary");
+        eprintln!("\nadded {} to {language}'s Dictionary", super::wording::entries(added));
     } else {
         eprintln!(
-            "\n(dry run — re-run with --yes to add the {} kept entr(y/ies))",
-            kept.len()
+            "\n(dry run — re-run with --yes to add the {} kept)",
+            super::wording::entries(kept.len())
         );
         // PANE-1 P3 — surface the advisory proposals in the Output pane with a
         // promote-to-Dictionary action (no-op outside the TUI / active pane).
@@ -386,11 +386,7 @@ pub(crate) fn add_word(
             n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language)
         })
         .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "language `{language}` not found — run `inkhaven language init {language}` first"
-            ))
-        })?;
+        .ok_or_else(|| super::wording::language_not_found(language))?;
 
     // LB-4: the same spelling check the CSV import runs, so the two doors
     // agree. `--force` is the escape hatch, as on import.
@@ -894,7 +890,7 @@ pub(crate) fn sort_dictionary(project: &Path, language: &str, dry_run: bool) -> 
         }
     }
     if dry_run {
-        println!("(dry run — {buckets_moved} bucket(s) and {entries_moved} entr(y/ies) would move)");
+        println!("(dry run — {} and {} would move)", super::wording::plural(buckets_moved, "bucket", "buckets"), super::wording::entries(entries_moved));
         return Ok(());
     }
     let batch = store.begin_batch();
@@ -902,7 +898,7 @@ pub(crate) fn sort_dictionary(project: &Path, language: &str, dry_run: bool) -> 
         store.reorder_children(&mut hierarchy, Some(plan.parent.id), &plan.order)?;
     }
     batch.finish()?;
-    println!("sorted {}/Dictionary: {buckets_moved} bucket(s) and {entries_moved} entr(y/ies) moved", lang_book.title);
+    eprintln!("sorted {}/Dictionary: {} and {} moved", lang_book.title, super::wording::plural(buckets_moved, "bucket", "buckets"), super::wording::entries(entries_moved));
     Ok(())
 }
 

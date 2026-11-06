@@ -50,7 +50,7 @@ pub(crate) fn movement(
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing movement: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising movement: {e}")))?
         );
         return Ok(());
     }
@@ -101,7 +101,7 @@ pub(crate) fn binding(
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing binding: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising binding: {e}")))?
         );
         return Ok(());
     }
@@ -152,7 +152,7 @@ pub(crate) fn build_tree(
         println!(
             "{}",
             serde_json::to_string_pretty(&tree)
-                .map_err(|e| Error::Store(format!("serializing tree: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising tree: {e}")))?
         );
         return Ok(());
     }
@@ -176,7 +176,7 @@ pub(crate) fn oracle_check(project: &Path, language: &str, word: &str, json: boo
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing oracle: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising oracle: {e}")))?
         );
         return Ok(());
     }
@@ -247,7 +247,7 @@ pub(crate) fn oracle_check_clause(
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing oracle: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising oracle: {e}")))?
         );
         return Ok(());
     }
@@ -288,7 +288,7 @@ pub(crate) fn oracle_check_agreement(
         println!(
             "{}",
             serde_json::to_string_pretty(&finding)
-                .map_err(|e| Error::Store(format!("serializing oracle: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising oracle: {e}")))?
         );
         return Ok(());
     }
@@ -333,7 +333,7 @@ pub(crate) fn link_args(
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing link: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising link: {e}")))?
         );
         return Ok(());
     }
@@ -363,7 +363,7 @@ pub(crate) fn parse_surface(project: &Path, language: &str, word: &str, json: bo
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing parse: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising parse: {e}")))?
         );
         return Ok(());
     }
@@ -424,7 +424,7 @@ pub(crate) fn grammar_questionnaire(
         spec.grammar.insert(f.id.to_string(), val.to_lowercase());
         let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
         let body = serde_json::to_string_pretty(&spec)
-            .map_err(|e| Error::Store(format!("serializing grammar: {e}")))?;
+            .map_err(|e| Error::Store(format!("serialising grammar: {e}")))?;
         upsert_grammar_paragraph(&store, &cfg, &lang_book, "typology", node, &body)?;
         eprintln!("{language}: set {} = {}", f.id, val.to_lowercase());
         return Ok(());
@@ -434,7 +434,7 @@ pub(crate) fn grammar_questionnaire(
         println!(
             "{}",
             serde_json::to_string_pretty(&spec.grammar)
-                .map_err(|e| Error::Store(format!("serializing grammar: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising grammar: {e}")))?
         );
         return Ok(());
     }
@@ -571,7 +571,7 @@ pub(crate) fn derive(
             }
         }
         writer.finish()?;
-        eprintln!("\nadded {added} derived entr(y/ies) to {language}'s Dictionary");
+        eprintln!("\nadded {} derived to {language}'s Dictionary", super::wording::entries(added));
     } else {
         eprintln!("\n(dry run — re-run with --yes to add the {} derived form(s))", derived.len());
     }
@@ -642,7 +642,7 @@ pub(crate) fn igt_text(
         println!(
             "{}",
             serde_json::to_string_pretty(&igt)
-                .map_err(|e| Error::Store(format!("serializing igt: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising igt: {e}")))?
         );
         return Ok(());
     }
@@ -691,7 +691,7 @@ fn save_igt(
     // chapter seeds structured paragraphs).
     node.content_type = Some("hjson".to_string());
     let body =
-        serde_json::to_string_pretty(igt).map_err(|e| Error::Store(format!("serialize igt: {e}")))?;
+        serde_json::to_string_pretty(igt).map_err(|e| Error::Store(format!("serialising igt: {e}")))?;
     if let Some(rel) = &node.file {
         let abs = store.project_root().join(rel);
         crate::io_atomic::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write igt file: {e}")))?;
@@ -767,14 +767,14 @@ pub(crate) fn list_texts(
             println!(
                 "{}",
                 serde_json::to_string_pretty(&selected[0].1)
-                    .map_err(|e| Error::Store(format!("serializing igt: {e}")))?
+                    .map_err(|e| Error::Store(format!("serialising igt: {e}")))?
             );
         } else {
             let listing: Vec<_> = texts.iter().map(|(t, igt)| (t, &igt.text, &igt.translation)).collect();
             println!(
                 "{}",
                 serde_json::to_string_pretty(&listing)
-                    .map_err(|e| Error::Store(format!("serializing texts: {e}")))?
+                    .map_err(|e| Error::Store(format!("serialising texts: {e}")))?
             );
         }
         return Ok(());
@@ -829,7 +829,7 @@ fn save_hypothesis(
     let mut node =
         store.create_node(cfg, &hierarchy, NodeKind::Paragraph, &h.id, Some(&chapter), None, InsertPosition::End)?;
     node.content_type = Some("hjson".to_string());
-    let body = serde_json::to_string_pretty(h).map_err(|e| Error::Store(format!("serialize hypothesis: {e}")))?;
+    let body = serde_json::to_string_pretty(h).map_err(|e| Error::Store(format!("serialising hypothesis: {e}")))?;
     if let Some(rel) = &node.file {
         let abs = store.project_root().join(rel);
         crate::io_atomic::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write hypothesis file: {e}")))?;
@@ -879,7 +879,7 @@ pub(crate) fn hypothesis_add(
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&h).map_err(|e| Error::Store(format!("serializing hypothesis: {e}")))?
+            serde_json::to_string_pretty(&h).map_err(|e| Error::Store(format!("serialising hypothesis: {e}")))?
         );
     } else {
         eprintln!("recorded to {language}/Hypotheses as `{id}`");
@@ -902,7 +902,7 @@ pub(crate) fn hypotheses_list(project: &Path, language: &str, status: Option<&st
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&hyps).map_err(|e| Error::Store(format!("serializing hypotheses: {e}")))?
+            serde_json::to_string_pretty(&hyps).map_err(|e| Error::Store(format!("serialising hypotheses: {e}")))?
         );
         return Ok(());
     }
@@ -928,7 +928,7 @@ pub(crate) fn hypothesis_show(project: &Path, language: &str, id: &str, json: bo
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(h).map_err(|e| Error::Store(format!("serializing hypothesis: {e}")))?
+            serde_json::to_string_pretty(h).map_err(|e| Error::Store(format!("serialising hypothesis: {e}")))?
         );
         return Ok(());
     }
@@ -986,7 +986,7 @@ pub(crate) fn hypothesis_check(project: &Path, language: &str, id: &str, limit: 
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&report).map_err(|e| Error::Store(format!("serializing trace: {e}")))?
+            serde_json::to_string_pretty(&report).map_err(|e| Error::Store(format!("serialising trace: {e}")))?
         );
         return Ok(());
     }
@@ -1018,7 +1018,7 @@ pub(crate) fn corpus_report(
         let out = serde_json::json!({ "stats": stats, "frequency": rows });
         println!(
             "{}",
-            serde_json::to_string_pretty(&out).map_err(|e| Error::Store(format!("serializing corpus: {e}")))?
+            serde_json::to_string_pretty(&out).map_err(|e| Error::Store(format!("serialising corpus: {e}")))?
         );
         return Ok(());
     }
@@ -1061,7 +1061,7 @@ pub(crate) fn concordance(
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&lines).map_err(|e| Error::Store(format!("serializing concordance: {e}")))?
+            serde_json::to_string_pretty(&lines).map_err(|e| Error::Store(format!("serialising concordance: {e}")))?
         );
         return Ok(());
     }
@@ -1103,7 +1103,7 @@ pub(crate) fn collocations(
         let rows: Vec<_> = cols.iter().take(top).collect();
         println!(
             "{}",
-            serde_json::to_string_pretty(&rows).map_err(|e| Error::Store(format!("serializing collocations: {e}")))?
+            serde_json::to_string_pretty(&rows).map_err(|e| Error::Store(format!("serialising collocations: {e}")))?
         );
         return Ok(());
     }

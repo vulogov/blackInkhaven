@@ -46,11 +46,7 @@ pub(crate) fn export(
             n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language)
         })
         .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "language `{language}` not found"
-            ))
-        })?;
+        .ok_or_else(|| super::wording::language_not_found(language))?;
 
     // Collect data once; per-format renderers fan
     // out from a single walk.

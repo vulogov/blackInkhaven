@@ -279,7 +279,7 @@ pub(crate) fn translate(project: &Path, language: &str, text: &str, trace: bool,
         println!(
             "{}",
             serde_json::to_string_pretty(&out)
-                .map_err(|e| Error::Store(format!("serializing translation: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising translation: {e}")))?
         );
         return Ok(());
     }
@@ -350,7 +350,7 @@ pub(crate) fn reverse_translate(project: &Path, language: &str, text: &str, json
         println!(
             "{}",
             serde_json::to_string_pretty(&out)
-                .map_err(|e| Error::Store(format!("serializing reverse: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising reverse: {e}")))?
         );
         return Ok(());
     }
@@ -396,7 +396,7 @@ pub(crate) fn cross_translate(project: &Path, from: &str, to: &str, text: &str, 
         println!(
             "{}",
             serde_json::to_string_pretty(&out)
-                .map_err(|e| Error::Store(format!("serializing cross: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising cross: {e}")))?
         );
         return Ok(());
     }
@@ -514,7 +514,7 @@ pub(crate) fn corpus(
         println!(
             "{}",
             serde_json::to_string_pretty(&out)
-                .map_err(|e| Error::Store(format!("serializing corpus report: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising corpus report: {e}")))?
         );
         return Ok(());
     }
@@ -576,8 +576,12 @@ pub(crate) fn export_translation(project: &Path, language: &str, out: Option<&Pa
     };
     crate::io_atomic::write(&out_path, &bytes)
         .map_err(|e| Error::Store(format!("writing {}: {e}", out_path.display())))?;
-    println!("exported {language}'s translation pack → {}", out_path.display());
-    eprintln!("({} memory pair(s), {} lexicon entr(y/ies))", meta.memory_pairs, meta.lexicon_entries);
+    eprintln!(
+        "exported {language}'s translation pack → {} ({}, {})",
+        out_path.display(),
+        super::wording::plural(meta.memory_pairs, "memory pair", "memory pairs"),
+        super::wording::plural(meta.lexicon_entries, "lexicon entry", "lexicon entries")
+    );
     Ok(())
 }
 
@@ -656,7 +660,7 @@ pub(crate) fn eval(
         println!(
             "{}",
             serde_json::to_string_pretty(&out)
-                .map_err(|e| Error::Store(format!("serializing eval: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising eval: {e}")))?
         );
         return Ok(());
     }

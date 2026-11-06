@@ -43,7 +43,7 @@ pub(crate) fn save_expressions(
 ) -> Result<()> {
     let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
     let body = serde_json::to_string_pretty(expr)
-        .map_err(|e| Error::Store(format!("serializing expressions: {e}")))?;
+        .map_err(|e| Error::Store(format!("serialising expressions: {e}")))?;
     upsert_grammar_paragraph(store, &cfg, lang_book, "expressions", node, &body)
 }
 
@@ -143,7 +143,7 @@ pub(crate) fn add_idiom(
         register: Vec::new(),
     });
     let body = serde_json::to_string_pretty(&expr)
-        .map_err(|e| Error::Store(format!("serializing expressions: {e}")))?;
+        .map_err(|e| Error::Store(format!("serialising expressions: {e}")))?;
     upsert_grammar_paragraph(store, cfg, lang_book, "expressions", node, &body)
 }
 
@@ -165,6 +165,6 @@ pub(crate) fn add_metaphor(
         note: String::new(),
     });
     let body = serde_json::to_string_pretty(&expr)
-        .map_err(|e| Error::Store(format!("serializing expressions: {e}")))?;
+        .map_err(|e| Error::Store(format!("serialising expressions: {e}")))?;
     upsert_grammar_paragraph(store, cfg, lang_book, "expressions", node, &body)
 }

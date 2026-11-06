@@ -49,6 +49,7 @@ mod syntax;
 mod translate;
 mod typology;
 mod varieties;
+pub(crate) mod wording;
 mod writing;
 pub(crate) use authoring::*;
 pub(crate) use books::*;
@@ -805,7 +806,7 @@ pub(crate) fn set_grammar_feature(
     }
     spec.grammar.insert(f.id.to_string(), value.to_lowercase());
     let body = serde_json::to_string_pretty(&spec)
-        .map_err(|e| Error::Store(format!("serializing grammar: {e}")))?;
+        .map_err(|e| Error::Store(format!("serialising grammar: {e}")))?;
     upsert_grammar_paragraph(store, cfg, lang_book, "typology", node, &body)
 }
 
@@ -994,7 +995,7 @@ pub(crate) fn set_text_translation(
         .map_err(|e| Error::Store(format!("parsing stored text `{name}`: {e}")))?;
     igt.translation = translation.to_string();
 
-    let body = serde_json::to_string_pretty(&igt).map_err(|e| Error::Store(format!("serialize igt: {e}")))?;
+    let body = serde_json::to_string_pretty(&igt).map_err(|e| Error::Store(format!("serialising igt: {e}")))?;
     if let Some(rel) = &node.file {
         let abs = store.project_root().join(rel);
         crate::io_atomic::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write igt file: {e}")))?;
@@ -1048,7 +1049,7 @@ pub(crate) fn update_hypothesis(
             .map_err(|e| Error::Store(format!("parsing stored hypothesis `{id}`: {e}")))?;
     mutate(&mut h);
 
-    let body = serde_json::to_string_pretty(&h).map_err(|e| Error::Store(format!("serialize hypothesis: {e}")))?;
+    let body = serde_json::to_string_pretty(&h).map_err(|e| Error::Store(format!("serialising hypothesis: {e}")))?;
     if let Some(rel) = &node.file {
         let abs = store.project_root().join(rel);
         crate::io_atomic::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write hypothesis file: {e}")))?;
@@ -1108,7 +1109,7 @@ fn gaps(project: &Path, language: &str, scope: &str, json: bool) -> Result<()> {
         println!(
             "{}",
             serde_json::to_string_pretty(&out)
-                .map_err(|e| Error::Store(format!("serializing gap report: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising gap report: {e}")))?
         );
         return Ok(());
     }
@@ -1399,9 +1400,7 @@ fn remove_word(project: &Path, language: &str, word: &str) -> Result<()> {
             n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language)
         })
         .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!("language `{language}` not found"))
-        })?;
+        .ok_or_else(|| wording::language_not_found(language))?;
     // The bucket add-word would derive is searched first, then every bucket
     // (entries filed under a pre-3.17 bucket are still found by name).
     let (subchapter, entry) = find_dictionary_entry(&store, &hierarchy, &lang_book, word)?

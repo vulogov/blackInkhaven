@@ -1106,7 +1106,7 @@ fn do_idiolect(vm: &mut VM) -> Result<&mut VM> {
         .languages
         .first()
         .map(|p| p.language.clone())
-        .ok_or_else(|| anyhow!("{tag}: `{character}` commands no language"))?;
+        .ok_or_else(|| anyhow!("{tag}: character `{character}` has no linked language"))?;
     let var_id = link
         .native_variety
         .clone()

@@ -17,7 +17,7 @@ pub(crate) fn varieties(project: &Path, language: &str) -> Result<()> {
         );
         return Ok(());
     }
-    println!("{language} · {} variet(y/ies):", vs.varieties.len());
+    println!("{language} · {}:", super::wording::plural(vs.varieties.len(), "variety", "varieties"));
     for v in &vs.varieties {
         println!("  {:<14} {}", v.id, v.summary());
         if let Some(note) = &v.note {

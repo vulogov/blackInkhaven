@@ -97,11 +97,7 @@ pub(crate) fn open_lang_book(
         .into_iter()
         .find(|n| n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language))
         .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "language `{language}` not found — run `inkhaven language init {language}` first"
-            ))
-        })?;
+        .ok_or_else(|| super::wording::language_not_found(language))?;
     Ok((store, hierarchy, lang_book))
 }
 
@@ -130,11 +126,7 @@ pub(crate) fn find_language_book(
         .into_iter()
         .find(|n| n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(name))
         .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "language `{name}` not found — create it first (e.g. `ink.lang.init`)"
-            ))
-        })
+        .ok_or_else(|| super::wording::language_not_found(name))
 }
 
 /// Create a language sub-book plus its scaffold chapters, using the active
@@ -527,7 +519,7 @@ pub(crate) fn list(project: &Path) -> Result<()> {
         })?;
     let languages = hierarchy.children_of(Some(lang_root.id));
     if languages.is_empty() {
-        eprintln!("no languages defined — run `inkhaven language init <name>`");
+        eprintln!("{}", super::wording::NO_LANGUAGES);
         return Ok(());
     }
     // Compute counts up-front so the column widths

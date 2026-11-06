@@ -128,7 +128,7 @@ pub(crate) fn import_foreign(
         }
     }
     writer.finish()?;
-    eprintln!("\nimported {added} entr(y/ies) into {language}'s Dictionary ({skipped} skipped)");
+    eprintln!("\nimported {} into {language}'s Dictionary ({skipped} skipped)", super::wording::entries(added));
     Ok(())
 }
 
@@ -206,11 +206,7 @@ pub(crate) fn import_dictionary_csv(
             n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(language)
         })
         .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "language `{language}` not found — run `inkhaven language init {language}` first"
-            ))
-        })?;
+        .ok_or_else(|| super::wording::language_not_found(language))?;
 
     let raw = std::fs::read_to_string(csv_path).map_err(|e| {
         Error::Config(format!(

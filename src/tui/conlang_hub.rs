@@ -73,8 +73,8 @@ pub(super) fn build_rows(store: &Store, hierarchy: &Hierarchy, project_root: &Pa
             None => rows.push(stat("  Phonology     : not defined yet".into())),
         }
         rows.push(stat(format!(
-            "  Lexicon       : {} entr(y/ies)",
-            count_dictionary(store, hierarchy, lang)
+            "  Lexicon       : {}",
+            crate::cli::language::wording::entries(count_dictionary(store, hierarchy, lang))
         )));
         let (places, chars) = links.speakers_of(&lang.title);
         rows.push(stat(format!(

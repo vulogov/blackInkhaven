@@ -110,7 +110,7 @@ pub(crate) fn family_tree(project: &Path) -> Result<()> {
 
     let langs = all_language_books(&hierarchy);
     if langs.is_empty() {
-        println!("no languages yet — `inkhaven language init <name>`");
+        eprintln!("{}", super::wording::NO_LANGUAGES);
         return Ok(());
     }
     let mut pairs: Vec<(String, Option<String>)> = Vec::new();
@@ -198,11 +198,7 @@ pub(crate) fn resolve_proto(
         .into_iter()
         .find(|n| n.kind == NodeKind::Book && n.title.eq_ignore_ascii_case(&proto_name))
         .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "proto-language `{proto_name}` not found — `inkhaven language init {proto_name}` first"
-            ))
-        })?;
+        .ok_or_else(|| super::wording::proto_language_not_found(&proto_name))?;
     let proto_phon = load_phonology(store, hierarchy, &proto_book)?.unwrap_or_default();
     Ok((proto_book, proto_phon, proto_name))
 }
@@ -236,7 +232,7 @@ pub(crate) fn trace(project: &Path, language: &str, rule: &str, limit: usize, js
         println!(
             "{}",
             serde_json::to_string_pretty(&report)
-                .map_err(|e| Error::Store(format!("serializing trace: {e}")))?
+                .map_err(|e| Error::Store(format!("serialising trace: {e}")))?
         );
         return Ok(());
     }
@@ -258,10 +254,10 @@ pub(crate) fn print_trace_body(report: &crate::conlang::trace::TraceReport) {
         return;
     }
     if report.analyzable_words == 0 {
-        println!("  (no analyzable words — define a phoneme inventory and add dictionary entries)");
+        println!("  (no analysable words — define a phoneme inventory and add dictionary entries)");
         return;
     }
-    println!("  affects {} of {} analyzable word(s)", report.affected, report.analyzable_words);
+    println!("  affects {} of {} analysable word(s)", report.affected, report.analyzable_words);
     if !report.changes.is_empty() {
         println!("  changes:");
         for c in &report.changes {
@@ -298,9 +294,9 @@ pub(crate) fn derive_lexicon_cmd(project: &Path, language: &str, yes: bool) -> R
         crate::conlang::diachronic::apply::derive_lexicon(&proto_phon, &dia.rules, &proto_entries);
 
     println!(
-        "derive {language} from {proto_name} · {} rule(s) · {} entr(y/ies):",
-        dia.rules.len(),
-        derived.len()
+        "derive {language} from {proto_name} · {} · {}:",
+        super::wording::plural(dia.rules.len(), "rule", "rules"),
+        super::wording::entries(derived.len())
     );
     for d in &derived {
         println!("  {:<14} > {:<14} {}", d.proto_form, d.form, d.gloss);
@@ -324,9 +320,9 @@ pub(crate) fn derive_lexicon_cmd(project: &Path, language: &str, yes: bool) -> R
             }
         }
         writer.finish()?;
-        eprintln!("\nadded {added} derived entr(y/ies) to {language}'s Dictionary");
+        eprintln!("\nadded {} derived to {language}'s Dictionary", super::wording::entries(added));
     } else {
-        eprintln!("\n(dry run — re-run with --yes to add the {} derived entr(y/ies))", derived.len());
+        eprintln!("\n(dry run — re-run with --yes to add the {} derived)", super::wording::entries(derived.len()));
     }
     Ok(())
 }

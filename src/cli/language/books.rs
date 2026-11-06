@@ -58,7 +58,7 @@ pub(crate) fn grammar_study_brief(
         phon.phonemes.iter().filter(|p| matches!(p.kind, crate::conlang::types::phoneme::PhonemeKind::Vowel)).count(),
     );
     if let Some(st) = &phon.stress {
-        let _ = writeln!(b, "STRESS RULE: {:?}", st.primary);
+        let _ = writeln!(b, "STRESS RULE: {st}");
     }
     if !phon.allophony.is_empty() {
         let _ = writeln!(b, "ALLOPHONY / SOUND-CHANGE RULES (SPE notation):");
@@ -68,7 +68,7 @@ pub(crate) fn grammar_study_brief(
     }
     if let Some(m) = morph {
         if !m.morphemes.is_empty() {
-            let _ = writeln!(b, "MORPHEMES (these realise grammatical categories — gloss | kind | realization | category | value):");
+            let _ = writeln!(b, "MORPHEMES (these realise grammatical categories — gloss | kind | realisation | category | value):");
             for mo in &m.morphemes {
                 let _ = writeln!(
                     b,
@@ -241,13 +241,9 @@ pub(crate) fn grammar_book(
 
     if let Some(p) = out {
         crate::io_atomic::write(p, doc.as_bytes()).map_err(Error::Io)?;
-        println!("{} grammar ({}) → {}", lang_book.title, format, p.display());
+        eprintln!("{} grammar ({}) → {}", lang_book.title, format, p.display());
         if typst && book.font_family.is_some() {
-            eprintln!(
-                "(build the font with `font-build --language {language} --format ttf` and compile \
-                 with `typst compile --font-path <dir> {}`)",
-                p.display()
-            );
+            eprintln!("{}", super::wording::typst_font_hint(language, p));
         }
     } else {
         print!("{doc}");
@@ -330,7 +326,7 @@ pub(crate) fn tutorial(
         let _ = writeln!(brief, "VOWELS: {}", vowels.join(" "));
     }
     if let Some(st) = &phon.stress {
-        let _ = writeln!(brief, "STRESS: {:?}", st.primary);
+        let _ = writeln!(brief, "STRESS: {st}");
     }
     if !phon.allophony.is_empty() {
         let _ = writeln!(brief, "SOUND CHANGES (notation `X > Y / context`, _ = the changing sound):");
@@ -354,7 +350,7 @@ pub(crate) fn tutorial(
 
     if let Some(m) = &morph {
         if !m.morphemes.is_empty() {
-            let _ = writeln!(brief, "\nMORPHEMES (gloss | kind | realization | meaning):");
+            let _ = writeln!(brief, "\nMORPHEMES (gloss | kind | realisation | meaning):");
             for mo in &m.morphemes {
                 let _ = writeln!(
                     brief,
@@ -472,13 +468,9 @@ pub(crate) fn tutorial(
 
     if let Some(p) = out {
         crate::io_atomic::write(p, doc.as_bytes()).map_err(Error::Io)?;
-        println!("{} tutorial ({}) → {}", lang_book.title, format, p.display());
+        eprintln!("{} tutorial ({}) → {}", lang_book.title, format, p.display());
         if typst && family.is_some() {
-            eprintln!(
-                "(build the font with `font-build --language {language} --format ttf` and compile \
-                 with `typst compile --font-path <dir> {}`)",
-                p.display()
-            );
+            eprintln!("{}", super::wording::typst_font_hint(language, p));
         }
     } else {
         print!("{doc}");
@@ -559,13 +551,9 @@ pub(crate) fn dictionary(
 
     if let Some(p) = out {
         crate::io_atomic::write(p, doc.as_bytes()).map_err(Error::Io)?;
-        println!("{} dictionary ({}) → {}", lang_book.title, format, p.display());
+        eprintln!("{} dictionary ({}) → {}", lang_book.title, format, p.display());
         if typst && meta.font_family.is_some() {
-            eprintln!(
-                "(build the font with `font-build --language {language} --format ttf` and compile \
-                 with `typst compile --font-path <dir> {}`)",
-                p.display()
-            );
+            eprintln!("{}", super::wording::typst_font_hint(language, p));
         }
     } else {
         print!("{doc}");
