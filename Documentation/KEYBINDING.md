@@ -116,7 +116,7 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+B C` (AI pane) | Clear the AI chat history + currently displayed inference. (F9's old behaviour; F9 now drives the scope cycle.) **Pane-scoped**: this is the AI-pane meaning — the same `Ctrl+B C` is Character-lexicon lookup in the Editor and Add-chapter in the Tree (see §1.1). | no |
 | `Ctrl+B ]`           | (1.2.5) **Tag the open paragraph** — open the floating tag picker scoped to the editor buffer. Inside the picker: `↑↓` select, `Space` multi-selects, `T` applies selected tags (or the cursor tag if none selected), `A` adds a new tag (prompt), `D` deletes a tag project-wide (y/n confirm), `Enter` applies, `Esc` closes. | no |
 | `Ctrl+B }`           | (1.2.5) **Search by tag** — open the floating tag picker in read-only mode. `Enter` on a tag lists every paragraph that carries it with a typeable filter input; `Enter` on a paragraph row opens it in the editor. `A` / `D` still work (tag management is project-wide). | no |
-| `Ctrl+B 0`           | (1.2.8) **Edit project HJSON** — open `<project>/inkhaven.hjson` in a full-screen modal editor with HJSON syntax highlighting. `Ctrl+S` saves; when the saved bytes differ from the loaded bytes, a *Restart required* overlay pops up (config applies on next launch). **`Ctrl+R` (1.2.12+) fires an LLM review of the current buffer** — same "reviewer LLM, not executor" pattern the prompts-editor TUI uses; response streams into `App.inference` and is visible in the AI pane after closing the modal. `Esc` closes (status-line warning fires if there are unsaved edits). The editor mirrors the main paragraph editor's chord set: arrows / Home / End / PgUp / PgDn / Shift+arrows for selection / Ctrl+Home,End top/bottom / Ctrl+Left,Right word jumps / Ctrl+Backspace delete-word / Ctrl+U undo / Ctrl+Y redo / Ctrl+K cut / Ctrl+C copy / Ctrl+P paste / Ctrl+A select-all / Ctrl+D delete-line / Ctrl+E delete-to-EOL / Ctrl+W delete-to-BOL. | `bund.edit_project_hjson` |
+| `Ctrl+B 0`           | (1.2.8) **Edit project HJSON** — open `<project>/inkhaven.hjson` in a full-screen modal editor with HJSON syntax highlighting. `Ctrl+S` saves; when the saved bytes differ from the loaded bytes, a *Restart required* overlay pops up (config applies on next launch). **`Ctrl+R` (1.2.12+) fires an LLM review of the current buffer** — same "reviewer LLM, not executor" pattern the prompts-editor TUI uses; response streams into `App.inference` and is visible in the AI pane after closing the modal. `Esc` closes; with unsaved edits the first `Esc` warns and a second `Esc` discards them (3.19 — one `Esc` used to drop them). The editor shares the main paragraph editor's chord set (§4.5; `Ctrl+K` / `Ctrl+C` / `Ctrl+P` go through the system clipboard): arrows / Home / End / PgUp / PgDn / Shift+arrows for selection / Ctrl+Home,End top/bottom / Ctrl+Left,Right word jumps / Ctrl+Backspace delete-word / Ctrl+U undo / Ctrl+Y redo / Ctrl+K cut / Ctrl+C copy / Ctrl+P paste / Ctrl+A select-all / Ctrl+D delete-line / Ctrl+E delete-to-EOL / Ctrl+W delete-to-BOL. | `bund.edit_project_hjson` |
 | `Ctrl+B Shift+0`     | (1.2.15) **Project doctor panel** — same scan + repair flow as `inkhaven doctor --scan` + `--autofix`, but as a TUI modal.  Synchronous project scan runs on open; modal table lists every finding with class + severity + path + one-line detail.  Inside: `↑↓` navigate, `r` repair the highlighted finding, `R` repair every finding, `Esc` closes.  Repairs are logged to `<project>/.inkhaven/doctor.log` for audit.  Paired mnemonically with `Ctrl+B 0` (HJSON config editor): the digit-0 row is the "system inspection" cluster. | `view.doctor_panel` |
 | `Ctrl+B W`           | **World overview** (WORLD-4) — a read-only, scrollable summary of the project's world simulation: the `world.hjson` definition (name / seed / star / planet / moons), the compiled astronomy layer (year length, divergence flag, tilt, seasons, lunar synodic periods, dominant tide, calendar consistency), and whether it has been materialized into the World system book. In the overview: `↑↓` scroll, **`C`** compiles every layer + seeds the proposal queue — in the background since 3.16 (progress on the status line; `C` again cancels between layers), **`P`** opens the proposal queue (`↑↓` navigate, `Enter` accept → commits a Place, `r` reject, `Esc` back), `Esc` closes. Full operations also on the CLI (`inkhaven realworld …`). | `world.open_overview` |
 | `Ctrl+B Shift+W`     | **Distraction-free / focus mode** — hides Tree, AI, Search, and AI-prompt panes; the editor occupies the full window. Forces focus to the editor on enter. Re-press to restore the four-pane layout. Mutually exclusive with `Ctrl+B K` AI-fullscreen. *(Moved from `Ctrl+B W` in WORLD-4 to free that prefix for the World chord family.)* Internally called "typewriter mode" in legacy strings + the HJSON serde key (`global.toggle_typewriter`) — the binding key stays for backward compatibility, but the user-facing name is now "focus mode". | `global.toggle_typewriter` |
@@ -169,7 +169,7 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+Z w` (editor) | (3.7) **Toggle soft-wrap** — flip word-wrap display for the open buffer at runtime (session-only; the persisted default is `editor.wrap`). Switches between reading wrapped prose and editing unwrapped code/tables without editing config + restarting. Mnemonic: **w** for Wrap. | `editor.toggle_wrap` |
 | `Ctrl+Z t` (editor) | (3.7) **Strip trailing whitespace** — remove trailing spaces/tabs from every line (`Ctrl+U` twice reverts it — the trim is recorded as a cut plus an insert). Cleans the noisy diffs `Ctrl+V ?` reports. Mnemonic: **t** for Trim. | `editor.strip_trailing_ws` |
 | `Ctrl+Z m` (editor) | (3.7) **Jump to matching bracket** — move the cursor to the `()`, `[]`, or `{}` pairing the bracket at or just before the cursor, across lines and respecting nesting. Balances `#figure(...)`, `#footnote[...]`, `#table(...)`. Mnemonic: **m** for Match. (3.8) Whenever the cursor sits on a bracket, it and its partner are **underlined** automatically — no keypress needed. | `editor.match_bracket` |
-| `Ctrl+Z c` (editor) | (1.2.14) **Add inline comment** — anchor an editorial comment to the current selection's character range (or the word at the cursor); pops a multi-line body input; writes a sidecar `<paragraph>.comments.json` beside the `.typ` (travels with the prose in git, diffs cleanly). Commented spans render underlined + italic; the editor footer surfaces `comment by <author> · <age>`. Char-offset anchors for UTF-8 safety. **Moved here from `Ctrl+V c`** (which the 1.6.19+ LOCI citation check now owns and used to shadow this). Mnemonic: **c** for Comment (`c` / `Shift+C` are free under `Ctrl+Z`). | `view.add_comment` |
+| `Ctrl+Z c` (editor) | (1.2.14) **Add inline comment** — anchor an editorial comment to the current selection's character range (or the word at the cursor); pops a multi-line body input (the editor's chords, §4.5; `Ctrl+S` commits, `Esc` cancels — twice when the body is non-empty); writes a sidecar `<paragraph>.comments.json` beside the `.typ` (travels with the prose in git, diffs cleanly). Commented spans render underlined + italic; the editor footer surfaces `comment by <author> · <age>`. Char-offset anchors for UTF-8 safety. **Moved here from `Ctrl+V c`** (which the 1.6.19+ LOCI citation check now owns and used to shadow this). Mnemonic: **c** for Comment (`c` / `Shift+C` are free under `Ctrl+Z`). | `view.add_comment` |
 | `Ctrl+Z Shift+C` | (1.2.14) **Comments panel** — project-wide panel over every `.comments.json` sidecar (breadcrumb / author / age / snippet / `(N/M in ¶)`). Panel chords: ↑↓ navigate, Enter jump to the comment span, `r` resolve, `R` toggle resolved-filter, `d` delete, `/` filter, `a` AI digest, `Esc` close. **Moved here from `Ctrl+V Shift+C`** (now the sourcing check). | `view.comments_panel` |
 | `Ctrl+V Shift+N` | (1.4.16) **Character arc** (CHAR-1) — open the tracked arc for the nearest character (one named in the open paragraph, else the first tracked one): the author-declared arc (start / midpoint / end), the chapter-by-chapter observable state chain (✦ marks a change) with each chapter's deterministic agency score, the arc-completeness checks, and any Planning-Board coverage gaps. Read-only over the cached `char.duckdb`; `↑↓` scroll, `Esc` closes. Populate it with the `Ctrl+B Shift+C` review pass (agency + stalls + planning, zero-AI) or `inkhaven character refresh` / `check` (the LLM passes). Mnemonic: **N** for the arc (the bend); plain `n` is next-diagnostic. The arc *findings* ride the `Ctrl+B Shift+C` review pass into the Output `character` category. | `character.open_arc` |
 | `Ctrl+V Shift+O` | (3.1, BONDS-1) **Relationship dashboard** — the relationship-continuity findings: are the bonds you declare between characters earned on the page? Grouped by kind — `unwritten_bond` (a declared pair barely shares a scene), `unearned_shift` (a bond changes state — ally → enemy — with no shared scene to turn it: the relationship plot-hole), `dropped_bond` (an established bond goes dormant then resurfaces). `↑↓` scroll, **Enter** jumps to the offending paragraph, `Esc` closes. Declare bonds with `rel:<kind>:<A>:<B>` tags; co-presence is derived free (scene POV + prose mentions + timeline event participants). Deterministic + ≈$0; the CLI equivalent is `inkhaven bonds` (`--json` / `--deep` for the opt-in `implied_cooling` LLM pass). KEN's sibling (KEN is `Ctrl+B Shift+Z`). Mnemonic: **O** for b**O**nds, beside the Inner Editor's `o`. See [`BONDS.md`](BONDS.md). | `global.open_bonds` |
@@ -778,6 +778,42 @@ the top and it turns back on.
 
 ---
 
+## 4.5 Text inputs — one chord set (3.19)
+
+Every single-line text field — the Search bar, the AI prompt, the shell pane
+prompt, the F1 help query, and every modal input and picker filter (rename,
+add, find / replace, go-to-line, tags, timeline prompts, save-as paths, the
+snapshot / concordance / comments / threads filters, …) — shares one key
+table. A field may add its own command keys on top (`Enter`, `Tab`, `Esc`,
+the shell's `Ctrl+L` / `Ctrl+D`), but editing is always:
+
+| Key                                           | Action                                         |
+| --------------------------------------------- | ---------------------------------------------- |
+| any printable char (no Ctrl/Alt)              | Insert at the cursor.                          |
+| `Backspace` / `Delete`                        | Delete the char before / at the cursor.        |
+| `←` / `→`                                     | Move one char.                                 |
+| `Home` / `End`, `Ctrl+A` / `Ctrl+E`           | Start / end of the line.                       |
+| `Ctrl+←` / `Ctrl+→`, `Alt+B` / `Alt+F`        | Word back / forward.                           |
+| `Ctrl+U` / `Ctrl+K`                           | Kill to the start / to the end of the line.    |
+| `Ctrl+W`, `Alt+Backspace`, `Ctrl+Backspace`   | Kill the word before the cursor.               |
+
+Fields with a history ring (Search, AI prompt, shell, help query) walk it
+with `↑` / `↓`; the text you were typing is kept as a draft and comes back
+when `↓` passes the newest entry (before 3.19 it was cleared). Every field
+scrolls so the cursor stays visible when the text is wider than the box
+(`…` marks text clipped on the left).
+
+Multi-line text boxes — the paragraph editor, the HJSON config editor
+(`Ctrl+B 0`) and the comment editor (`Ctrl+Z c`) — share the editor's chord
+set (§3): arrows / Shift-select / `Home` / `End` / `PgUp` / `PgDn`, `Ctrl+U`
+undo, `Ctrl+Y` redo, `Ctrl+K` / `Ctrl+C` / `Ctrl+P` cut / copy / paste through
+the system clipboard, `Ctrl+A` select all, `Ctrl+D` / `Ctrl+E` / `Ctrl+W` line
+deletes, `Ctrl+Home` / `Ctrl+End`, `Ctrl+←` / `Ctrl+→`, `Ctrl+Backspace`. Where
+such a box can hold unsaved text (HJSON editor, comment editor) the first
+`Esc` warns and a second `Esc` discards.
+
+---
+
 ## 5. Search bar (top input)
 
 Activated by `Ctrl+/` from any non-modal focus. Cursor appears as a `│`
@@ -791,8 +827,9 @@ character at the buffer's character position.
 | `←` / `→`            | Move cursor one char left / right.                          |
 | `Home`               | Cursor to start.                                            |
 | `End`                | Cursor to end.                                              |
+| shared chords        | `Ctrl+A`/`Ctrl+E`, `Ctrl+U`/`Ctrl+K`/`Ctrl+W`, `Ctrl+←`/`Ctrl+→`, `Alt+B`/`Alt+F`, `Alt+Backspace` — see §4.5. |
 | `↑`                  | (overlay open) Move result cursor up. (3.9, overlay closed) **Recall the previous query** from history. |
-| `↓`                  | (overlay open) Move result cursor down. (3.9, overlay closed) Recall the next query (past the newest → clears the input). |
+| `↓`                  | (overlay open) Move result cursor down. (3.9, overlay closed) Recall the next query (past the newest → the draft you were typing comes back). |
 | `PgUp`/`PgDn`, `Home`/`End` | (3.9, overlay open) Page the result cursor (±5) / jump to first / last. The overlay scrolls the selection into view. |
 | `Enter`              | If results overlay is open: open the highlighted result. Otherwise: run `Store::search_text(query, 50)` (3.9 — was 10) and show results. |
 | `Esc`                | If results overlay is open, close it (one press); else cycle focus to the **Editor** pane (third leg of the Editor → Tree → Search → Editor rotation). |
@@ -819,8 +856,9 @@ action and the `/`-triggered Prompt picker overlay.
 | `←` / `→`            | Move cursor one char left / right.                          |
 | `Home`               | Cursor to start.                                            |
 | `End`                | Cursor to end.                                              |
+| shared chords        | `Ctrl+A`/`Ctrl+E`, `Ctrl+U`/`Ctrl+K`/`Ctrl+W`, `Ctrl+←`/`Ctrl+→`, `Alt+B`/`Alt+F`, `Alt+Backspace` — see §4.5. |
 | `↑`                  | (picker open) Move selection up. (3.9) Otherwise, in the multi-line compose box, move up a line — falling through to prompt-history recall at the first line. |
-| `↓`                  | (picker open) Move selection down. (3.9) Otherwise move down a line, falling through to history recall at the last line. |
+| `↓`                  | (picker open) Move selection down. (3.9) Otherwise move down a line, falling through to history recall at the last line; past the newest entry the prompt you were composing comes back (3.19). |
 | `Shift+Enter` / `Alt+Enter` | (3.9) Insert a **newline** in the multi-line compose box (kitty-class terminals distinguish these; a paste keeps its newlines everywhere). The box grows to fit and collapses back to one line when empty. |
 | `Tab`                | (picker open) Expand selected prompt template into the buffer with `{{selection}}` / `{{context}}` substituted. |
 | `Enter`              | If picker open: same as Tab — expand selected template. Otherwise: spawn a streaming inference (plain Enter always sends — `Shift+Enter` is newline). Focus **stays** on the AI prompt bar. The buffer is sent verbatim, except: a leading `/name` is resolved against the prompt library, and a leading `Help!` (case-sensitive) routes the rest of the line through the F1 Help-RAG flow. |

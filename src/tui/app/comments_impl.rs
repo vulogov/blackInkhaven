@@ -15,7 +15,7 @@
 use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Modifier, Style};
-use tui_textarea::{Input, Key, TextArea};
+use tui_textarea::TextArea;
 use uuid::Uuid;
 
 use super::super::comments::{
@@ -58,12 +58,13 @@ impl App {
         );
         self.modal = Modal::CommentEditor {
             textarea,
+            discard_armed: false,
             anchor_start: char_start,
             anchor_end: char_end,
             anchor_preview,
             paragraph_id: doc.id,
         };
-        self.status = "comment · Ctrl+S commit · Esc cancel".into();
+        self.status = "comment · Ctrl+S commit · Esc cancel (twice when non-empty)".into();
     }
 
     /// 1.2.14+ Phase C.1 — modal key handler.
@@ -75,35 +76,36 @@ impl App {
         // here so the borrow on `self.modal` is
         // released before we mutate `self.opened`.
         let action = {
-            let Modal::CommentEditor { textarea, .. } = &mut self.modal else {
+            let Modal::CommentEditor { textarea, discard_armed, .. } = &mut self.modal else {
                 return false;
             };
             match (key.code, key.modifiers) {
+                // Esc cancels an empty comment at once; on a non-empty one the
+                // first Esc arms the discard and a second Esc cancels (3.19 —
+                // the same two-step as the HJSON editor; Ctrl+C is copy now,
+                // as in every other text box).
                 (KeyCode::Esc, _) => {
-                    if textarea.lines().iter().all(|l| l.is_empty()) {
+                    if textarea.lines().iter().all(|l| l.is_empty()) || *discard_armed {
                         CommentEditorAction::Cancel
                     } else {
-                        CommentEditorAction::None
+                        *discard_armed = true;
+                        CommentEditorAction::ArmDiscard
                     }
                 }
                 (KeyCode::Char('s'), m) if m.contains(KeyModifiers::CONTROL) => {
                     CommentEditorAction::Commit
                 }
-                (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => {
-                    // Ctrl+C cancels unconditionally
-                    // (mirrors the common terminal
-                    // convention for abandoning a
-                    // prompt).
-                    CommentEditorAction::Cancel
-                }
                 _ => {
-                    // Forward every other keystroke
-                    // to the textarea so the user can
-                    // type normally.
-                    let input = Input::from(key);
-                    if input.key != Key::Null {
-                        textarea.input(input);
-                    }
+                    *discard_armed = false;
+                    // Every other key is the shared multi-line text-box chord
+                    // set (the paragraph editor's bindings, not tui-textarea's
+                    // emacs defaults).
+                    super::editor_impl::textarea_edit_key(
+                        textarea,
+                        key,
+                        self.clipboard.as_mut(),
+                        10,
+                    );
                     CommentEditorAction::None
                 }
             }
@@ -116,6 +118,10 @@ impl App {
             }
             CommentEditorAction::Commit => {
                 self.commit_comment_editor();
+                true
+            }
+            CommentEditorAction::ArmDiscard => {
+                self.status = "comment: unsaved text — Esc again to discard, Ctrl+S to commit".into();
                 true
             }
             CommentEditorAction::None => true,
@@ -220,6 +226,8 @@ enum CommentEditorAction {
     Cancel,
     Commit,
     None,
+    /// 3.19 — first Esc on a non-empty comment.
+    ArmDiscard,
 }
 
 /// Pull the underlying paragraph text under the
@@ -457,13 +465,19 @@ impl App {
                     return true;
                 }
                 KeyCode::Backspace => {
-                    filter.backspace();
+                    super::handle_text_input_key(filter, key);
                     self.comments_panel_refilter();
                     return true;
                 }
-                KeyCode::Char(c) => {
-                    filter.insert_char(c);
-                    self.comments_panel_refilter();
+                KeyCode::Char(_)
+                | KeyCode::Delete
+                | KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Home
+                | KeyCode::End => {
+                    if super::handle_text_input_key(filter, key) {
+                        self.comments_panel_refilter();
+                    }
                     return true;
                 }
                 _ => return true,

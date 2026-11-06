@@ -913,7 +913,7 @@ impl super::super::App {
         let cursor_char = '│';
         let filter_lines = vec![
             Line::from(Span::styled(
-                format!(" › Filter: {}", filter.render_with_cursor(cursor_char)),
+                format!(" › Filter: {}", filter.render_with_cursor_fit(cursor_char, filter_rect.width.saturating_sub(11) as usize)),
                 Style::default().add_modifier(Modifier::BOLD),
             )),
             Line::from(Span::styled(
@@ -1177,7 +1177,7 @@ impl super::super::App {
         let body = vec![
             Line::from(""),
             Line::from(Span::styled(
-                format!(" Path: {}", input.render_with_cursor(cursor)),
+                format!(" Path: {}", input.render_with_cursor_fit(cursor, inner.width.saturating_sub(7) as usize)),
                 Style::default().add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
@@ -1285,7 +1285,7 @@ impl super::super::App {
         let body = vec![
             Line::from(""),
             Line::from(Span::styled(
-                format!(" Path: {}", input.render_with_cursor('│')),
+                format!(" Path: {}", input.render_with_cursor_fit('│', inner.width.saturating_sub(7) as usize)),
                 Style::default().add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
@@ -2797,7 +2797,7 @@ impl super::super::App {
         f.render_widget(
             Paragraph::new(Line::from(format!(
                 " › {}",
-                input.render_with_cursor('│')
+                input.render_with_cursor_fit('│', input_rect.width.saturating_sub(3) as usize)
             ))),
             input_rect,
         );
@@ -2899,7 +2899,10 @@ impl super::super::App {
         };
 
         f.render_widget(
-            Paragraph::new(Line::from(format!(" › {}", input.render_with_cursor('│')))),
+            Paragraph::new(Line::from(format!(
+                " › {}",
+                input.render_with_cursor_fit('│', input_rect.width.saturating_sub(3) as usize)
+            ))),
             input_rect,
         );
 
@@ -2989,7 +2992,10 @@ impl super::super::App {
         };
 
         f.render_widget(
-            Paragraph::new(Line::from(format!(" › {}", input.render_with_cursor('│')))),
+            Paragraph::new(Line::from(format!(
+                " › {}",
+                input.render_with_cursor_fit('│', input_rect.width.saturating_sub(3) as usize)
+            ))),
             input_rect,
         );
 
@@ -3079,7 +3085,10 @@ impl super::super::App {
         };
 
         f.render_widget(
-            Paragraph::new(Line::from(format!(" › {}", input.render_with_cursor('│')))),
+            Paragraph::new(Line::from(format!(
+                " › {}",
+                input.render_with_cursor_fit('│', input_rect.width.saturating_sub(3) as usize)
+            ))),
             input_rect,
         );
 
@@ -3173,7 +3182,10 @@ impl super::super::App {
         };
 
         f.render_widget(
-            Paragraph::new(Line::from(format!(" › {}", input.render_with_cursor('│')))),
+            Paragraph::new(Line::from(format!(
+                " › {}",
+                input.render_with_cursor_fit('│', input_rect.width.saturating_sub(3) as usize)
+            ))),
             input_rect,
         );
 
@@ -3348,7 +3360,10 @@ impl super::super::App {
         };
 
         f.render_widget(
-            Paragraph::new(Line::from(format!(" › {}", input.render_with_cursor('│')))),
+            Paragraph::new(Line::from(format!(
+                " › {}",
+                input.render_with_cursor_fit('│', input_rect.width.saturating_sub(3) as usize)
+            ))),
             input_rect,
         );
 
@@ -3579,7 +3594,7 @@ impl super::super::App {
         f.render_widget(
             Paragraph::new(Line::from(format!(
                 " › Filter: {}",
-                filter.render_with_cursor('│')
+                filter.render_with_cursor_fit('│', input_rect.width.saturating_sub(11) as usize)
             ))),
             input_rect,
         );
@@ -7566,7 +7581,7 @@ impl super::super::App {
         let query_text = if *browsing {
             format!(" query: {}", input.as_str())
         } else {
-            format!(" query: {}", input.render_with_cursor('▌'))
+            format!(" query: {}", input.render_with_cursor_fit('▌', inner.width.saturating_sub(8) as usize))
         };
         let query_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: 1 };
         f.render_widget(
@@ -9772,7 +9787,7 @@ impl super::super::App {
         let mut lines: Vec<Line<'_>> = Vec::new();
 
         lines.push(Line::from(Span::styled(
-            format!(" › {}", input.render_with_cursor('│')),
+            format!(" › {}", input.render_with_cursor_fit('│', inner.width.saturating_sub(3) as usize)),
             Style::default().add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(""));

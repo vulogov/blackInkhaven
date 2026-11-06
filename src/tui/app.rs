@@ -2082,6 +2082,9 @@ pub(crate) struct App {
     /// Cursor into `search_history`; None = not navigating. Same semantics as
     /// `ai_prompt_history_cursor`.
     search_history_cursor: Option<usize>,
+    /// 3.19 — the query being typed when `↑` first recalled history; `↓`
+    /// past the newest entry restores it (see `input::recall_older`).
+    search_draft: Option<String>,
     /// 3.10 — an in-flight F1 help search running on a background thread (the
     /// query embed + vector search is slow over ~1800 paragraphs). While it's
     /// `Some`, the Help modal stays up with an ANIMATED "Searching…" spinner
@@ -2099,6 +2102,8 @@ pub(crate) struct App {
     /// Cursor into `help_query_history`; same semantics as
     /// `ai_prompt_history_cursor` — None = not navigating.
     help_query_history_cursor: Option<usize>,
+    /// 3.19 — draft stash for the help-query history walk.
+    help_query_draft: Option<String>,
     /// 1.2.8+ — F6 snapshot-picker annotation filter.
     /// Substring-match (case-insensitive) against the
     /// snapshot's annotation text; empty = show all.
@@ -2198,6 +2203,9 @@ pub(crate) struct App {
     /// edit (typing, backspace, etc.) clears it so the next Up
     /// arrow starts at the end of the list again.
     ai_prompt_history_cursor: Option<usize>,
+    /// 3.19 — the prompt being composed when `↑` first recalled history;
+    /// `↓` past the newest entry restores it instead of clearing the box.
+    ai_prompt_draft: Option<String>,
 
     opened: Option<OpenedDoc>,
     /// "Similar paragraphs" mode: when `Some`, a second
@@ -3867,11 +3875,14 @@ impl App {
             ai_input: TextInput::multiline(),
             ai_prompt_history: Vec::new(),
             ai_prompt_history_cursor: None,
+            ai_prompt_draft: None,
             search_history: Vec::new(),
             search_history_cursor: None,
+            search_draft: None,
             help_search: None,
             help_query_history: Vec::new(),
             help_query_history_cursor: None,
+            help_query_draft: None,
             snapshot_filter: String::new(),
             snapshot_filter_focused: false,
             shell_engine: None,
@@ -6893,17 +6904,16 @@ impl App {
                 }
                 self.status = format!("line {}", row + 1);
             }
-            KeyCode::Char(c) if c.is_ascii_digit() => {
+            // Only digits may be typed; every other key is the shared
+            // text-input chord set (cursor motion, kills, …).
+            KeyCode::Char(c)
+                if !c.is_ascii_digit()
+                    && !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {}
+            _ => {
                 if let Modal::GotoLine { input } = &mut self.modal {
-                    input.insert_char(c);
+                    handle_text_input_key(input, key);
                 }
             }
-            KeyCode::Backspace => {
-                if let Modal::GotoLine { input } = &mut self.modal {
-                    input.backspace();
-                }
-            }
-            _ => {}
         }
     }
 
@@ -7475,7 +7485,10 @@ impl App {
                         .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
             {
                 self.ai_input.insert_newline();
-                self.ai_prompt_history_cursor = None;
+                super::input::reset_recall(
+                    &mut self.ai_prompt_history_cursor,
+                    &mut self.ai_prompt_draft,
+                );
             }
             KeyCode::Enter => {
                 if is_search {
@@ -7488,6 +7501,12 @@ impl App {
                 } else if self.show_prompt_picker {
                     self.commit_prompt_pick();
                 } else {
+                    // A sent prompt ends any history walk: the next ↑ starts at
+                    // the newest entry (which is this prompt).
+                    super::input::reset_recall(
+                        &mut self.ai_prompt_history_cursor,
+                        &mut self.ai_prompt_draft,
+                    );
                     self.start_inference();
                 }
             }
@@ -7522,35 +7541,25 @@ impl App {
             // 3.9 — Up / Down in the search bar (no results overlay showing)
             // walks `search_history`, shell-style — same recall as the AI prompt.
             KeyCode::Up if is_search => {
-                if !self.search_history.is_empty() {
-                    let next = match self.search_history_cursor {
-                        Some(0) => 0,
-                        Some(i) => i - 1,
-                        None => self.search_history.len() - 1,
-                    };
-                    self.search_history_cursor = Some(next);
-                    let entry = self.search_history[next].clone();
+                if let Some(text) = super::input::recall_older(
+                    &self.search_history,
+                    &mut self.search_history_cursor,
+                    &mut self.search_draft,
+                    self.search_input.as_str(),
+                ) {
                     self.search_input.clear();
-                    for c in entry.chars() {
-                        self.search_input.insert_char(c);
-                    }
+                    self.search_input.insert_str(&text);
                     self.show_results_overlay = false;
                 }
             }
             KeyCode::Down if is_search => {
-                if let Some(cur) = self.search_history_cursor {
-                    let next = cur + 1;
-                    if next >= self.search_history.len() {
-                        self.search_history_cursor = None;
-                        self.search_input.clear();
-                    } else {
-                        self.search_history_cursor = Some(next);
-                        let entry = self.search_history[next].clone();
-                        self.search_input.clear();
-                        for c in entry.chars() {
-                            self.search_input.insert_char(c);
-                        }
-                    }
+                if let Some(text) = super::input::recall_newer(
+                    &self.search_history,
+                    &mut self.search_history_cursor,
+                    &mut self.search_draft,
+                ) {
+                    self.search_input.clear();
+                    self.search_input.insert_str(&text);
                     self.show_results_overlay = false;
                 }
             }
@@ -7570,17 +7579,15 @@ impl App {
             // box, they first move between lines; only at the first/last line do
             // they fall through to history recall.
             KeyCode::Up if !is_search => {
-                if !self.ai_input.move_up() && !self.ai_prompt_history.is_empty() {
-                    let next = match self.ai_prompt_history_cursor {
-                        Some(0) => 0,
-                        Some(i) => i - 1,
-                        None => self.ai_prompt_history.len() - 1,
-                    };
-                    self.ai_prompt_history_cursor = Some(next);
-                    let entry = self.ai_prompt_history[next].clone();
-                    self.ai_input.clear();
-                    for c in entry.chars() {
-                        self.ai_input.insert_char(c);
+                if !self.ai_input.move_up() {
+                    if let Some(text) = super::input::recall_older(
+                        &self.ai_prompt_history,
+                        &mut self.ai_prompt_history_cursor,
+                        &mut self.ai_prompt_draft,
+                        self.ai_input.as_str(),
+                    ) {
+                        self.ai_input.clear();
+                        self.ai_input.insert_str(&text);
                     }
                 }
             }
@@ -7588,96 +7595,65 @@ impl App {
                 // Moved down a line within the compose box; nothing else to do.
             }
             KeyCode::Down if !is_search => {
-                if let Some(cur) = self.ai_prompt_history_cursor {
-                    let next = cur + 1;
-                    if next >= self.ai_prompt_history.len() {
-                        // Past the newest entry → leave history
-                        // navigation, clear the input.
-                        self.ai_prompt_history_cursor = None;
-                        self.ai_input.clear();
-                    } else {
-                        self.ai_prompt_history_cursor = Some(next);
-                        let entry = self.ai_prompt_history[next].clone();
-                        self.ai_input.clear();
-                        for c in entry.chars() {
-                            self.ai_input.insert_char(c);
-                        }
-                    }
+                // Past the newest entry the stashed draft comes back (3.19 —
+                // it used to be cleared).
+                if let Some(text) = super::input::recall_newer(
+                    &self.ai_prompt_history,
+                    &mut self.ai_prompt_history_cursor,
+                    &mut self.ai_prompt_draft,
+                ) {
+                    self.ai_input.clear();
+                    self.ai_input.insert_str(&text);
                 }
             }
             KeyCode::Tab if !is_search && self.show_prompt_picker => {
                 self.commit_prompt_pick();
             }
-            KeyCode::Backspace => {
-                self.current_input(is_search).backspace();
-                if is_search {
-                    self.show_results_overlay = false;
-                    self.search_history_cursor = None;
-                }
-                if !is_search {
-                    self.ai_prompt_history_cursor = None;
-                }
-            }
-            KeyCode::Delete => {
-                self.current_input(is_search).delete();
-                if is_search {
-                    self.show_results_overlay = false;
-                    self.search_history_cursor = None;
-                }
-                if !is_search {
-                    self.ai_prompt_history_cursor = None;
-                }
-            }
-            KeyCode::Left => self.current_input(is_search).move_left(),
-            KeyCode::Right => self.current_input(is_search).move_right(),
-            KeyCode::Home => self.current_input(is_search).move_home(),
-            KeyCode::End => self.current_input(is_search).move_end(),
-            KeyCode::Char(c) => {
+            _ => {
                 // Explicit AI-prompt focus shortcuts. The global Ctrl+1..5
                 // block at the top of `handle_key` covers these too, but
                 // some terminals re-encode the chords in ways that bypass
                 // the global path — handle them locally as a safety net so
                 // they always work from the AI prompt.
-                if !is_search
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !key
-                        .modifiers
-                        .intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
-                {
-                    if c == '1' {
-                        self.change_focus(Focus::Editor);
-                        return Ok(false);
-                    }
-                    if c == 't' || c == 'T' {
-                        self.change_focus(Focus::Tree);
-                        return Ok(false);
+                if let KeyCode::Char(c) = key.code {
+                    if !is_search
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key
+                            .modifiers
+                            .intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
+                    {
+                        if c == '1' {
+                            self.change_focus(Focus::Editor);
+                            return Ok(false);
+                        }
+                        if c == 't' || c == 'T' {
+                            self.change_focus(Focus::Tree);
+                            return Ok(false);
+                        }
                     }
                 }
-                let mut residual = key.modifiers;
-                residual.remove(KeyModifiers::SHIFT);
-                if residual.is_empty() {
-                    let final_c = if key.modifiers.contains(KeyModifiers::SHIFT)
-                        && c.is_ascii_alphabetic()
-                    {
-                        c.to_ascii_uppercase()
-                    } else {
-                        c
-                    };
-                    self.current_input(is_search).insert_char(final_c);
+                // Everything else is the shared text-input chord set
+                // (`handle_text_input_key`): typing, cursor motion, kills,
+                // word jumps — the same keys as every other input.
+                let changed = handle_text_input_key(self.current_input(is_search), key);
+                if changed {
                     if is_search {
+                        // The query changed: results are stale and any
+                        // history walk ends.
                         self.show_results_overlay = false;
-                        self.search_history_cursor = None;
+                        super::input::reset_recall(
+                            &mut self.search_history_cursor,
+                            &mut self.search_draft,
+                        );
                     } else {
-                        // 1.2.4+: typing in the AI prompt
-                        // breaks history-recall navigation —
-                        // the next Up arrow starts at the
-                        // newest entry again.
-                        self.ai_prompt_history_cursor = None;
+                        super::input::reset_recall(
+                            &mut self.ai_prompt_history_cursor,
+                            &mut self.ai_prompt_draft,
+                        );
                         self.refresh_prompt_picker();
                     }
                 }
             }
-            _ => {}
         }
         // After Backspace/Delete in the AI input, also refresh the picker.
         if !is_search {
@@ -8783,7 +8759,7 @@ impl App {
                 self.search_history.drain(..drop_n);
             }
         }
-        self.search_history_cursor = None;
+        super::input::reset_recall(&mut self.search_history_cursor, &mut self.search_draft);
         // 3.9 — 50 (was 10): the overlay now scrolls + pages, so a wider net is
         // navigable instead of silently truncated at ten.
         match self.store.search_text(&query, 50) {
@@ -13145,7 +13121,7 @@ impl App {
     /// any printable / Backspace drops back to refine the query.  Esc
     /// closes from either mode.
     fn facts_search_handle_key(&mut self, key: crossterm::event::KeyEvent) {
-        use crossterm::event::{KeyCode, KeyModifiers};
+        use crossterm::event::KeyCode;
         if matches!(key.code, KeyCode::Esc) {
             self.modal = Modal::None;
             self.status = "facts search: closed".into();
@@ -13155,20 +13131,11 @@ impl App {
         if !browsing {
             match key.code {
                 KeyCode::Enter => self.run_facts_search(),
-                KeyCode::Backspace => {
+                _ => {
                     if let Modal::FactsSearch { input, .. } = &mut self.modal {
-                        input.backspace();
+                        handle_text_input_key(input, key);
                     }
                 }
-                KeyCode::Char(c)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                        && !key.modifiers.contains(KeyModifiers::ALT) =>
-                {
-                    if let Modal::FactsSearch { input, .. } = &mut self.modal {
-                        input.insert_char(c);
-                    }
-                }
-                _ => {}
             }
             return;
         }
@@ -13206,22 +13173,14 @@ impl App {
                 }
             }
             KeyCode::Enter => self.facts_search_send(),
-            KeyCode::Char(c)
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !key.modifiers.contains(KeyModifiers::ALT) =>
-            {
+            _ => {
+                // An edit to the query drops back to query mode.
                 if let Modal::FactsSearch { input, browsing, .. } = &mut self.modal {
-                    *browsing = false;
-                    input.insert_char(c);
+                    if handle_text_input_key(input, key) {
+                        *browsing = false;
+                    }
                 }
             }
-            KeyCode::Backspace => {
-                if let Modal::FactsSearch { input, browsing, .. } = &mut self.modal {
-                    *browsing = false;
-                    input.backspace();
-                }
-            }
-            _ => {}
         }
     }
 
@@ -24451,15 +24410,8 @@ impl App {
         // + Unicode chars are forwarded; control
         // characters fall through to the no-op branch.
         if let Modal::Concordance { filter, .. } = &mut self.modal {
-            match key.code {
-                KeyCode::Backspace => filter.backspace(),
-                KeyCode::Delete => filter.delete(),
-                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !key.modifiers.contains(KeyModifiers::ALT) =>
-                {
-                    filter.insert_char(c);
-                }
-                _ => return,
+            if !handle_text_input_key(filter, key) {
+                return;
             }
         }
         self.concordance_refilter();
@@ -24836,6 +24788,7 @@ impl App {
             original_content,
             path,
             restart_required: false,
+            discard_armed: false,
             scroll_row: 0,
             scroll_col: 0,
         };
@@ -24905,8 +24858,6 @@ impl App {
     ///     (so plain typing + Tab + Enter + Backspace work,
     ///     but no emacs-style ctrl chord interception).
     fn hjson_editor_handle_key(&mut self, key: KeyEvent) {
-        use tui_textarea::CursorMove;
-
         // Restart overlay is sticky-modal: any key clears it.
         if matches!(
             self.modal,
@@ -24920,8 +24871,6 @@ impl App {
         }
 
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
 
         // Ctrl+S — save.
         if ctrl
@@ -24945,7 +24894,9 @@ impl App {
             return;
         }
 
-        // Esc — close (with dirty warn).
+        // Esc — close. With unsaved edits the first Esc only warns; a second
+        // Esc (no other key in between) discards them. (3.19 — one Esc used
+        // to throw the edits away with a status-line note.)
         if matches!(key.code, KeyCode::Esc) {
             let dirty = matches!(
                 &self.modal,
@@ -24953,149 +24904,35 @@ impl App {
                     if textarea.lines().join("\n") != *original_content
             );
             if dirty {
-                self.status =
-                    "hjson: closed with unsaved edits — re-open with Ctrl+B 0 to recover from disk".into();
+                if let Modal::HjsonEditor { discard_armed, .. } = &mut self.modal {
+                    if !*discard_armed {
+                        *discard_armed = true;
+                        self.status =
+                            "hjson: unsaved edits — Esc again to discard, Ctrl+S to save".into();
+                        return;
+                    }
+                }
+                self.status = "hjson: closed — unsaved edits discarded".into();
             } else {
                 self.status = "hjson: closed".into();
             }
             self.modal = Modal::None;
             return;
         }
-
-        // Plain arrows + Home/End/PgUp/PgDn.  Shift extends
-        // selection, plain cancels.  Routed explicitly
-        // because input_without_shortcuts drops them.
-        if !alt && !ctrl {
-            let cmove = match key.code {
-                KeyCode::Up => Some(CursorMove::Up),
-                KeyCode::Down => Some(CursorMove::Down),
-                KeyCode::Left => Some(CursorMove::Back),
-                KeyCode::Right => Some(CursorMove::Forward),
-                KeyCode::Home => Some(CursorMove::Head),
-                KeyCode::End => Some(CursorMove::End),
-                KeyCode::PageUp => Some(CursorMove::ParagraphBack),
-                KeyCode::PageDown => Some(CursorMove::ParagraphForward),
-                _ => None,
-            };
-            if let Some(cmove) = cmove {
-                if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
-                    if shift {
-                        if textarea.selection_range().is_none() {
-                            textarea.start_selection();
-                        }
-                    } else {
-                        textarea.cancel_selection();
-                    }
-                    textarea.move_cursor(cmove);
-                }
-                return;
-            }
+        // Any other key disarms a pending discard.
+        if let Modal::HjsonEditor { discard_armed, .. } = &mut self.modal {
+            *discard_armed = false;
         }
 
-        // Ctrl+modified motion + edit chords.  Mirror the
-        // main editor (Ctrl+U undo, Ctrl+Y redo, Ctrl+K/C/P
-        // cut/copy/paste, Ctrl+A select-all, Ctrl+D/E/W
-        // line-targeted deletes, Ctrl+Home/End top/bottom,
-        // Ctrl+Left/Right word jumps, Ctrl+Backspace
-        // delete-word).
-        if ctrl {
-            match key.code {
-                KeyCode::Char('u') | KeyCode::Char('U') if !shift => {
-                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
-                        textarea.undo();
-                    }
-                    return;
-                }
-                KeyCode::Char('y') | KeyCode::Char('Y') if !shift => {
-                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
-                        textarea.redo();
-                    }
-                    return;
-                }
-                KeyCode::Char('k') | KeyCode::Char('K') if !shift => {
-                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
-                        textarea.cut();
-                    }
-                    return;
-                }
-                KeyCode::Char('c') | KeyCode::Char('C') if !shift => {
-                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
-                        textarea.copy();
-                    }
-                    return;
-                }
-                KeyCode::Char('p') | KeyCode::Char('P') if !shift => {
-                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
-                        textarea.paste();
-                    }
-                    return;
-                }
-                KeyCode::Char('a') | KeyCode::Char('A') if !shift => {
-                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
-                        textarea.select_all();
-                    }
-                    return;
-                }
-                KeyCode::Char('d') | KeyCode::Char('D') if !shift => {
-                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
-                        textarea.delete_line_by_end();
-                        textarea.delete_line_by_head();
-                    }
-                    return;
-                }
-                KeyCode::Char('e') | KeyCode::Char('E') if !shift => {
-                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
-                        textarea.delete_line_by_end();
-                    }
-                    return;
-                }
-                KeyCode::Char('w') | KeyCode::Char('W') if !shift => {
-                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
-                        textarea.delete_line_by_head();
-                    }
-                    return;
-                }
-                KeyCode::Home => {
-                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
-                        textarea.move_cursor(CursorMove::Top);
-                    }
-                    return;
-                }
-                KeyCode::End => {
-                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
-                        textarea.move_cursor(CursorMove::Bottom);
-                    }
-                    return;
-                }
-                KeyCode::Left => {
-                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
-                        textarea.move_cursor(CursorMove::WordBack);
-                    }
-                    return;
-                }
-                KeyCode::Right => {
-                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
-                        textarea.move_cursor(CursorMove::WordForward);
-                    }
-                    return;
-                }
-                KeyCode::Backspace => {
-                    if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
-                        textarea.delete_word();
-                    }
-                    return;
-                }
-                _ => {}
-            }
-        }
-
-        // Everything else: pass to textarea WITHOUT its
-        // emacs-style defaults (matches the main editor).
-        // This handles plain typing, Tab, Enter, Backspace,
-        // Delete, and any other key not caught above.
+        // Everything else is the shared multi-line text-box chord set — the
+        // paragraph editor's bindings (arrows / Shift-select / Home / End /
+        // PgUp / PgDn, Ctrl+U/Y undo/redo, Ctrl+K/C/P cut/copy/paste through
+        // the system clipboard, Ctrl+A, Ctrl+D/E/W, Ctrl+Home/End, Ctrl+←/→,
+        // Ctrl+Backspace) and plain typing. The page size follows the editor
+        // pane's height (the closest thing to the modal's own height we keep).
+        let page = (self.layout_editor.height as usize).saturating_sub(2).max(1);
         if let Modal::HjsonEditor { textarea, .. } = &mut self.modal {
-            let input: tui_textarea::Input = key.into();
-            textarea.input_without_shortcuts(input);
+            editor_impl::textarea_edit_key(textarea, key, self.clipboard.as_mut(), page);
         }
     }
 
@@ -25158,6 +24995,7 @@ impl App {
         self.modal = Modal::ShellPane {
             input: TextInput::new(),
             command_history_cursor: None,
+            command_draft: None,
             selection_mode: false,
             selection_cursor: 0,
             scroll: 0,
@@ -25762,70 +25600,39 @@ impl App {
                 }
             }
             KeyCode::Up => {
-                if !self.shell_command_history.is_empty() {
-                    let next_cursor = match self.modal {
-                        Modal::ShellPane {
-                            command_history_cursor: Some(0),
-                            ..
-                        } => 0,
-                        Modal::ShellPane {
-                            command_history_cursor: Some(i),
-                            ..
-                        } => i - 1,
-                        Modal::ShellPane {
-                            command_history_cursor: None,
-                            ..
-                        } => self.shell_command_history.len() - 1,
-                        _ => return,
-                    };
-                    let entry =
-                        self.shell_command_history[next_cursor].clone();
-                    if let Modal::ShellPane {
-                        input,
+                if let Modal::ShellPane {
+                    input,
+                    command_history_cursor,
+                    command_draft,
+                    ..
+                } = &mut self.modal
+                {
+                    if let Some(text) = super::input::recall_older(
+                        &self.shell_command_history,
                         command_history_cursor,
-                        ..
-                    } = &mut self.modal
-                    {
-                        *command_history_cursor = Some(next_cursor);
+                        command_draft,
+                        input.as_str(),
+                    ) {
                         input.clear();
-                        for c in entry.chars() {
-                            input.insert_char(c);
-                        }
+                        input.insert_str(&text);
                     }
                 }
             }
             KeyCode::Down => {
                 if let Modal::ShellPane {
-                    command_history_cursor: Some(cur),
+                    input,
+                    command_history_cursor,
+                    command_draft,
                     ..
-                } = self.modal
+                } = &mut self.modal
                 {
-                    let next = cur + 1;
-                    if next >= self.shell_command_history.len() {
-                        if let Modal::ShellPane {
-                            input,
-                            command_history_cursor,
-                            ..
-                        } = &mut self.modal
-                        {
-                            *command_history_cursor = None;
-                            input.clear();
-                        }
-                    } else {
-                        let entry =
-                            self.shell_command_history[next].clone();
-                        if let Modal::ShellPane {
-                            input,
-                            command_history_cursor,
-                            ..
-                        } = &mut self.modal
-                        {
-                            *command_history_cursor = Some(next);
-                            input.clear();
-                            for c in entry.chars() {
-                                input.insert_char(c);
-                            }
-                        }
+                    if let Some(text) = super::input::recall_newer(
+                        &self.shell_command_history,
+                        command_history_cursor,
+                        command_draft,
+                    ) {
+                        input.clear();
+                        input.insert_str(&text);
                     }
                 }
             }
@@ -25839,59 +25646,14 @@ impl App {
                 // else exists.
                 self.shell_tab_complete();
             }
-            // 1.2.8+ — readline-style line editing.  Single-
-            // line prompt so we omit Ctrl+A=select-all,
-            // Ctrl+U=undo, Ctrl+Y=redo from the editor's
-            // textarea bindings (no selection model, no
-            // undo history on the input ring).  Instead
-            // bind the chords the way bash / zsh / readline
-            // users expect:
-            //   Ctrl+A   → start of line
-            //   Ctrl+E   → end of line
-            //   Ctrl+U   → kill from cursor to start
-            //   Ctrl+K   → kill from cursor to end
-            //   Ctrl+W   → kill the word before the cursor
+            // 1.2.8+ — readline-style line editing. The readline
+            // chords (Ctrl+A/E, Ctrl+U/K/W, Alt+B/F, Ctrl+←/→,
+            // Alt+Backspace) are the shared text-input set now
+            // (`handle_text_input_key`, the `_` arm below). Two
+            // terminal idioms stay pane-specific:
             //   Ctrl+L   → clear scrollback
             //   Ctrl+D   → clear input if non-empty, close
-            //              pane if empty (terminal idiom)
-            //   Alt+B / Alt+F / Ctrl+Left / Ctrl+Right
-            //            → word back / word forward
-            //   Alt+Backspace → kill word back
-            KeyCode::Char('a') | KeyCode::Char('A')
-                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                if let Modal::ShellPane { input, .. } = &mut self.modal {
-                    input.move_home();
-                }
-            }
-            KeyCode::Char('e') | KeyCode::Char('E')
-                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                if let Modal::ShellPane { input, .. } = &mut self.modal {
-                    input.move_end();
-                }
-            }
-            KeyCode::Char('u') | KeyCode::Char('U')
-                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                if let Modal::ShellPane { input, .. } = &mut self.modal {
-                    input.kill_to_start();
-                }
-            }
-            KeyCode::Char('k') | KeyCode::Char('K')
-                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                if let Modal::ShellPane { input, .. } = &mut self.modal {
-                    input.kill_to_end();
-                }
-            }
-            KeyCode::Char('w') | KeyCode::Char('W')
-                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                if let Modal::ShellPane { input, .. } = &mut self.modal {
-                    input.kill_word_left();
-                }
-            }
+            //              pane if empty
             KeyCode::Char('l') | KeyCode::Char('L')
                 if key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
@@ -25918,44 +25680,6 @@ impl App {
                         "shell: closed via Ctrl+D (state preserved · Ctrl+Z o to reopen)".into();
                 } else if let Modal::ShellPane { input, .. } = &mut self.modal {
                     input.clear();
-                }
-            }
-            KeyCode::Char('b') | KeyCode::Char('B')
-                if key.modifiers.contains(KeyModifiers::ALT) =>
-            {
-                if let Modal::ShellPane { input, .. } = &mut self.modal {
-                    input.move_word_left();
-                }
-            }
-            KeyCode::Char('f') | KeyCode::Char('F')
-                if key.modifiers.contains(KeyModifiers::ALT) =>
-            {
-                if let Modal::ShellPane { input, .. } = &mut self.modal {
-                    input.move_word_right();
-                }
-            }
-            KeyCode::Left
-                if key.modifiers.contains(KeyModifiers::CONTROL)
-                    || key.modifiers.contains(KeyModifiers::ALT) =>
-            {
-                if let Modal::ShellPane { input, .. } = &mut self.modal {
-                    input.move_word_left();
-                }
-            }
-            KeyCode::Right
-                if key.modifiers.contains(KeyModifiers::CONTROL)
-                    || key.modifiers.contains(KeyModifiers::ALT) =>
-            {
-                if let Modal::ShellPane { input, .. } = &mut self.modal {
-                    input.move_word_right();
-                }
-            }
-            KeyCode::Backspace
-                if key.modifiers.contains(KeyModifiers::ALT)
-                    || key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                if let Modal::ShellPane { input, .. } = &mut self.modal {
-                    input.kill_word_left();
                 }
             }
             KeyCode::Esc => {
@@ -29690,7 +29414,10 @@ impl App {
                 {
                     self.help_query_history.push(trimmed.to_string());
                 }
-                self.help_query_history_cursor = None;
+                super::input::reset_recall(
+                    &mut self.help_query_history_cursor,
+                    &mut self.help_query_draft,
+                );
                 // 3.10 — the query embed + vector search is slow (now over
                 // ~1800 help paragraphs). Run it on a background thread so the
                 // UI stays live: the Help modal stays up with an ANIMATED
@@ -29715,40 +29442,28 @@ impl App {
             // to len-1, Down past newest clears.
             match key.code {
                 KeyCode::Up => {
-                    if !self.help_query_history.is_empty() {
-                        let next = match self.help_query_history_cursor {
-                            Some(0) => 0,
-                            Some(i) => i - 1,
-                            None => self.help_query_history.len() - 1,
-                        };
-                        self.help_query_history_cursor = Some(next);
-                        let entry = self.help_query_history[next].clone();
-                        if let Modal::HelpQuery { input } = &mut self.modal {
+                    if let Modal::HelpQuery { input } = &mut self.modal {
+                        if let Some(text) = super::input::recall_older(
+                            &self.help_query_history,
+                            &mut self.help_query_history_cursor,
+                            &mut self.help_query_draft,
+                            input.as_str(),
+                        ) {
                             input.clear();
-                            for c in entry.chars() {
-                                input.insert_char(c);
-                            }
+                            input.insert_str(&text);
                         }
                     }
                     return Ok(false);
                 }
                 KeyCode::Down => {
-                    if let Some(cur) = self.help_query_history_cursor {
-                        let next = cur + 1;
-                        if next >= self.help_query_history.len() {
-                            self.help_query_history_cursor = None;
-                            if let Modal::HelpQuery { input } = &mut self.modal {
-                                input.clear();
-                            }
-                        } else {
-                            self.help_query_history_cursor = Some(next);
-                            let entry = self.help_query_history[next].clone();
-                            if let Modal::HelpQuery { input } = &mut self.modal {
-                                input.clear();
-                                for c in entry.chars() {
-                                    input.insert_char(c);
-                                }
-                            }
+                    if let Modal::HelpQuery { input } = &mut self.modal {
+                        if let Some(text) = super::input::recall_newer(
+                            &self.help_query_history,
+                            &mut self.help_query_history_cursor,
+                            &mut self.help_query_draft,
+                        ) {
+                            input.clear();
+                            input.insert_str(&text);
                         }
                     }
                     return Ok(false);
@@ -29756,7 +29471,12 @@ impl App {
                 _ => {}
             }
             if let Modal::HelpQuery { input } = &mut self.modal {
-                handle_text_input_key(input, key);
+                if handle_text_input_key(input, key) {
+                    super::input::reset_recall(
+                        &mut self.help_query_history_cursor,
+                        &mut self.help_query_draft,
+                    );
+                }
             }
             return Ok(false);
         }
@@ -30315,81 +30035,15 @@ impl App {
                             *focus_replace = !*focus_replace;
                         }
                     }
-                    KeyCode::Backspace => {
+                    _ => {
                         if *focus_replace {
                             if let Some(r) = replace_input.as_mut() {
-                                r.backspace();
+                                handle_text_input_key(r, key);
                             }
                         } else {
-                            search_input.backspace();
+                            handle_text_input_key(search_input, key);
                         }
                     }
-                    KeyCode::Delete => {
-                        if *focus_replace {
-                            if let Some(r) = replace_input.as_mut() {
-                                r.delete();
-                            }
-                        } else {
-                            search_input.delete();
-                        }
-                    }
-                    KeyCode::Left => {
-                        if *focus_replace {
-                            if let Some(r) = replace_input.as_mut() {
-                                r.move_left();
-                            }
-                        } else {
-                            search_input.move_left();
-                        }
-                    }
-                    KeyCode::Right => {
-                        if *focus_replace {
-                            if let Some(r) = replace_input.as_mut() {
-                                r.move_right();
-                            }
-                        } else {
-                            search_input.move_right();
-                        }
-                    }
-                    KeyCode::Home => {
-                        if *focus_replace {
-                            if let Some(r) = replace_input.as_mut() {
-                                r.move_home();
-                            }
-                        } else {
-                            search_input.move_home();
-                        }
-                    }
-                    KeyCode::End => {
-                        if *focus_replace {
-                            if let Some(r) = replace_input.as_mut() {
-                                r.move_end();
-                            }
-                        } else {
-                            search_input.move_end();
-                        }
-                    }
-                    KeyCode::Char(c) => {
-                        let mut residual = key.modifiers;
-                        residual.remove(KeyModifiers::SHIFT);
-                        if residual.is_empty() {
-                            let final_c = if key.modifiers.contains(KeyModifiers::SHIFT)
-                                && c.is_ascii_alphabetic()
-                            {
-                                c.to_ascii_uppercase()
-                            } else {
-                                c
-                            };
-                            if *focus_replace {
-                                if let Some(r) = replace_input.as_mut() {
-                                    r.insert_char(final_c);
-                                }
-                            } else {
-                                search_input.insert_char(final_c);
-                            }
-                        }
-                    }
-                    _ => {}
                 }
             }
             if commit {
@@ -30431,27 +30085,9 @@ impl App {
             if let Modal::Renaming { input, .. } = &mut self.modal {
                 match key.code {
                     KeyCode::Enter => commit = true,
-                    KeyCode::Backspace => input.backspace(),
-                    KeyCode::Delete => input.delete(),
-                    KeyCode::Left => input.move_left(),
-                    KeyCode::Right => input.move_right(),
-                    KeyCode::Home => input.move_home(),
-                    KeyCode::End => input.move_end(),
-                    KeyCode::Char(c) => {
-                        let mut residual = key.modifiers;
-                        residual.remove(KeyModifiers::SHIFT);
-                        if residual.is_empty() {
-                            let final_c = if key.modifiers.contains(KeyModifiers::SHIFT)
-                                && c.is_ascii_alphabetic()
-                            {
-                                c.to_ascii_uppercase()
-                            } else {
-                                c
-                            };
-                            input.insert_char(final_c);
-                        }
+                    _ => {
+                        handle_text_input_key(input, key);
                     }
-                    _ => {}
                 }
             }
             if commit {
@@ -30581,31 +30217,9 @@ impl App {
             if let Modal::Adding { input, .. } = &mut self.modal {
                 match key.code {
                     KeyCode::Enter => commit = true,
-                    KeyCode::Backspace => input.backspace(),
-                    KeyCode::Delete => input.delete(),
-                    KeyCode::Left => input.move_left(),
-                    KeyCode::Right => input.move_right(),
-                    KeyCode::Home => input.move_home(),
-                    KeyCode::End => input.move_end(),
-                    KeyCode::Char(c) => {
-                        let mut residual = key.modifiers;
-                        residual.remove(KeyModifiers::SHIFT);
-                        if residual.is_empty() {
-                            // Some terminals report Shift+letter as lowercase
-                            // char + SHIFT modifier; others as uppercase char
-                            // + SHIFT. Normalize so capital letters always go
-                            // into the buffer when Shift was held.
-                            let final_c = if key.modifiers.contains(KeyModifiers::SHIFT)
-                                && c.is_ascii_alphabetic()
-                            {
-                                c.to_ascii_uppercase()
-                            } else {
-                                c
-                            };
-                            input.insert_char(final_c);
-                        }
+                    _ => {
+                        handle_text_input_key(input, key);
                     }
-                    _ => {}
                 }
             }
             if commit {
@@ -35693,19 +35307,50 @@ fn format_eval_output(out: &crate::scripting::EvalOutput, context: Option<&str>)
     }
 }
 
-pub(super) fn handle_text_input_key(input: &mut TextInput, key: KeyEvent) {
+/// 3.19 — THE chord set of every single-line / compose text input (search bar,
+/// AI prompt, shell pane, F1 help query, every modal field and filter). One
+/// table, one behaviour (KEYBINDING.md §4.5):
+///
+/// | keys | action |
+/// |---|---|
+/// | printable (no Ctrl/Alt) | insert at the cursor |
+/// | `Backspace` / `Delete` | delete before / at the cursor |
+/// | `←` `→` / `Home` `End` / `Ctrl+A` `Ctrl+E` | move; `Ctrl+A`/`Ctrl+E` are the readline aliases of `Home`/`End` |
+/// | `Ctrl+←` `Ctrl+→` / `Alt+B` `Alt+F` | word back / forward |
+/// | `Ctrl+U` / `Ctrl+K` | kill to start / to end |
+/// | `Ctrl+W` / `Alt+Backspace` / `Ctrl+Backspace` | kill the word before the cursor |
+///
+/// Returns whether the buffer text changed (callers refilter / drop stale
+/// results / end a history walk on `true`). Keys outside the table are left
+/// alone, so a caller may bind its own chords before falling through here.
+pub(super) fn handle_text_input_key(input: &mut TextInput, key: KeyEvent) -> bool {
     use KeyCode::*;
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let before = input.as_str().to_string();
     match key.code {
+        Backspace if ctrl || alt => input.kill_word_left(),
         Backspace => input.backspace(),
         Delete => input.delete(),
+        Left if ctrl || alt => input.move_word_left(),
         Left => input.move_left(),
+        Right if ctrl || alt => input.move_word_right(),
         Right => input.move_right(),
         Home => input.move_home(),
         End => input.move_end(),
+        Char('a') | Char('A') if ctrl => input.move_home(),
+        Char('e') | Char('E') if ctrl => input.move_end(),
+        Char('u') | Char('U') if ctrl => input.kill_to_start(),
+        Char('k') | Char('K') if ctrl => input.kill_to_end(),
+        Char('w') | Char('W') if ctrl => input.kill_word_left(),
+        Char('b') | Char('B') if alt => input.move_word_left(),
+        Char('f') | Char('F') if alt => input.move_word_right(),
         Char(c) => {
             let mut residual = key.modifiers;
             residual.remove(KeyModifiers::SHIFT);
             if residual.is_empty() {
+                // Some terminals report Shift+letter as a lowercase char plus
+                // the SHIFT modifier; normalise so capitals always land.
                 let final_c = if key.modifiers.contains(KeyModifiers::SHIFT)
                     && c.is_ascii_alphabetic()
                 {
@@ -35718,6 +35363,7 @@ pub(super) fn handle_text_input_key(input: &mut TextInput, key: KeyEvent) {
         }
         _ => {}
     }
+    input.as_str() != before
 }
 
 /// System prompt used by regular chat when InferenceMode is Local. The
@@ -37533,6 +37179,54 @@ mod editor_widget_tests {
         assert_eq!(click_to_source(&lines, false, 0, 0, 0, 1, 80), (0, 0), "second cell of a wide glyph is that glyph");
         assert_eq!(click_to_source(&lines, false, 0, 0, 0, 2, 80), (0, 1));
         assert_eq!(click_to_source(&lines, false, 0, 0, 0, 6, 80), (0, 3));
+    }
+
+    #[test]
+    fn shared_text_input_chords() {
+        use super::handle_text_input_key;
+        use super::super::input::TextInput;
+        let k = |c: KeyCode, m: KeyModifiers| KeyEvent::new(c, m);
+        let mut t = TextInput::new();
+        for c in "git status --short".chars() {
+            assert!(handle_text_input_key(&mut t, k(KeyCode::Char(c), KeyModifiers::NONE)));
+        }
+        // Ctrl / Alt letters outside the table never insert.
+        assert!(!handle_text_input_key(&mut t, k(KeyCode::Char('x'), KeyModifiers::CONTROL)));
+        assert!(!handle_text_input_key(&mut t, k(KeyCode::Char('x'), KeyModifiers::ALT)));
+        assert_eq!(t.as_str(), "git status --short");
+        // Shift+letter lands as a capital even when reported lowercase.
+        handle_text_input_key(&mut t, k(KeyCode::Char('x'), KeyModifiers::SHIFT));
+        assert_eq!(t.as_str(), "git status --shortX");
+        handle_text_input_key(&mut t, k(KeyCode::Backspace, KeyModifiers::NONE));
+        // Word motion: Ctrl+← / Alt+B back, Ctrl+→ / Alt+F forward.
+        handle_text_input_key(&mut t, k(KeyCode::Left, KeyModifiers::CONTROL));
+        assert_eq!(t.cursor(), "git status ".len());
+        handle_text_input_key(&mut t, k(KeyCode::Char('b'), KeyModifiers::ALT));
+        assert_eq!(t.cursor(), "git ".len());
+        handle_text_input_key(&mut t, k(KeyCode::Char('f'), KeyModifiers::ALT));
+        assert_eq!(t.cursor(), "git status ".len());
+        // Ctrl+A / Ctrl+E are Home / End.
+        handle_text_input_key(&mut t, k(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        assert_eq!(t.cursor(), 0);
+        handle_text_input_key(&mut t, k(KeyCode::Char('e'), KeyModifiers::CONTROL));
+        assert_eq!(t.cursor(), t.as_str().chars().count());
+        // Kills: word, to start, to end.
+        assert!(handle_text_input_key(&mut t, k(KeyCode::Char('w'), KeyModifiers::CONTROL)));
+        assert_eq!(t.as_str(), "git status ");
+        handle_text_input_key(&mut t, k(KeyCode::Backspace, KeyModifiers::ALT));
+        assert_eq!(t.as_str(), "git ");
+        handle_text_input_key(&mut t, k(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        assert_eq!(t.as_str(), "");
+        for c in "abc".chars() {
+            handle_text_input_key(&mut t, k(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        handle_text_input_key(&mut t, k(KeyCode::Home, KeyModifiers::NONE));
+        handle_text_input_key(&mut t, k(KeyCode::Right, KeyModifiers::NONE));
+        assert!(handle_text_input_key(&mut t, k(KeyCode::Char('k'), KeyModifiers::CONTROL)));
+        assert_eq!(t.as_str(), "a");
+        // Pure motion reports "unchanged".
+        assert!(!handle_text_input_key(&mut t, k(KeyCode::End, KeyModifiers::NONE)));
+        assert!(!handle_text_input_key(&mut t, k(KeyCode::Delete, KeyModifiers::NONE)));
     }
 
     #[test]

@@ -440,6 +440,9 @@ impl super::App {
         // rendering it (visible in logs) instead of
         // crashing.  The 1.2.14 catalogue had 43 of
         // these unreachable arms — collapsed into one.
+        // 3.19 — every field below windows its text to the modal width so the
+        // cursor never scrolls out of sight (`TextInput::render_with_cursor_fit`).
+        let fit_w = rect.width.saturating_sub(2) as usize;
         let (title, border_color, body): (String, Color, Vec<Line<'_>>) = match &self.modal {
             Modal::None => return,
             Modal::TimelineNewEventPrompt {
@@ -464,7 +467,7 @@ impl super::App {
                             .fg(self.theme.tree_chapter_fg)
                             .add_modifier(Modifier::BOLD),
                     )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(format!(" › {}", input.render_with_cursor_fit('│', fit_w.saturating_sub(3)))),
                     Line::from(""),
                     Line::from(Span::styled(
                         "  Enter commits · Esc cancels",
@@ -486,7 +489,7 @@ impl super::App {
                             .fg(self.theme.tree_chapter_fg)
                             .add_modifier(Modifier::BOLD),
                     )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(format!(" › {}", input.render_with_cursor_fit('│', fit_w.saturating_sub(3)))),
                     Line::from(""),
                     Line::from(Span::styled(
                         "  Empty middle = no end · empty trailing = drop track · Enter commits · Esc cancels",
@@ -508,7 +511,7 @@ impl super::App {
                             .fg(self.theme.tree_script_fg)
                             .add_modifier(Modifier::BOLD),
                     )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(format!(" › {}", input.render_with_cursor_fit('│', fit_w.saturating_sub(3)))),
                     Line::from(""),
                     Line::from(Span::styled(
                         "  Enter commits (empty = no note) · Esc cancels",
@@ -530,7 +533,7 @@ impl super::App {
                             .fg(self.theme.tree_script_fg)
                             .add_modifier(Modifier::BOLD),
                     )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(format!(" › {}", input.render_with_cursor_fit('│', fit_w.saturating_sub(3)))),
                     Line::from(""),
                     Line::from(Span::styled(
                         "  Enter adds + auto-selects · Esc cancels",
@@ -552,7 +555,7 @@ impl super::App {
                             .fg(self.theme.tree_script_fg)
                             .add_modifier(Modifier::BOLD),
                     )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(format!(" › {}", input.render_with_cursor_fit('│', fit_w.saturating_sub(3)))),
                     Line::from(""),
                     Line::from(Span::styled(
                         "  Enter jumps · Esc cancels",
@@ -604,7 +607,7 @@ impl super::App {
                             .fg(self.theme.tree_script_fg)
                             .add_modifier(Modifier::BOLD),
                     )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(format!(" › {}", input.render_with_cursor_fit('│', fit_w.saturating_sub(3)))),
                     Line::from(""),
                     Line::from(Span::styled(
                         "  Enter commits (merges if name exists) · Esc cancels",
@@ -626,7 +629,7 @@ impl super::App {
                             .fg(self.theme.tree_script_fg)
                             .add_modifier(Modifier::BOLD),
                     )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(format!(" › {}", input.render_with_cursor_fit('│', fit_w.saturating_sub(3)))),
                     Line::from(""),
                     Line::from(Span::styled(
                         "  Enter sets · empty/0 clears · Esc cancels",
@@ -648,7 +651,7 @@ impl super::App {
                             .fg(self.theme.tree_script_fg)
                             .add_modifier(Modifier::BOLD),
                     )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(format!(" › {}", input.render_with_cursor_fit('│', fit_w.saturating_sub(3)))),
                     Line::from(""),
                     Line::from(Span::styled(
                         "  Enter writes (default path pre-filled) · Esc cancels",
@@ -691,7 +694,7 @@ impl super::App {
                             " Ask the Help book:",
                             Style::default().add_modifier(Modifier::BOLD),
                         )),
-                        Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                        Line::from(format!(" › {}", input.render_with_cursor_fit('│', fit_w.saturating_sub(3)))),
                         Line::from(""),
                         Line::from(Span::styled(
                             "  Enter to ask · Esc to cancel · answer streams into the AI pane",
@@ -710,7 +713,7 @@ impl super::App {
                             .fg(self.theme.tree_script_fg)
                             .add_modifier(Modifier::BOLD),
                     )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(format!(" › {}", input.render_with_cursor_fit('│', fit_w.saturating_sub(3)))),
                     Line::from(""),
                     Line::from(Span::styled(
                         format!(
@@ -734,7 +737,7 @@ impl super::App {
                             .fg(self.theme.tree_script_fg)
                             .add_modifier(Modifier::BOLD),
                     )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(format!(" › {}", input.render_with_cursor_fit('│', fit_w.saturating_sub(3)))),
                     Line::from(""),
                     Line::from(Span::styled(
                         "  Enter runs · Esc cancels · result lands on the status bar",
@@ -754,7 +757,7 @@ impl super::App {
                         " Search chat history:",
                         Style::default().add_modifier(Modifier::BOLD),
                     )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(format!(" › {}", input.render_with_cursor_fit('│', fit_w.saturating_sub(3)))),
                     Line::from(""),
                     Line::from(Span::styled(
                         "  Enter starts from the newest match · Ctrl+X advances to older · Esc cancels",
@@ -778,7 +781,7 @@ impl super::App {
                         format!(
                             " {} Search:  {}",
                             search_marker,
-                            search_input.render_with_cursor(cursor_char)
+                            search_input.render_with_cursor_fit(cursor_char, fit_w.saturating_sub(12))
                         ),
                         if !*focus_replace {
                             Style::default()
@@ -792,7 +795,7 @@ impl super::App {
                         format!(
                             " {} Replace: {}",
                             replace_marker,
-                            r.render_with_cursor(cursor_char)
+                            r.render_with_cursor_fit(cursor_char, fit_w.saturating_sub(12))
                         ),
                         if *focus_replace {
                             Style::default()
@@ -869,7 +872,7 @@ impl super::App {
                         format!("    Where: before `{anchor_name}`")
                     }
                 };
-                let title_line = format!(" Title : {}", input.render_with_cursor('│'));
+                let title_line = format!(" Title : {}", input.render_with_cursor_fit('│', fit_w.saturating_sub(9)));
                 let body = vec![
                     Line::from(""),
                     Line::from(Span::styled(parent, Style::default().add_modifier(Modifier::DIM))),
@@ -888,7 +891,7 @@ impl super::App {
             Modal::TtsSaveAsAudio { input, voice_label, .. } => {
                 let prompt = format!(
                     " Path: {}",
-                    input.render_with_cursor('│'),
+                    input.render_with_cursor_fit('│', fit_w.saturating_sub(7)),
                 );
                 let body = vec![
                     Line::from(""),
@@ -1075,7 +1078,7 @@ impl super::App {
             }
             Modal::Renaming { kind, input, .. } => {
                 let header = format!(" Rename {} ", kind.as_str());
-                let title_line = format!(" Title : {}", input.render_with_cursor('│'));
+                let title_line = format!(" Title : {}", input.render_with_cursor_fit('│', fit_w.saturating_sub(9)));
                 let body = vec![
                     Line::from(""),
                     Line::from(Span::styled(

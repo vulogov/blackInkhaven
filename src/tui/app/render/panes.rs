@@ -246,7 +246,7 @@ impl super::super::App {
 
     pub(in crate::tui::app) fn draw_search_bar(&self, f: &mut ratatui::Frame, area: Rect) {
         let text = if self.focus == Focus::SearchBar {
-            self.search_input.render_with_cursor('│')
+            self.search_input.render_with_cursor_fit('│', area.width.saturating_sub(2) as usize)
         } else if self.search_input.is_empty() {
             String::from("(press Ctrl+/ to search)")
         } else {
@@ -293,9 +293,17 @@ impl super::super::App {
         if self.focus == Focus::AiPrompt {
             title.push_str(" · ⏎ send · ⇧⏎ newline");
         }
+        // 3.19 — scroll the box so the cursor is always on screen: a long line
+        // scrolls horizontally, a prompt taller than the box vertically.
+        let (cursor_line, _) = self.ai_input.cursor_line_col();
+        let inner_w = area.width.saturating_sub(2).max(1) as usize;
+        let inner_h = area.height.saturating_sub(2).max(1) as usize;
+        let scroll_x = (self.ai_input.cursor_display_col() + 1).saturating_sub(inner_w);
+        let scroll_y = (cursor_line + 1).saturating_sub(inner_h);
         let p = Paragraph::new(text)
             .style(style)
-            .block(self.pane_block(&title, Focus::AiPrompt));
+            .block(self.pane_block(&title, Focus::AiPrompt))
+            .scroll((scroll_y as u16, scroll_x as u16));
         f.render_widget(p, area);
     }
 

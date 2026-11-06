@@ -481,7 +481,7 @@ impl App {
                     return true;
                 }
                 KeyCode::Backspace => {
-                    filter.backspace();
+                    super::handle_text_input_key(filter, key);
                     let f = filter.as_str().to_lowercase();
                     let f = f.trim().to_string();
                     let new_visible: Vec<usize> = entries
@@ -496,8 +496,15 @@ impl App {
                     }
                     return true;
                 }
-                KeyCode::Char(c) => {
-                    filter.insert_char(c);
+                KeyCode::Char(_)
+                | KeyCode::Delete
+                | KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Home
+                | KeyCode::End => {
+                    if !super::handle_text_input_key(filter, key) {
+                        return true;
+                    }
                     let f = filter.as_str().to_lowercase();
                     let f = f.trim().to_string();
                     let new_visible: Vec<usize> = entries
