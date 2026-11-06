@@ -139,7 +139,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             project,
             &language,
             &kind,
-            count,
+            count as usize,
             seed,
             &meter,
             provider.as_deref(),
@@ -166,7 +166,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             language,
             role,
             count,
-        } => generate_word(project, &language, &role, count),
+        } => generate_word(project, &language, &role, count as usize),
         LanguageCommand::Syllabify { language, word } => {
             syllabify_word(project, &language, &word)
         }
@@ -432,7 +432,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             word,
             text,
         } => lect(project, &language, &variety, word.as_deref(), text.as_deref()),
-        LanguageCommand::Dialects { language, count } => dialects(project, &language, count),
+        LanguageCommand::Dialects { language, count } => dialects(project, &language, count as usize),
         LanguageCommand::Borrow {
             language,
             form,
@@ -466,7 +466,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             topic,
             count,
             provider,
-        } => propose_loans(project, &language, &from, topic.as_deref(), count, provider.as_deref()),
+        } => propose_loans(project, &language, &from, topic.as_deref(), count as usize, provider.as_deref()),
         LanguageCommand::Gloss { language, text } => gloss_text(project, &language, &text),
         LanguageCommand::Igt { language, text, save, name, json } => {
             igt_text(project, &language, &text, save, name.as_deref(), json)
@@ -663,7 +663,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             project,
             &language,
             topic.as_deref(),
-            count,
+            count as usize,
             era.as_deref(),
             register.as_deref(),
             provider.as_deref(),

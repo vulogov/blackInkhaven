@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | LANG-IMPROVE-1 |
-| **Status** | LI-1 … LI-6 landed on 3.18.0-dev; LI-7 … LI-10 proposed |
+| **Status** | LI-1 … LI-7 landed on 3.18.0-dev; LI-8 … LI-10 proposed |
 | **Created** | 2026-11-05 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 3.18.0 |
@@ -489,6 +489,19 @@ with `0 of N candidates passed the constraints — …`.
 
 **Test.** clap tests for `--count 0` and over-cap; a constrained fixture where
 nothing passes returns `Err`.
+
+**Status: landed (3.18.0-dev).** The five `--count` arguments (`compose`,
+`generate-word`, `dialects`, `propose-loans`, `generate-lexicon`) are `u32`
+with `value_parser!(u32).range(1..)`; `generate-word` is bounded at
+`1..=MAX_GENERATE_BATCH` so the summary can no longer disagree with a silent
+cap (the cap inside `generate_words` stays as defence for library callers).
+Handlers keep `usize`; the dispatch casts. `generate_word` goes through the
+new `generate_checked`, which returns `Error::Config("0 of N candidates passed
+the constraints — …")` naming the role's templates and `language doctor`, so
+the command exits 1. Tests: `language_flag_tests::count_flags_refuse_zero_and_
+over_cap` (clap errors for 0 on all five, over-cap and negative on
+`generate-word`, defaults unchanged) and `generate_checked_tests` (an empty
+required class → `Err` naming the count; a passing fixture returns `count`).
 
 ### LI-8 · Message wording
 

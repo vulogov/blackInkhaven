@@ -3798,9 +3798,9 @@ pub enum LanguageCommand {
         /// `incantation`.
         #[arg(long, default_value = "prose")]
         kind: String,
-        /// How many items (names / sentences).
-        #[arg(long, default_value_t = 5)]
-        count: usize,
+        /// How many items (names / sentences); at least 1.
+        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u32).range(1..))]
+        count: u32,
         /// Seed for the deterministic generators —
         /// change it for a different draw.
         #[arg(long, default_value_t = 0)]
@@ -3905,8 +3905,9 @@ pub enum LanguageCommand {
         #[arg(long, default_value = "root")]
         role: String,
         /// How many words to generate.
-        #[arg(long, default_value_t = 20)]
-        count: usize,
+        /// 1 … 100 000 (`MAX_GENERATE_BATCH`); clap refuses anything else.
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..=crate::conlang::generate::word::MAX_GENERATE_BATCH as i64))]
+        count: u32,
     },
 
     /// LANG-1 P1.2 — syllabify a word against a language's phonology.
@@ -5377,8 +5378,8 @@ pub enum LanguageCommand {
         /// Target language name (case-insensitive).
         language: String,
         /// How many headwords to compare.
-        #[arg(long, default_value_t = 12)]
-        count: usize,
+        #[arg(long, default_value_t = 12, value_parser = clap::value_parser!(u32).range(1..))]
+        count: u32,
     },
 
     /// 1.3.22 LANG-2 P2 — **borrow** a word into a language: nativise a donor
@@ -5466,8 +5467,8 @@ pub enum LanguageCommand {
         #[arg(long)]
         topic: Option<String>,
         /// How many loanwords to propose.
-        #[arg(long, default_value_t = 6)]
-        count: usize,
+        #[arg(long, default_value_t = 6, value_parser = clap::value_parser!(u32).range(1..))]
+        count: u32,
         /// AI provider override.
         #[arg(long)]
         provider: Option<String>,
@@ -5528,8 +5529,8 @@ pub enum LanguageCommand {
         #[arg(long)]
         topic: Option<String>,
         /// How many entries to propose.
-        #[arg(long, default_value_t = 20)]
-        count: usize,
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..))]
+        count: u32,
         /// Optional in-world era tag recorded on the prompt.
         #[arg(long)]
         era: Option<String>,
@@ -7517,7 +7518,7 @@ mod prompt_resolve_tests {
 }
 
 #[cfg(test)]
-mod language_output_flag_tests {
+mod language_flag_tests {
     use super::*;
     use clap::CommandFactory;
 
@@ -7610,5 +7611,43 @@ mod language_output_flag_tests {
             cli.command,
             Some(Command::Language(LanguageCommand::Export { output: Some(ref p), .. })) if p == std::path::Path::new("d.json")
         ));
+    }
+
+    /// 3.18 LI-7: every `--count` is a `u32` of at least 1, and
+    /// `generate-word` also refuses more than `MAX_GENERATE_BATCH`, so a
+    /// typo is clap's error with the real reason, not a silent cap or a
+    /// message that blames the constraints.
+    #[test]
+    fn count_flags_refuse_zero_and_over_cap() {
+        with_big_stack(count_flags_refuse_zero_and_over_cap_body);
+    }
+
+    fn count_flags_refuse_zero_and_over_cap_body() {
+        let err = |args: &[&str]| Cli::try_parse_from(args).err().map(|e| e.to_string()).unwrap_or_default();
+        let ok = |args: &[&str]| Cli::try_parse_from(args).is_ok();
+        let zero: [&[&str]; 5] = [
+            &["inkhaven", "language", "generate-word", "L", "--count", "0"],
+            &["inkhaven", "language", "compose", "L", "--count", "0"],
+            &["inkhaven", "language", "dialects", "L", "--count", "0"],
+            &["inkhaven", "language", "propose-loans", "L", "--from", "X", "--count", "0"],
+            &["inkhaven", "language", "generate-lexicon", "L", "--count", "0"],
+        ];
+        for args in zero {
+            let e = err(args);
+            assert!(e.contains("--count") && e.contains("0 is not in 1.."), "{args:?}: {e}");
+        }
+        let e = err(&["inkhaven", "language", "generate-word", "L", "--count", "100001"]);
+        assert!(e.contains("100001 is not in 1..=100000"), "{e}");
+        assert!(ok(&["inkhaven", "language", "generate-word", "L", "--count", "100000"]));
+        assert!(ok(&["inkhaven", "language", "generate-lexicon", "L", "--count", "100001"]), "no cap here");
+        let e = err(&["inkhaven", "language", "generate-word", "L", "--count", "-3"]);
+        assert!(!e.is_empty(), "negative counts are refused");
+        if let Ok(Cli { command: Some(Command::Language(LanguageCommand::GenerateWord { count, .. })), .. }) =
+            Cli::try_parse_from(["inkhaven", "language", "generate-word", "L"])
+        {
+            assert_eq!(count, 20, "default unchanged");
+        } else {
+            panic!("default parse");
+        }
     }
 }

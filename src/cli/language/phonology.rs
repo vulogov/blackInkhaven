@@ -192,8 +192,29 @@ pub(crate) fn syllabify_word(project: &Path, language: &str, word: &str) -> Resu
 /// phonotactic templates.  Loads the typed phoneme block from the language's
 /// `Phonology` chapter (whichever paragraph holds the HJSON), samples
 /// `count` words for the requested role, and prints those that satisfy every
-/// declared constraint.  Empty / absent phonology is a clear, actionable
-/// error rather than a silent empty list.
+/// declared constraint.  Empty / absent phonology, and a batch in which no
+/// candidate passes, are clear, actionable errors (exit 1) rather than a
+/// silent empty list.
+/// Generate `count` candidates and fail when none passes (LI-7): the
+/// constraints are the reason only when candidates were actually tried, and
+/// clap guarantees `count >= 1` on the CLI.
+pub(crate) fn generate_checked(
+    phonology: &crate::conlang::Phonology,
+    role: crate::conlang::TemplateRole,
+    count: usize,
+) -> Result<Vec<String>> {
+    let words = crate::conlang::generate::word::generate_words(phonology, role, count);
+    if words.is_empty() {
+        return Err(Error::Config(format!(
+            "0 of {count} candidates passed the constraints — loosen the phonotactic constraints \
+             (`constraints`, `max_cluster_size`, `no_geminate`), widen the `{}` templates' classes, \
+             or check `language doctor` for an empty class",
+            role.as_str()
+        )));
+    }
+    Ok(words)
+}
+
 pub(crate) fn generate_word(project: &Path, language: &str, role: &str, count: usize) -> Result<()> {
     let role = crate::conlang::TemplateRole::parse(role).ok_or_else(|| {
         Error::Config(format!(
@@ -210,14 +231,7 @@ pub(crate) fn generate_word(project: &Path, language: &str, role: &str, count: u
         )));
     }
 
-    let words = crate::conlang::generate::word::generate_words(&phonology, role, count);
-    if words.is_empty() {
-        eprintln!(
-            "no words satisfied the constraints in {} attempts — loosen the phonotactic constraints",
-            count
-        );
-        return Ok(());
-    }
+    let words = generate_checked(&phonology, role, count)?;
     for w in &words {
         println!("{w}");
     }
@@ -229,4 +243,35 @@ pub(crate) fn generate_word(project: &Path, language: &str, role: &str, count: u
         language
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod generate_checked_tests {
+    use super::*;
+    use crate::conlang::{Phonology, TemplateRole};
+
+    #[test]
+    fn a_batch_with_no_passing_candidate_is_an_error_that_names_the_count() {
+        // `V` is declared but empty, so `C V` can never be realised.
+        let p = Phonology::from_hjson(r#"{
+            phonemes: [ { ipa: "t", kind: "consonant" }, { ipa: "k", kind: "consonant" } ],
+            classes: { C: ["t", "k"], V: [] },
+            templates: { root: [ { pattern: "C V" } ] }
+        }"#)
+        .unwrap()
+        .unwrap();
+        let err = generate_checked(&p, TemplateRole::Root, 7).unwrap_err().to_string();
+        assert!(err.contains("0 of 7 candidates passed the constraints"), "{err}");
+        assert!(err.contains("`root` templates"), "{err}");
+
+        // With a vowel the same request succeeds and respects `count`.
+        let ok = Phonology::from_hjson(r#"{
+            phonemes: [ { ipa: "t", kind: "consonant" }, { ipa: "a", kind: "vowel" } ],
+            classes: { C: ["t"], V: ["a"] },
+            templates: { root: [ { pattern: "C V" } ] }
+        }"#)
+        .unwrap()
+        .unwrap();
+        assert_eq!(generate_checked(&ok, TemplateRole::Root, 3).unwrap().len(), 3);
+    }
 }
