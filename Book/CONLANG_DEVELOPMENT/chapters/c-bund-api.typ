@@ -34,8 +34,9 @@ The categories are `store_read` (read the project — default on), `store_write`
 
 These read the language and return a value; all are `store_read` (always allowed).
 
-/ `lang.list ( -- names )`: Every defined language in the project.
+/ `lang.list ( -- rows )`: Every defined language, one `{name, entries, grammar, phonology, samples}` dictionary each — the same rows `inkhaven language list --json` prints.
 / `lang.generate_word ( lang role seed -- word )`: Invent a word-shape obeying the templates (a `seed` makes it repeatable).
+/ `lang.generate_words ( lang role count -- list )`: The deterministic batch `generate-word --count` prints (1 … 100 000); an error when no candidate passes the constraints.
 / `lang.syllabify ( lang word -- list )`: Split a word into its syllables.
 / `lang.ipa ( lang word -- surface )`: A word's surface pronunciation after allophony.
 / `lang.stress ( lang word -- marked )`: Mark which syllable carries stress.
@@ -80,7 +81,7 @@ These read the language and return a value; all are `store_read` (always allowed
 
 #section("Inspectors — translation")
 
-The rule-based translation engine (`store_read`). `remember` and `export` change
+The rule-based translation engine (`store_read`). `remember` and `export_translation` change
 the project / write a file and appear under their own categories below.
 
 / `lang.translate ( lang text -- {surface,gloss,literal} )`: Translate English into the language.
@@ -131,4 +132,4 @@ These read or write files (always inside the project sandbox).
 / `lang.grammar_book ( lang format out font -- out-path )`: Render the reference grammar to a file. (`fs_write`)
 / `lang.font_build ( lang format out -- out-stem )`: Compile the font (`format` = `ufo`, `ttf`, or `both`). (`fs_write`)
 / `lang.glyph_draft ( lang describe phoneme out provider -- out-path )`: AI-draft a glyph SVG, preflight it, and write it (advisory). (`fs_write`, calls the AI)
-/ `lang.export ( lang format out -- out-path )`: Export the lexicon / translation memory to a portable format (`format` = `json`, `csv`, `anki`, `xliff`, `itm`, …). (`fs_write`)
+/ `lang.export_translation ( lang out-path -- out-path )`: Write the translation system — memory pairs and lexicon — as a `.itm` pack, as `inkhaven language export-translation` does. `lang.export` is the older name for the same word. (`fs_write`)

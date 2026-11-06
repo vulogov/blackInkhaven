@@ -64,10 +64,13 @@ When your glyphs are bound, compile them into a font file straight from the
 language:
 
 ```sh
-inkhaven language font-build --language Eldar --format ttf --out Eldar
+inkhaven language font-build --language Eldar --format ttf -o Eldar
 ```
 
-This produces `Eldar.ttf`, a standard TrueType font. Inkhaven does the entire
+This produces `Eldar.ttf`, a standard TrueType font (`-o` gives the file's *stem*;
+the extension follows `--format`). Leave `-o` off and the font lands in your
+project's `exports/eldar/fonts/` folder, and the command prints the path it chose.
+Inkhaven does the entire
 compilation in-process: it converts each glyph's outline into font curves, lays
 them out on the design grid, and assembles a complete font file — with no
 external program. You can also ask for `ufo` (an editable font *source* you can

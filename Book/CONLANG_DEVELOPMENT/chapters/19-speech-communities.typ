@@ -59,7 +59,7 @@ whole picture — its *language ecology*:
 
 ```sh
 inkhaven language ecology                  # who speaks what, and which variety, where
-inkhaven language ecology --svg atlas.svg  # a node-link atlas of the world's tongues
+inkhaven language ecology -o atlas.svg     # a node-link atlas of the world's tongues
 ```
 
 #term("Language ecology")[
@@ -71,7 +71,7 @@ inkhaven language ecology --svg atlas.svg  # a node-link atlas of the world's to
 
 The text report lays out every place with its language and variety, every
 character with the languages they command and their native variety, and the
-contact areas from Chapter 18. The `--svg` form writes a labelled *atlas* — a
+contact areas from Chapter 18. With `-o atlas.svg` it writes a labelled *atlas* — a
 node-link diagram of the world's languages and the places and people joined to
 them — a map you can drop straight into your worldbuilding notes.
 
@@ -107,7 +107,7 @@ talking.
   [Places carry a `--variety` and characters a `--native-variety`, so a *speech
    community* speaks a specific dialect, not the language in the abstract.],
   [`ecology` reports the whole *language ecology* — who speaks what variety where,
-   plus contact areas; `--svg` writes a node-link atlas.],
+   plus contact areas; `-o FILE.svg` writes a node-link atlas.],
   [`idiolect <character>` renders a form or line in that character's native
    variety automatically — dialogue in the speaker's own voice.],
   [Declared varieties and contact also appear as *Variation* and *Contact*

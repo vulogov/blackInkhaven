@@ -88,10 +88,11 @@ Inkhaven reads or writes each.
 #section("Exporting your lexicon")
 
 The single command is `export`, with a `--format` choosing what to write. By
-default it prints to your screen; add `--out FILE` (or redirect with `>`) to save:
+default it prints to your screen; add `-o FILE` (the long form is `--output`; the
+older `--out` still works) or redirect with `>` to save:
 
 ```sh
-inkhaven language export Eldar --format xliff   --out eldar.xlf
+inkhaven language export Eldar --format xliff   -o eldar.xlf
 inkhaven language export Eldar --format anki     > eldar-deck.csv
 inkhaven language export Eldar --format ipa-chart
 ```
@@ -104,7 +105,7 @@ The formats, and when to reach for each:
 / `xliff`: A *translation memory* (each entry a working-language → conlang pair) loadable into a *CAT tool* such as OmegaT, memoQ, or Weblate — useful if you actually translate text into your language.
 / `linguex`: A LaTeX document using the *linguex* package — bold headwords with glosses and numbered examples — to paste into an academic paper or a hand-written grammar.
 / `ipa-chart`: A Markdown inventory of your phonemes, consonants and vowels grouped, each with its romanization — a quick appendix or forum post.
-/ `dictionary-twocol` / `grammar` / `phrasebook`: Typeset *Typst* documents (a printable two-column dictionary, a grammar reference, a phrasebook). These need `--out FILE.typ`, then you compile them just like the books in the previous chapter.
+/ `dictionary-twocol` / `grammar` / `phrasebook`: Typeset *Typst* documents (a printable two-column dictionary, a grammar reference, a phrasebook). These need `-o FILE.typ`, then you compile them just like the books in the previous chapter.
 
 To make the two least-familiar formats concrete: a single XLIFF entry pairs the
 meaning with the word, and a linguex headword carries its gloss and a numbered
@@ -175,7 +176,7 @@ inkhaven language add-word Eldar --import cws-export.csv
 The CSV format is built to make a loop: export your lexicon, edit it somewhere
 comfortable, and bring it back. A common pattern is bulk-editing in a spreadsheet:
 
-+ `inkhaven language export Eldar --format csv --out eldar.csv`
++ `inkhaven language export Eldar --format csv -o eldar.csv`
 + Open `eldar.csv` in a spreadsheet; fix translations, add examples, tidy
   registers across many rows at once.
 + `inkhaven language add-word Eldar --import eldar.csv` — new rows are added,

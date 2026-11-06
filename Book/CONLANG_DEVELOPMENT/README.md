@@ -11,7 +11,7 @@ who knew neither linguistics nor Inkhaven can build their own language.
 ## Reading it
 
 The compiled book is [`CONLANG_DEVELOPMENT.pdf`](CONLANG_DEVELOPMENT.pdf)
-(~168 pages, B5). To rebuild it from source you need [Typst](https://typst.app):
+(~210 pages, B5). To rebuild it from source you need [Typst](https://typst.app):
 
 ```sh
 typst compile CONLANG_DEVELOPMENT.typ CONLANG_DEVELOPMENT.pdf

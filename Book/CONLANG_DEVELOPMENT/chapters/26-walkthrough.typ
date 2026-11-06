@@ -110,7 +110,7 @@ inkhaven language glyph-draft Avesha --describe "a bold vertical post" \
     --phoneme p --codepoint U+E000 --name p --provider deepseek --yes
 # … one per phoneme …
 inkhaven language font-config Avesha
-inkhaven language font-build --language Avesha --format ttf --out Avesha
+inkhaven language font-build --language Avesha --format ttf -o Avesha
 ```
 
 Type a word in the new script:
@@ -122,11 +122,11 @@ inkhaven language transliterate Avesha --text kira
 #section("6. The books")
 
 ```sh
-inkhaven language dictionary   Avesha --format typ --font Avesha --out dict.typ
+inkhaven language dictionary   Avesha --format typ --font Avesha -o dict.typ
 inkhaven language grammar-book Avesha --format typ --font Avesha --study \
-    --provider deepseek --out grammar.typ
+    --provider deepseek -o grammar.typ
 inkhaven language tutorial     Avesha --format typ --font Avesha \
-    --provider deepseek --out learn.typ
+    --provider deepseek -o learn.typ
 ```
 
 Compile any of them to a PDF that embeds your font:

@@ -76,7 +76,7 @@ check, and shows you the result:
 
 ```sh
 inkhaven language glyph-draft Eldar --describe "a vertical stroke with a hook" \
-    --phoneme p --out p.svg
+    --phoneme p -o p.svg
 ```
 
 By default it only drafts and previews. The drawing is advisory — review it,
