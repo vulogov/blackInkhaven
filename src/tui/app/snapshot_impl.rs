@@ -4,8 +4,6 @@
 //! picker modal. Extracted from `tui::app` in the 1.2.7
 //! refactor, Phase 3 batch 4.
 
-use ratatui::style::{Color, Modifier, Style};
-use tui_textarea::TextArea;
 use uuid::Uuid;
 
 use super::super::diff_utils::compute_line_diff;
@@ -52,10 +50,7 @@ impl super::App {
         } else {
             split.snapshot_lines
         };
-        let mut new_ta = TextArea::new(lines);
-        new_ta.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
-        new_ta.set_line_number_style(Style::default().fg(Color::DarkGray));
-        doc.textarea = new_ta;
+        doc.textarea = super::editor_impl::editor_textarea(lines, self.cfg.editor.tab_width);
         doc.dirty = true;
         doc.scroll_row = 0;
         doc.scroll_col = 0;
@@ -461,11 +456,7 @@ impl super::App {
         let body = String::from_utf8_lossy(&content).into_owned();
         let lines = body_to_lines(&body);
         let saved_lines = lines.clone();
-        let mut textarea = TextArea::new(lines);
-        textarea.set_cursor_line_style(
-            Style::default().add_modifier(Modifier::REVERSED),
-        );
-        textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
+        let textarea = super::editor_impl::editor_textarea(lines, self.cfg.editor.tab_width);
         // Format the snapshot age compactly for the
         // title so the user sees "(snapshot · 2h
         // ago)" in the split-view chrome.
@@ -518,6 +509,13 @@ impl super::App {
     }
 
     pub(super) fn commit_snapshot_load(&mut self) {
+        // Help paragraphs are read-only: never swap a snapshot into them (the
+        // key gate lets F6 open the picker as a viewer).
+        if self.opened.as_ref().is_some_and(|d| d.read_only) {
+            self.status = "Help is read-only — snapshot not loaded".into();
+            self.modal = Modal::None;
+            return;
+        }
         // 1.2.8+ — when the annotation filter is non-empty,
         // `cursor` indexes the FILTERED visible list, not the
         // absolute snapshots Vec.  Translate before reading.
@@ -589,10 +587,8 @@ impl super::App {
             self.modal = Modal::None;
             return;
         };
-        let mut new_textarea = TextArea::new(body_to_lines(&body));
-        new_textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
-        new_textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
-        doc.textarea = new_textarea;
+        doc.textarea =
+            super::editor_impl::editor_textarea(body_to_lines(&body), self.cfg.editor.tab_width);
         doc.dirty = true;
         doc.scroll_row = 0;
         doc.scroll_col = 0;

@@ -188,18 +188,9 @@ impl super::App {
         let Some(doc) = self.opened.as_mut() else {
             return;
         };
-        let saved_yank = doc.textarea.yank_text();
-        // Move to start of line, clear to end, then remove the newline so
-        // the next line collapses up.
-        doc.textarea.move_cursor(CursorMove::Head);
-        doc.textarea.delete_line_by_end();
-        // delete_next_char removes the newline; on the last line it's a
-        // no-op which leaves an empty line where the deleted one was. That's
-        // an acceptable quirk — the user can hit Ctrl+D again to remove it,
-        // or move up and delete the previous newline.
-        doc.textarea.delete_next_char();
-        doc.textarea.set_yank_text(saved_yank);
-        doc.dirty = true;
+        if delete_whole_line(&mut doc.textarea) {
+            doc.dirty = true;
+        }
     }
 
     /// Delete from the cursor to the end of the current line. Used by both
@@ -544,10 +535,11 @@ impl super::App {
                 "no paragraph open — open one first, then F3 to replace its body".into();
             return;
         };
-        let mut new_textarea = TextArea::new(body_to_lines(&body));
-        new_textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
-        new_textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
-        doc.textarea = new_textarea;
+        if doc.read_only {
+            self.status = "Help is read-only — file not loaded".into();
+            return;
+        }
+        doc.textarea = editor_textarea(body_to_lines(&body), self.cfg.editor.tab_width);
         doc.dirty = true;
         doc.scroll_row = 0;
         doc.scroll_col = 0;
@@ -626,9 +618,7 @@ impl super::App {
 
         let lines = body_to_lines(&body);
         let saved_lines = lines.clone();
-        let mut textarea = TextArea::new(lines);
-        textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
-        textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
+        let mut textarea = editor_textarea(lines, self.cfg.editor.tab_width);
 
         let read_only = self.hierarchy.ancestors(node).iter().any(|a| {
             a.protected && a.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_HELP)
@@ -1156,9 +1146,7 @@ impl super::App {
         };
         let lines = body_to_lines(&body);
         let saved_lines = lines.clone();
-        let mut textarea = TextArea::new(lines);
-        textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
-        textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
+        let mut textarea = editor_textarea(lines, self.cfg.editor.tab_width);
         let read_only = self.hierarchy.ancestors(&node).iter().any(|a| {
             a.protected && a.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_HELP)
         });
@@ -1935,4 +1923,131 @@ fn read_selection_text(textarea: &tui_textarea::TextArea<'static>) -> String {
         }
     }
     out
+}
+
+/// Undo depth of an editor buffer. tui-textarea's default is 50 edits — one
+/// per keystroke, i.e. less than a sentence of typing before `Ctrl+U` stops.
+pub(super) const EDITOR_UNDO_DEPTH: usize = 1000;
+
+/// The settings every editor-pane buffer must carry: `Tab` indents by
+/// `editor.tab_width` (soft tabs, as the config documents) and the undo
+/// history is deep enough for real writing. Every site that builds a
+/// `TextArea` for the editor pane goes through this (or [`editor_textarea`]).
+pub(super) fn configure_editor_textarea(ta: &mut TextArea<'static>, tab_width: usize) {
+    ta.set_tab_length(tab_width.clamp(1, 16) as u8);
+    ta.set_max_histories(EDITOR_UNDO_DEPTH);
+}
+
+/// A fully configured editor-pane buffer over `lines`.
+pub(super) fn editor_textarea(lines: Vec<String>, tab_width: usize) -> TextArea<'static> {
+    let mut ta = TextArea::new(lines);
+    ta.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
+    ta.set_line_number_style(Style::default().fg(Color::DarkGray));
+    configure_editor_textarea(&mut ta, tab_width);
+    ta
+}
+
+/// Delete the cursor's whole line — content plus its newline — so the next
+/// line takes its place. On the last line the content is cleared and the (now
+/// empty) line remains. The yank buffer is preserved. Returns whether the
+/// buffer changed. Shared by `Ctrl+D` and the Bund word `ink.editor.delete_line`.
+pub(super) fn delete_whole_line(ta: &mut TextArea<'static>) -> bool {
+    let saved_yank = ta.yank_text();
+    let (row, _) = ta.cursor();
+    let was_empty = ta.lines().get(row).is_some_and(|l| l.is_empty());
+    ta.move_cursor(CursorMove::Head);
+    let mut changed = false;
+    // On an empty line `delete_line_by_end` already swallows the newline (it
+    // falls through to "delete next char"), and a second delete would then eat
+    // the following line's first character — so clear content only when there
+    // is some, and let the single `delete_next_char` take the newline.
+    if !was_empty {
+        changed |= ta.delete_line_by_end();
+    }
+    changed |= ta.delete_next_char();
+    ta.set_yank_text(saved_yank);
+    changed
+}
+
+#[cfg(test)]
+mod editor_buffer_tests {
+    use super::{configure_editor_textarea, delete_whole_line, editor_textarea, EDITOR_UNDO_DEPTH};
+    use tui_textarea::{CursorMove, TextArea};
+
+    fn ta(lines: &[&str]) -> TextArea<'static> {
+        TextArea::new(lines.iter().map(|s| s.to_string()).collect())
+    }
+
+    #[test]
+    fn delete_whole_line_removes_a_middle_line_and_its_newline() {
+        let mut t = ta(&["alpha", "beta", "gamma"]);
+        t.move_cursor(CursorMove::Jump(1, 2));
+        assert!(delete_whole_line(&mut t));
+        assert_eq!(t.lines(), &["alpha", "gamma"]);
+        assert_eq!(t.cursor(), (1, 0));
+    }
+
+    #[test]
+    fn delete_whole_line_on_an_empty_line_keeps_the_next_line_intact() {
+        let mut t = ta(&["alpha", "", "gamma"]);
+        t.move_cursor(CursorMove::Jump(1, 0));
+        assert!(delete_whole_line(&mut t));
+        assert_eq!(t.lines(), &["alpha", "gamma"]);
+    }
+
+    #[test]
+    fn delete_whole_line_on_the_last_line_clears_it() {
+        let mut t = ta(&["alpha", "beta"]);
+        t.move_cursor(CursorMove::Jump(1, 3));
+        assert!(delete_whole_line(&mut t));
+        assert_eq!(t.lines(), &["alpha", ""]);
+        // A lone empty last line: nothing to do, nothing reported.
+        assert!(!delete_whole_line(&mut t));
+        assert_eq!(t.lines(), &["alpha", ""]);
+    }
+
+    #[test]
+    fn delete_whole_line_preserves_the_yank_buffer() {
+        let mut t = ta(&["alpha", "beta"]);
+        t.set_yank_text("kept");
+        delete_whole_line(&mut t);
+        assert_eq!(t.yank_text(), "kept");
+    }
+
+    #[test]
+    fn editor_textarea_honours_tab_width_and_deepens_undo() {
+        let t = editor_textarea(vec!["".into()], 2);
+        assert_eq!(t.tab_length(), 2);
+        assert_eq!(t.max_histories(), EDITOR_UNDO_DEPTH);
+        let mut t = ta(&[""]);
+        configure_editor_textarea(&mut t, 0);
+        assert_eq!(t.tab_length(), 1, "tab_width 0 is clamped, never a dead Tab key");
+        configure_editor_textarea(&mut t, 99);
+        assert_eq!(t.tab_length(), 16);
+    }
+
+    #[test]
+    fn tab_key_inserts_tab_width_spaces() {
+        let mut t = editor_textarea(vec!["".into()], 2);
+        let input: tui_textarea::Input = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Tab,
+            crossterm::event::KeyModifiers::NONE,
+        )
+        .into();
+        t.input_without_shortcuts(input);
+        assert_eq!(t.lines()[0], "  ");
+    }
+
+    #[test]
+    fn undo_covers_a_typed_sentence() {
+        let mut t = editor_textarea(vec!["".into()], 2);
+        let sentence = "The quick brown fox jumps over the lazy dog and keeps on running far away.";
+        for c in sentence.chars() {
+            t.insert_char(c);
+        }
+        for _ in 0..sentence.chars().count() {
+            t.undo();
+        }
+        assert_eq!(t.lines()[0], "");
+    }
 }

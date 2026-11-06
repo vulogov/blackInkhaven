@@ -167,7 +167,7 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+Z v` (editor) | (3.7) **Vertical block-select mode** — anchor a rectangular selection at the cursor, then extend it with **plain arrow keys** (no modifier). `c` / `Enter` copy the block to the clipboard and exit; `Esc` (or any other key) cancels. The terminal-independent replacement for `Alt`+arrows block selection — plain arrows always arrive, and it dodges the `Alt+Left`/`Alt+Right` back-forward collision. Mnemonic: **v** for **V**ertical (`v` is free under `Ctrl+Z`). See §3.4. | `editor.block_select` |
 | `Ctrl+Z g` (editor) | (3.7) **Go to line** — prompt for a line number and jump the cursor there, centred in the viewport (clamped to the buffer). Handy for chasing a Typst compile-error / diagnostic line (the gutter marks diagnostic lines with a red ●). Enter jumps, Esc cancels. Mnemonic: **g** for Goto. | `editor.goto_line` |
 | `Ctrl+Z w` (editor) | (3.7) **Toggle soft-wrap** — flip word-wrap display for the open buffer at runtime (session-only; the persisted default is `editor.wrap`). Switches between reading wrapped prose and editing unwrapped code/tables without editing config + restarting. Mnemonic: **w** for Wrap. | `editor.toggle_wrap` |
-| `Ctrl+Z t` (editor) | (3.7) **Strip trailing whitespace** — remove trailing spaces/tabs from every line as ONE undoable edit (`Ctrl+U` reverts). Cleans the noisy diffs `Ctrl+V ?` reports. Mnemonic: **t** for Trim. | `editor.strip_trailing_ws` |
+| `Ctrl+Z t` (editor) | (3.7) **Strip trailing whitespace** — remove trailing spaces/tabs from every line (`Ctrl+U` twice reverts it — the trim is recorded as a cut plus an insert). Cleans the noisy diffs `Ctrl+V ?` reports. Mnemonic: **t** for Trim. | `editor.strip_trailing_ws` |
 | `Ctrl+Z m` (editor) | (3.7) **Jump to matching bracket** — move the cursor to the `()`, `[]`, or `{}` pairing the bracket at or just before the cursor, across lines and respecting nesting. Balances `#figure(...)`, `#footnote[...]`, `#table(...)`. Mnemonic: **m** for Match. (3.8) Whenever the cursor sits on a bracket, it and its partner are **underlined** automatically — no keypress needed. | `editor.match_bracket` |
 | `Ctrl+Z c` (editor) | (1.2.14) **Add inline comment** — anchor an editorial comment to the current selection's character range (or the word at the cursor); pops a multi-line body input; writes a sidecar `<paragraph>.comments.json` beside the `.typ` (travels with the prose in git, diffs cleanly). Commented spans render underlined + italic; the editor footer surfaces `comment by <author> · <age>`. Char-offset anchors for UTF-8 safety. **Moved here from `Ctrl+V c`** (which the 1.6.19+ LOCI citation check now owns and used to shadow this). Mnemonic: **c** for Comment (`c` / `Shift+C` are free under `Ctrl+Z`). | `view.add_comment` |
 | `Ctrl+Z Shift+C` | (1.2.14) **Comments panel** — project-wide panel over every `.comments.json` sidecar (breadcrumb / author / age / snippet / `(N/M in ¶)`). Panel chords: ↑↓ navigate, Enter jump to the comment span, `r` resolve, `R` toggle resolved-filter, `d` delete, `/` filter, `a` AI digest, `Esc` close. **Moved here from `Ctrl+V Shift+C`** (now the sourcing check). | `view.comments_panel` |
@@ -428,7 +428,7 @@ trigger (idle/quit/switch) won't catch the same change twice.
 | `↑` / `↓`            | One line up / down.                                         |
 | `Home`               | **(3.7) Smart Home** — first press jumps to the first non-blank column; a second press (already there) jumps to column 0. `Shift+Home` still extends selection to line start. |
 | `End`                | End of current line.                                        |
-| `PageUp` / `PageDown`| One viewport up / down (tui-textarea internal).             |
+| `PageUp` / `PageDown`| One viewport up / down (the editor's visible height); `Shift` extends the selection. |
 | `Ctrl+←`             | Previous word boundary.                                     |
 | `Ctrl+→`             | Next word boundary.                                         |
 | `Ctrl+Home`          | Top of document.                                            |
@@ -467,6 +467,9 @@ each operation lives on a distinct key with no overlap.
 
 The line-targeted delete shortcuts (§3.11) all preserve the yank buffer so
 they don't clobber clipboard state.
+
+Undo history holds the last 1000 edits of the open paragraph (one keystroke
+is one edit; 3.19 — it was tui-textarea's default of 50).
 
 If `arboard::Clipboard::new()` fails at startup (typical on headless or some
 Wayland setups), copy/cut/paste silently fall back to tui-textarea's
@@ -515,8 +518,8 @@ clipboard. Each saves and restores the yank buffer around the operation, so
 | Key       | Action                                                                 |
 | --------- | ---------------------------------------------------------------------- |
 | `Ctrl+D`  | **Delete current line** — removes the entire line + its trailing newline; cursor lands on the line that takes its place. On the very last line, the content is cleared and an empty line remains (no newline to delete). |
-| `Ctrl+E`  | **Delete to end of line** — removes from the cursor to the line end.   |
-| `Ctrl+W`  | **Delete to start of line** — removes from the cursor back to column 0. |
+| `Ctrl+E`  | **Delete to end of line** — removes from the cursor to the line end; at the very end of a line it joins the next line onto this one (kill-line). |
+| `Ctrl+W`  | **Delete to start of line** — removes from the cursor back to column 0; at column 0 it joins the line onto the previous one. |
 
 *(`Ctrl+Z` is the **Bund-meta prefix** in 1.2+ — runs scripting actions
 like `Ctrl+Z R` run-buffer, `Ctrl+Z N` new-script, `Ctrl+Z E` eval,

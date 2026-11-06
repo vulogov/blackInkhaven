@@ -4557,7 +4557,7 @@ impl App {
         let id = doc.id;
         if let Some(doc) = self.opened.as_mut() {
             let saved_lines = lines.clone();
-            doc.textarea = TextArea::new(lines);
+            doc.textarea = editor_impl::editor_textarea(lines, self.cfg.editor.tab_width);
             doc.saved_lines = saved_lines;
             doc.dirty = false;
             doc.loaded_mtime = Some(on_disk_mtime);
@@ -5559,11 +5559,13 @@ impl App {
     /// the current scroll. Wrapped-line clicks degrade gracefully by
     /// snapping to the closest source row.
     fn mouse_position_editor(&mut self, col: u16, row: u16) {
+        let wrap = self.cfg.editor.wrap;
+        let pane_w = self.layout_editor.width;
+        let inner_x = self.layout_editor.x.saturating_add(1);
+        let inner_y = self.layout_editor.y.saturating_add(1);
         let Some(doc) = self.opened.as_mut() else {
             return;
         };
-        let inner_x = self.layout_editor.x.saturating_add(1);
-        let inner_y = self.layout_editor.y.saturating_add(1);
         if row < inner_y || col < inner_x {
             return;
         }
@@ -5579,30 +5581,18 @@ impl App {
         }
         let rel_row = (row - inner_y) as usize;
         let rel_col = (col - inner_cursor_x) as usize;
-        let src_row = (doc.scroll_row + rel_row).min(total_lines - 1);
-        // R4 — map the clicked terminal CELL to a char index by walking display
-        // widths from the horizontal scroll: a wide (CJK) char occupies 2 cells, so
-        // a click anywhere over it lands on that char. Reduces to
-        // `scroll_col + rel_col` for 1-cell text.
-        let chars: Vec<char> = doc
-            .textarea
-            .lines()
-            .get(src_row)
-            .map(|s| s.chars().collect())
-            .unwrap_or_default();
-        let src_col = {
-            let mut col = doc.scroll_col.min(chars.len());
-            let mut cells = 0usize;
-            while col < chars.len() {
-                let cw = crate::tui::highlight::char_cells(chars[col]).max(1);
-                if cells + cw > rel_col {
-                    break;
-                }
-                cells += cw;
-                col += 1;
-            }
-            col
-        };
+        // Text width = pane − borders(2) − gutter, exactly as the renderer
+        // computes it, so the wrap budget below reproduces its visual rows.
+        let text_width = pane_w.saturating_sub(2).saturating_sub(gutter) as usize;
+        let (src_row, src_col) = click_to_source(
+            doc.textarea.lines(),
+            wrap,
+            doc.scroll_row,
+            doc.scroll_col,
+            rel_row,
+            rel_col,
+            text_width,
+        );
         doc.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(src_row as u16, src_col as u16));
         doc.last_activity = std::time::Instant::now();
@@ -6563,6 +6553,14 @@ impl App {
         // Ctrl+F flow); second press cycles focus → Tree. The Editor/Tree/
         // Search cycle is Editor → Tree → Search → Editor.
         if matches!(key.code, KeyCode::Esc) {
+            // An Alt+arrow block selection is cancelled first — stay in the editor.
+            if let Some(doc) = self.opened.as_mut() {
+                if doc.block_anchor.is_some() {
+                    doc.block_anchor = None;
+                    self.status = "block select: cancelled".into();
+                    return Ok(false);
+                }
+            }
             if self.opened.as_ref().is_some_and(|d| d.search.is_some()) {
                 if let Some(doc) = self.opened.as_mut() {
                     doc.search = None;
@@ -6622,17 +6620,6 @@ impl App {
             }
         }
 
-        if matches!(key.code, KeyCode::Esc) {
-            if let Some(doc) = self.opened.as_mut() {
-                if doc.block_anchor.is_some() {
-                    doc.block_anchor = None;
-                    return Ok(false);
-                }
-            }
-            self.change_focus(Focus::Tree);
-            return Ok(false);
-        }
-
         // Any key other than Alt+arrows clears block selection state.
         if let Some(doc) = self.opened.as_mut() {
             if doc.block_anchor.is_some() && !alt {
@@ -6647,16 +6634,40 @@ impl App {
         // (which we use to silence tui-textarea's emacs defaults) also treats
         // these as shortcuts and drops them — so we route them ourselves.
         // Shift extends a linear selection; plain cancels any selection.
+        // PageUp / PageDown move by one viewport (the editor's visible height),
+        // as documented — not tui-textarea's blank-line paragraph jump, which on
+        // prose (no blank lines inside a paragraph) leapt to the buffer's ends.
+        if !alt && !ctrl && matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
+            let page = (self.layout_editor.height as usize).saturating_sub(2).max(1);
+            if let Some(doc) = self.opened.as_mut() {
+                if shift {
+                    if doc.textarea.selection_range().is_none() {
+                        doc.textarea.start_selection();
+                    }
+                } else {
+                    doc.textarea.cancel_selection();
+                }
+                let step = if matches!(key.code, KeyCode::PageUp) {
+                    CursorMove::Up
+                } else {
+                    CursorMove::Down
+                };
+                for _ in 0..page {
+                    doc.textarea.move_cursor(step);
+                }
+            }
+            return Ok(false);
+        }
         if !alt && !ctrl {
             let cmove = match key.code {
                 KeyCode::Up => Some(CursorMove::Up),
                 KeyCode::Down => Some(CursorMove::Down),
                 KeyCode::Left => Some(CursorMove::Back),
                 KeyCode::Right => Some(CursorMove::Forward),
-                KeyCode::Home => Some(CursorMove::Head),
+                // Plain Home is smart Home (handled below); Shift+Home selects
+                // to the line start.
+                KeyCode::Home if shift => Some(CursorMove::Head),
                 KeyCode::End => Some(CursorMove::End),
-                KeyCode::PageUp => Some(CursorMove::ParagraphBack),
-                KeyCode::PageDown => Some(CursorMove::ParagraphForward),
                 _ => None,
             };
             if let Some(cmove) = cmove {
@@ -6939,8 +6950,9 @@ impl App {
         self.status = format!("soft-wrap: {}{saved}", if on { "on" } else { "off" });
     }
 
-    /// A4 — `Ctrl+Z t`: strip trailing whitespace from every line, as ONE
-    /// undoable edit (select whole buffer → replace with the trimmed text).
+    /// A4 — `Ctrl+Z t`: strip trailing whitespace from every line (select the
+    /// whole buffer → replace with the trimmed text; tui-textarea records that as
+    /// a cut plus an insert, so `Ctrl+U` twice reverts it).
     fn editor_strip_trailing_whitespace(&mut self) {
         let Some(doc) = self.opened.as_mut() else {
             self.status = "strip whitespace: open a paragraph first".into();
@@ -32193,6 +32205,7 @@ impl App {
             after_text.split('\n').map(String::from).collect()
         };
         let mut new_ta = TextArea::new(lines);
+        editor_impl::configure_editor_textarea(&mut new_ta, self.cfg.editor.tab_width);
         new_ta.set_cursor_line_style(
             Style::default().add_modifier(Modifier::REVERSED),
         );
@@ -33949,6 +33962,9 @@ impl App {
         let Some(doc) = self.opened.as_mut() else {
             return Err("no buffer open".into());
         };
+        if doc.read_only {
+            return Err("paragraph is read-only".into());
+        }
         doc.textarea.insert_str(text);
         doc.dirty = true;
         Ok(())
@@ -33968,10 +33984,12 @@ impl App {
         let Some(doc) = self.opened.as_mut() else {
             return Err("no buffer open".into());
         };
-        // Kill the whole line: move to start, delete to end.
-        doc.textarea.move_cursor(tui_textarea::CursorMove::Head);
-        doc.textarea.delete_line_by_end();
-        doc.dirty = true;
+        if doc.read_only {
+            return Err("paragraph is read-only".into());
+        }
+        // The same operation as Ctrl+D: the line AND its newline go, the next
+        // line takes its place, the yank buffer is preserved.
+        self.editor_delete_line();
         Ok(())
     }
 
@@ -33979,6 +33997,9 @@ impl App {
         let Some(doc) = self.opened.as_mut() else {
             return Err("no buffer open".into());
         };
+        if doc.read_only {
+            return Err("paragraph is read-only".into());
+        }
         doc.textarea.delete_line_by_head();
         doc.dirty = true;
         Ok(())
@@ -33988,6 +34009,9 @@ impl App {
         let Some(doc) = self.opened.as_mut() else {
             return Err("no buffer open".into());
         };
+        if doc.read_only {
+            return Err("paragraph is read-only".into());
+        }
         doc.textarea.delete_line_by_end();
         doc.dirty = true;
         Ok(())
@@ -34004,8 +34028,8 @@ impl App {
         }
         let doc = self.opened.as_ref()?;
         for (row, line) in doc.textarea.lines().iter().enumerate() {
-            if let Some(col) = line.find(needle) {
-                return Some((row, col));
+            if let Some(byte) = line.find(needle) {
+                return Some((row, char_col_of_byte(line, byte)));
             }
         }
         None
@@ -34066,10 +34090,7 @@ impl App {
         // original body — same semantics as String::replace.
         let count = old_body.matches(find).count() as i64;
         let lines = body_to_lines(&new_body);
-        let mut ta = TextArea::new(lines);
-        ta.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
-        ta.set_line_number_style(Style::default().fg(Color::DarkGray));
-        doc.textarea = ta;
+        doc.textarea = editor_impl::editor_textarea(lines, self.cfg.editor.tab_width);
         doc.dirty = true;
         doc.last_activity = std::time::Instant::now();
         Ok(count)
@@ -34356,13 +34377,18 @@ impl App {
         if find.is_empty() {
             return Err("find string is empty".into());
         }
-        // Linear scan over lines for the first match.
+        if doc.read_only {
+            return Err("paragraph is read-only".into());
+        }
+        // Linear scan over lines for the first match. `str::find` yields a byte
+        // offset; the cursor API wants a char column (they differ on any
+        // non-ASCII line — Cyrillic prose, typographic quotes, dashes).
         let target: Option<(usize, usize)> = doc
             .textarea
             .lines()
             .iter()
             .enumerate()
-            .find_map(|(r, line)| line.find(find).map(|c| (r, c)));
+            .find_map(|(r, line)| line.find(find).map(|b| (r, char_col_of_byte(line, b))));
         let Some((row, col)) = target else {
             return Ok(false);
         };
@@ -36441,6 +36467,71 @@ fn rect_contains(rect: Rect, col: u16, row: u16) -> bool {
         && row < rect.y.saturating_add(rect.height)
 }
 
+/// Char column of a byte offset inside `line` (`str::find` yields bytes; the
+/// cursor API counts chars — they differ on any non-ASCII line).
+pub(super) fn char_col_of_byte(line: &str, byte: usize) -> usize {
+    line[..byte.min(line.len())].chars().count()
+}
+
+/// Map a click inside the editor's text area to a source `(row, col)`.
+/// `rel_row` / `rel_col` are the clicked cell relative to the first text cell
+/// (after the gutter); `text_width` is the pane's text width in cells.
+///
+/// With soft-wrap on (`editor.wrap`, the default) `scroll_row` counts VISUAL
+/// rows — that is what the wrapped renderer stores — so the visual rows are
+/// rebuilt from the plain text with the very same `wrap_line` budget the
+/// renderer uses, and the click is resolved through them. Without wrap it is a
+/// source row plus the horizontal `scroll_col`. Columns walk display cells so
+/// a wide (CJK) glyph counts as two.
+pub(super) fn click_to_source(
+    lines: &[String],
+    wrap: bool,
+    scroll_row: usize,
+    scroll_col: usize,
+    rel_row: usize,
+    rel_col: usize,
+    text_width: usize,
+) -> (usize, usize) {
+    fn col_at(chars: &[char], start: usize, end: usize, rel_col: usize) -> usize {
+        let mut col = start.min(chars.len());
+        let end = end.min(chars.len());
+        let mut cells = 0usize;
+        while col < end {
+            let cw = super::highlight::char_cells(chars[col]).max(1);
+            if cells + cw > rel_col {
+                break;
+            }
+            cells += cw;
+            col += 1;
+        }
+        col
+    }
+    let total = lines.len().max(1);
+    if !wrap {
+        let src_row = (scroll_row + rel_row).min(total - 1);
+        let chars: Vec<char> = lines
+            .get(src_row)
+            .map(|s| s.chars().collect())
+            .unwrap_or_default();
+        return (src_row, col_at(&chars, scroll_col, chars.len(), rel_col));
+    }
+    let mut visual: Vec<(usize, usize, usize)> = Vec::new();
+    for (r, line) in lines.iter().enumerate() {
+        let run = [super::highlight::StyledRun {
+            text: line.clone(),
+            style: Style::default(),
+        }];
+        for vr in super::highlight::wrap_line(&run, r, text_width) {
+            visual.push((vr.src_row, vr.src_col_start, vr.width_chars));
+        }
+    }
+    let Some(&(r, start, width)) = visual.get((scroll_row + rel_row).min(visual.len().saturating_sub(1))) else {
+        return (0, 0);
+    };
+    let chars: Vec<char> = lines.get(r).map(|s| s.chars().collect()).unwrap_or_default();
+    (r, col_at(&chars, start, start + width, rel_col))
+}
+
 pub(super) fn digit_count(n: usize) -> usize {
     let mut x = n.max(1);
     let mut d = 0;
@@ -36524,6 +36615,7 @@ fn is_read_only_safe_key(key: &KeyEvent) -> bool {
             | Char('t') | Char('T')              // focus Tree alias
             | Char('1') | Char('2') | Char('3') | Char('4') | Char('5') // focus jumps
             | Char('@') | Char('/')              // Ctrl+2 alternates / search focus
+            | Char('g') | Char('G')              // previous search match
         );
     }
     false
@@ -37385,5 +37477,86 @@ mod multiplexer_tests {
         assert!(multiplexer_env(false, false, Some("tmux-256color")));
         assert!(!multiplexer_env(false, false, Some("xterm-kitty")));
         assert!(!multiplexer_env(false, false, None));
+    }
+}
+
+#[cfg(test)]
+mod editor_widget_tests {
+    use super::{char_col_of_byte, click_to_source, is_read_only_safe_key};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn char_col_of_byte_counts_chars_not_bytes() {
+        let line = "Привет мир";
+        assert_eq!(char_col_of_byte(line, line.find("мир").unwrap()), 7);
+        assert_eq!(char_col_of_byte("hello world", 6), 6);
+        assert_eq!(char_col_of_byte("abc", 99), 3, "past the end clamps instead of panicking");
+    }
+
+    #[test]
+    fn click_to_source_follows_wrapped_rows() {
+        // One 50-char prose line wrapped at width 20 → three visual rows
+        // (word-wrap breaks after a space, so rows are ≤ 20 cells).
+        let lines = vec![
+            "the quick brown fox jumps over the lazy dog again".to_string(),
+            "second line".to_string(),
+        ];
+        // Second visual row of line 0 at its first cell.
+        let (r, c) = click_to_source(&lines, true, 0, 0, 1, 0, 20);
+        assert_eq!(r, 0, "a wrapped continuation row still belongs to source row 0");
+        assert!(c >= 15 && c <= 20, "column {c} must be in the second wrapped segment");
+        assert_eq!(&lines[0][c..].chars().take(5).collect::<String>(), "jumps");
+        // The row after line 0's last visual row is source line 1.
+        let n_rows_line0 = (0..).find(|&i| click_to_source(&lines, true, 0, 0, i, 0, 20).0 == 1).unwrap();
+        assert_eq!(n_rows_line0, 3);
+        assert_eq!(click_to_source(&lines, true, 0, 0, 3, 7, 20), (1, 7));
+        // scroll_row is a visual row when wrapping: scrolled by one, the first
+        // terminal row shows the continuation.
+        assert_eq!(click_to_source(&lines, true, 1, 0, 0, 0, 20).0, 0);
+        assert_eq!(click_to_source(&lines, true, 1, 0, 2, 0, 20), (1, 0));
+        // Clicking past the end of the buffer lands on the last row.
+        assert_eq!(click_to_source(&lines, true, 0, 0, 40, 0, 20).0, 1);
+    }
+
+    #[test]
+    fn click_to_source_without_wrap_uses_source_rows_and_horizontal_scroll() {
+        let lines = vec!["abcdefghij".to_string(), "second".to_string()];
+        assert_eq!(click_to_source(&lines, false, 0, 0, 1, 3, 80), (1, 3));
+        assert_eq!(click_to_source(&lines, false, 0, 4, 0, 2, 80), (0, 6));
+        assert_eq!(click_to_source(&lines, false, 0, 0, 0, 50, 80), (0, 10), "past the line end → end of line");
+        assert_eq!(click_to_source(&lines, false, 5, 5, 0, 0, 80).0, 1, "scroll past the end clamps");
+    }
+
+    #[test]
+    fn click_to_source_counts_wide_glyphs_as_two_cells() {
+        let lines = vec!["中中中x".to_string()];
+        assert_eq!(click_to_source(&lines, false, 0, 0, 0, 1, 80), (0, 0), "second cell of a wide glyph is that glyph");
+        assert_eq!(click_to_source(&lines, false, 0, 0, 0, 2, 80), (0, 1));
+        assert_eq!(click_to_source(&lines, false, 0, 0, 0, 6, 80), (0, 3));
+    }
+
+    #[test]
+    fn read_only_gate_lets_navigation_through() {
+        let nav = [
+            (KeyCode::Left, KeyModifiers::CONTROL),
+            (KeyCode::Right, KeyModifiers::CONTROL),
+            (KeyCode::Home, KeyModifiers::CONTROL),
+            (KeyCode::End, KeyModifiers::CONTROL),
+            (KeyCode::Char('g'), KeyModifiers::CONTROL),
+            (KeyCode::Char('x'), KeyModifiers::CONTROL),
+            (KeyCode::Char('f'), KeyModifiers::CONTROL),
+        ];
+        for (c, m) in nav {
+            assert!(is_read_only_safe_key(&KeyEvent::new(c, m)), "{m:?}+{c:?} is navigation");
+        }
+        for (c, m) in [
+            (KeyCode::Char('p'), KeyModifiers::CONTROL),
+            (KeyCode::Char('k'), KeyModifiers::CONTROL),
+            (KeyCode::Char('d'), KeyModifiers::CONTROL),
+            (KeyCode::Char('a'), KeyModifiers::NONE),
+            (KeyCode::Backspace, KeyModifiers::NONE),
+        ] {
+            assert!(!is_read_only_safe_key(&KeyEvent::new(c, m)), "{m:?}+{c:?} mutates");
+        }
     }
 }

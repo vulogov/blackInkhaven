@@ -131,6 +131,7 @@ impl super::App {
                 corrected.split('\n').map(String::from).collect()
             };
             let mut new_ta = TextArea::new(corrected_lines);
+            super::editor_impl::configure_editor_textarea(&mut new_ta, self.cfg.editor.tab_width);
             new_ta.set_cursor_line_style(
                 Style::default().add_modifier(Modifier::REVERSED),
             );
