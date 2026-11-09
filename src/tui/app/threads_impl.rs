@@ -308,7 +308,7 @@ impl App {
     /// Snapshot the current picker state into the
     /// new sub-modal's `return_to`; compute the
     /// chapter list + per-cell paragraph grid.
-    fn open_thread_weave_view(&mut self) {
+    pub(super) fn open_thread_weave_view(&mut self) {
         let threads: Vec<ThreadsPickerEntry> = match &self.modal {
             Modal::ThreadsPicker { entries, .. } => entries.clone(),
             _ => return,

@@ -13,6 +13,15 @@ pub struct TextInput {
     multiline: bool,
 }
 
+impl From<&str> for TextInput {
+    /// A single-line buffer holding `s` with the cursor after its last char.
+    fn from(s: &str) -> Self {
+        let mut t = Self::new();
+        t.insert_str(s);
+        t
+    }
+}
+
 impl TextInput {
     pub fn new() -> Self {
         Self::default()

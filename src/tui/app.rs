@@ -2111,7 +2111,7 @@ pub(crate) struct App {
     /// typed chars edit the filter (D/V/Enter chord keys
     /// route into the filter instead of firing actions).
     /// Reset to defaults each `open_snapshot_picker`.
-    snapshot_filter: String,
+    snapshot_filter: TextInput,
     snapshot_filter_focused: bool,
     /// 1.2.8+ — embedded nushell.  `None` until first
     /// `Ctrl+Z o` opens the pane (lazy init); persists
@@ -2490,6 +2490,10 @@ pub(crate) struct App {
     /// typed (the filter text itself lives in `outline_state.filter_str`).
     /// Transient: Esc exits editing (keeping the filter), a second Esc closes.
     pub(super) outline_editing_filter: bool,
+    /// 3.19 — the edit buffer behind `outline_state.filter_str` while the
+    /// filter is being typed (gives the filter the shared text-box chords and
+    /// a movable cursor; `filter_str` is synced after every key).
+    pub(super) outline_filter_input: TextInput,
 
     /// RAG context block (e.g. a place/character lookup) that the next
     /// AI-prompt submission should prepend to the user's typed query.
@@ -2693,6 +2697,8 @@ mod tag_impl;
 mod threads_impl;
 mod timeline_impl;
 mod tree_impl;
+#[cfg(test)]
+mod modal_probe;
 
 /// The next rung in the leaf-type morph cycle (`t`/`T` in the Tree pane, and
 /// `Ctrl+B M`). Single source of truth for both the single-node and bulk paths
@@ -3883,7 +3889,7 @@ impl App {
             help_query_history: Vec::new(),
             help_query_history_cursor: None,
             help_query_draft: None,
-            snapshot_filter: String::new(),
+            snapshot_filter: TextInput::new(),
             snapshot_filter_focused: false,
             shell_engine: None,
             shell_history: Vec::new(),
@@ -3954,6 +3960,7 @@ impl App {
             outline_state: None,
             para_clipboard: None,
             outline_editing_filter: false,
+            outline_filter_input: TextInput::new(),
             pending_rag_prefix: None,
             layout_search: Rect::default(),
             layout_tree: Rect::default(),
@@ -4986,6 +4993,13 @@ impl App {
                         let suggestions = parse_ai_thesaurus(&raw, &word);
                         if suggestions.is_empty() {
                             self.status = format!("`{word}` — no thesaurus suggestions ({lang} · AI)");
+                        } else if !matches!(self.modal, Modal::None) {
+                            // The user moved on to another panel while the
+                            // AI call was in flight — never replace it.
+                            self.status = format!(
+                                "thesaurus: {} suggestion(s) for `{word}` arrived while another panel was open — close it and ask again",
+                                suggestions.len()
+                            );
                         } else {
                             let panel = super::wordnet_panel::WordnetPanel::new(
                                 word,
@@ -15102,13 +15116,11 @@ impl App {
                     let n = state.visible_rows(&self.hierarchy).len();
                     self.status = format!("outline: filter `{}` · {n} match(es)", state.filter_str);
                 }
-                KeyCode::Backspace => {
-                    state.filter_str.pop();
+                _ => {
+                    if handle_text_input_key(&mut self.outline_filter_input, key) {
+                        state.filter_str = self.outline_filter_input.as_str().to_string();
+                    }
                 }
-                KeyCode::Char(c) => {
-                    state.filter_str.push(c);
-                }
-                _ => {}
             }
             let rows = state.visible_rows(&self.hierarchy);
             state.reanchor_cursor(&rows, 0);
@@ -15121,6 +15133,8 @@ impl App {
             // Enter filter-edit mode.
             KeyCode::Char('/') => {
                 self.outline_editing_filter = true;
+                let n = state.filter_str.chars().count();
+                self.outline_filter_input.set_with_cursor(state.filter_str.clone(), n);
                 self.outline_state = Some(state);
                 self.status = "outline filter: type to narrow · Enter apply · Esc exit".into();
                 return true;
@@ -21173,7 +21187,7 @@ impl App {
         self.modal = Modal::LangInsert {
             language: lang_book.title.clone(),
             entries,
-            query: String::new(),
+            query: TextInput::new(),
             cursor: 0,
             trigger: (row, start, col),
         };
@@ -21188,7 +21202,7 @@ impl App {
         if query.is_empty() {
             return (0..entries.len()).collect();
         }
-        let q = query.to_lowercase();
+        let q = query.as_str().to_lowercase();
         entries
             .iter()
             .enumerate()
@@ -21216,18 +21230,6 @@ impl App {
                     }
                 }
             }
-            KeyCode::Backspace => {
-                if let Modal::LangInsert { query, cursor, .. } = &mut self.modal {
-                    query.pop();
-                    *cursor = 0;
-                }
-            }
-            KeyCode::Char(c) => {
-                if let Modal::LangInsert { query, cursor, .. } = &mut self.modal {
-                    query.push(c);
-                    *cursor = 0;
-                }
-            }
             KeyCode::Enter => {
                 let (word, trigger) = {
                     let Modal::LangInsert { entries, trigger, cursor, .. } = &self.modal else {
@@ -21241,7 +21243,15 @@ impl App {
                 self.modal = Modal::None;
                 self.lang_insert_replace(trigger, &word);
             }
-            _ => {}
+            _ => {
+                // Shared one-line text-box chords; the cursor re-anchors on
+                // every change because the match list shrinks or grows.
+                if let Modal::LangInsert { query, cursor, .. } = &mut self.modal {
+                    if handle_text_input_key(query, key) {
+                        *cursor = 0;
+                    }
+                }
+            }
         }
         true
     }
@@ -23638,6 +23648,20 @@ impl App {
         else {
             return false;
         };
+        // 3.19 — `/` opens the filter box. While it has focus every key is
+        // the shared one-line text-box chord set and Enter leaves it (Esc
+        // too: the dispatcher's Esc preamble unfocuses first and closes the
+        // picker on a second Esc). Picker letters only fire outside filter
+        // mode, so a filter may start with any character — `d` included.
+        if state.filter_focused {
+            match key.code {
+                KeyCode::Enter => state.filter_focused = false,
+                _ => {
+                    state.filter_key(key);
+                }
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = super::modal::Modal::None;
@@ -23672,25 +23696,21 @@ impl App {
                 }
                 true
             }
+            KeyCode::Char('/') => {
+                state.filter_focused = true;
+                true
+            }
             KeyCode::Backspace => {
                 state.pop_filter_char();
                 true
             }
-            KeyCode::Char('d') if state.filter.is_empty() => {
-                // Remove the selected voice's files +
-                // update LRU.  Only acts when a filter
-                // isn't in progress so 'd' doesn't
-                // accidentally collide with type-to-
-                // filter.
+            KeyCode::Char('d') | KeyCode::Char('D') => {
+                // Remove the selected voice's files + update LRU.
                 self.tts_voice_picker_remove();
                 true
             }
             KeyCode::Enter => {
                 self.tts_voice_picker_commit();
-                true
-            }
-            KeyCode::Char(c) => {
-                state.push_filter_char(c);
                 true
             }
             _ => false,
@@ -27146,9 +27166,10 @@ impl App {
     fn status_filter_handle_key(&mut self, key: KeyEvent) -> bool {
         // Navigation-only branches first; status cycling has its own
         // path because it needs the full `self` borrow.
+        let plain = !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
         let advance: Option<bool> = match key.code {
-            KeyCode::Char('r') | KeyCode::Char('R') => Some(true),
-            KeyCode::Char('-') | KeyCode::Backspace => Some(false),
+            KeyCode::Char('r') | KeyCode::Char('R') if plain => Some(true),
+            KeyCode::Char('-') | KeyCode::Backspace if plain => Some(false),
             _ => None,
         };
         if let Some(forward) = advance {
@@ -29093,8 +29114,40 @@ impl App {
                 self.modal = Modal::None;
                 return Ok(false);
             }
-            self.modal = Modal::None;
-            return Ok(false);
+            // F6 picker: Esc while the `/` filter has focus only leaves the
+            // filter (the picker stays open); a second Esc closes.
+            if self.snapshot_filter_focused && matches!(self.modal, Modal::SnapshotPicker { .. }) {
+                self.snapshot_filter_focused = false;
+                return Ok(false);
+            }
+            // Voice picker: same staging for its `/` filter.
+            if let Modal::TtsVoicePicker { state } = &mut self.modal {
+                if state.filter_focused {
+                    state.filter_focused = false;
+                    return Ok(false);
+                }
+            }
+            // 3.19 — these modals own their Esc: staged discards (HJSON,
+            // comment and footnote editors), overlays that close before the
+            // pane does (shell help, HJSON restart notice) and sub-modes that
+            // step back instead of closing (plan scene board / beat mapping,
+            // world proposals → overview, canon commit → dashboard). Their
+            // handlers run below; each closes on a bare Esc itself. Every
+            // other modal closes here.
+            let owns_esc = matches!(
+                self.modal,
+                Modal::HjsonEditor { .. }
+                    | Modal::CommentEditor { .. }
+                    | Modal::FootnoteEditor { .. }
+                    | Modal::ShellPane { .. }
+                    | Modal::PlanOutline { .. }
+                    | Modal::WorldProposals { .. }
+                    | Modal::CanonCommit { .. }
+            );
+            if !owns_esc {
+                self.modal = Modal::None;
+                return Ok(false);
+            }
         }
 
         let is_adding = matches!(self.modal, Modal::Adding { .. });
@@ -30121,20 +30174,17 @@ impl App {
                         // that.  Mirrors browser address-bar UX.
                         self.snapshot_filter_focused = false;
                     }
-                    KeyCode::Backspace => {
-                        self.snapshot_filter.pop();
-                        // Reset cursor — visible list shrunk/grew.
-                        if let Modal::SnapshotPicker { cursor, .. } = &mut self.modal {
-                            *cursor = 0;
+                    _ => {
+                        // 3.19 — the shared one-line text-box chord set
+                        // (cursor moves, word kills, Ctrl+U/K); a Ctrl+letter
+                        // never lands as filter text.
+                        if handle_text_input_key(&mut self.snapshot_filter, key) {
+                            // Reset cursor — visible list shrunk/grew.
+                            if let Modal::SnapshotPicker { cursor, .. } = &mut self.modal {
+                                *cursor = 0;
+                            }
                         }
                     }
-                    KeyCode::Char(c) => {
-                        self.snapshot_filter.push(c);
-                        if let Modal::SnapshotPicker { cursor, .. } = &mut self.modal {
-                            *cursor = 0;
-                        }
-                    }
-                    _ => {}
                 }
                 return Ok(false);
             }
@@ -30226,8 +30276,11 @@ impl App {
                 self.commit_add();
             }
         } else if is_deleting {
+            // A chorded Enter (Ctrl/Alt) is never a confirmation — a stray
+            // chord aimed at another pane must not delete a subtree.
+            let plain = !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
             match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => self.commit_delete(),
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter if plain => self.commit_delete(),
                 KeyCode::Char('n') | KeyCode::Char('N') => self.modal = Modal::None,
                 _ => {}
             }

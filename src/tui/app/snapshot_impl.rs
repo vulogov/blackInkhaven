@@ -225,7 +225,7 @@ impl super::App {
                     entries,
                     cursor: 0,
                     scroll: 0,
-                    filter: String::new(),
+                    filter: super::super::input::TextInput::new(),
                     filter_focused: false,
                 };
                 self.status = format!(
@@ -262,7 +262,7 @@ impl super::App {
             Modal::SnapshotBrowser {
                 entries, cursor, filter, ..
             } => {
-                let visible = browser_visible_indices(entries, filter);
+                let visible = browser_visible_indices(entries, filter.as_str());
                 let Some(&abs) = visible.get(*cursor) else { return };
                 let Some((t, s)) = entries.get(abs) else { return };
                 (s.id, s.parent_id, s.created_at, t.clone())
@@ -305,7 +305,7 @@ impl super::App {
             Modal::SnapshotBrowser {
                 entries, cursor, filter, ..
             } => {
-                let visible = browser_visible_indices(entries, filter);
+                let visible = browser_visible_indices(entries, filter.as_str());
                 let Some(&abs) = visible.get(*cursor) else { return };
                 let Some((_, s)) = entries.get(abs) else { return };
                 s.parent_id
@@ -334,17 +334,13 @@ impl super::App {
                     // Esc-while-filtering is intercepted upstream (it
                     // unfocuses); Enter confirms the filter here.
                     KeyCode::Enter => *filter_focused = false,
-                    KeyCode::Backspace => {
-                        filter.pop();
-                        *cursor = 0;
-                        *scroll = 0;
+                    _ => {
+                        // 3.19 — shared one-line text-box chords.
+                        if super::handle_text_input_key(filter, key) {
+                            *cursor = 0;
+                            *scroll = 0;
+                        }
                     }
-                    KeyCode::Char(c) => {
-                        filter.push(c);
-                        *cursor = 0;
-                        *scroll = 0;
-                    }
-                    _ => {}
                 }
             }
             return;
@@ -359,7 +355,7 @@ impl super::App {
             KeyCode::Enter => self.snapshot_browser_jump(),
             KeyCode::Up | KeyCode::Down | KeyCode::Home | KeyCode::End => {
                 if let Modal::SnapshotBrowser { entries, cursor, filter, .. } = &mut self.modal {
-                    let n = browser_visible_indices(entries, filter).len();
+                    let n = browser_visible_indices(entries, filter.as_str()).len();
                     if n == 0 {
                         return;
                     }
@@ -389,7 +385,7 @@ impl super::App {
         if self.snapshot_filter.is_empty() {
             return (0..snaps.len()).collect();
         }
-        let needle = self.snapshot_filter.to_lowercase();
+        let needle = self.snapshot_filter.as_str().to_lowercase();
         snaps
             .iter()
             .enumerate()

@@ -23,6 +23,10 @@ use crate::store::InsertPosition;
 
 use super::super::modal::Modal;
 
+/// Smallest frame on which a modal is painted at all (see `draw_modal`).
+pub(in crate::tui::app) const MODAL_MIN_WIDTH: u16 = 32;
+pub(in crate::tui::app) const MODAL_MIN_HEIGHT: u16 = 8;
+
 impl super::App {
 
     pub(super) fn render_template(&self, template: &str) -> String {
@@ -36,6 +40,32 @@ impl super::App {
     }
 
     pub(super) fn draw_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        // 3.19 — a frame too small for any panel: draw a one-line notice
+        // instead of letting a clipped overlay index outside the buffer
+        // (every painter below fits its rect to `area`, but their inner
+        // layouts assume at least this much room).
+        if area.width < MODAL_MIN_WIDTH || area.height < MODAL_MIN_HEIGHT {
+            if matches!(self.modal, Modal::None) {
+                return;
+            }
+            let rect = Rect {
+                x: area.x,
+                y: area.y + area.height / 2,
+                width: area.width,
+                height: 1.min(area.height),
+            };
+            f.render_widget(ratatui::widgets::Clear, rect);
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    " window too small for this panel · enlarge it or press Esc ",
+                    Style::default()
+                        .fg(self.theme.modal_border)
+                        .add_modifier(Modifier::BOLD),
+                ))),
+                rect,
+            );
+            return;
+        }
         // The file picker needs a much larger panel than the fixed
         // 80-wide / 8-high box used for confirms — give it its own renderer.
         if let Modal::FilePicker(picker) = &self.modal {
@@ -424,7 +454,7 @@ impl super::App {
         let height: u16 = 8;
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         // 1.2.15+ Phase S.1 — the early-dispatch chain
@@ -1110,10 +1140,12 @@ impl super::App {
                 let mut body: Vec<Line> = Vec::with_capacity(visible.len() + 4);
                 // Filter input row.  Always shown so the affordance
                 // is discoverable.  Highlighted when focused.
-                let filter_text = if self.snapshot_filter.is_empty() {
+                let filter_text = if self.snapshot_filter_focused {
+                    format!("/ {}", self.snapshot_filter.render_with_cursor('│'))
+                } else if self.snapshot_filter.is_empty() {
                     "/ (filter annotations)".to_string()
                 } else {
-                    format!("/ {}", self.snapshot_filter)
+                    format!("/ {}", self.snapshot_filter.as_str())
                 };
                 let filter_style = if self.snapshot_filter_focused {
                     Style::default()

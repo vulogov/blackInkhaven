@@ -163,7 +163,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = " Book info · Ctrl+B I ".to_string();
@@ -245,7 +245,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(10);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -296,11 +296,11 @@ impl super::super::App {
         let footer_lines = 2;
         // +1 for the "Verse" section separator.
         let height = (header_lines + types.len() + 1 + footer_lines + 2) as u16;
-        let height = height.clamp(8, area.height.saturating_sub(2));
-        let width = 48u16.clamp(40, area.width.saturating_sub(6));
+        let height = height.max(8).min(area.height.saturating_sub(2));
+        let width = 48u16.max(40).min(area.width.saturating_sub(6));
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -363,14 +363,14 @@ impl super::super::App {
         let lib = crate::poetry::form::FormsLibrary::builtin();
         let forms = lib.all();
 
-        let width = 60u16.clamp(44, area.width.saturating_sub(6));
+        let width = 60u16.max(44).min(area.width.saturating_sub(6));
         let max_rows = area.height.saturating_sub(8).max(6) as usize;
         let visible = forms.len().min(max_rows);
         let height = (visible + 6) as u16;
-        let height = height.clamp(10, area.height.saturating_sub(2));
+        let height = height.max(10).min(area.height.saturating_sub(2));
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -459,11 +459,11 @@ impl super::super::App {
                 .unwrap_or_default()
         };
 
-        let width = area.width.saturating_sub(6).clamp(48, area.width);
-        let height = area.height.saturating_sub(4).clamp(10, area.height);
+        let width = area.width.saturating_sub(6).max(48).min(area.width);
+        let height = area.height.saturating_sub(4).max(10).min(area.height);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
@@ -603,7 +603,7 @@ impl super::super::App {
         let footer_lines = 2; // blank + hint
         let body_lines = providers.len();
         let height = (header_lines + body_lines + footer_lines + 2) as u16;
-        let height = height.clamp(8, area.height.saturating_sub(2));
+        let height = height.max(8).min(area.height.saturating_sub(2));
 
         // Widest provider name + model for column alignment.
         let max_name = providers.iter().map(|p| p.chars().count()).max().unwrap_or(8);
@@ -613,11 +613,11 @@ impl super::super::App {
             .max()
             .unwrap_or(8);
         let width = (max_name + max_model + 28) as u16;
-        let width = width.clamp(50, area.width.saturating_sub(6));
+        let width = width.max(50).min(area.width.saturating_sub(6));
 
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -706,7 +706,7 @@ impl super::super::App {
         let footer_lines = 2;
         let body_lines = entries.len();
         let height = (header_lines + body_lines + footer_lines + 2) as u16;
-        let height = height.clamp(8, area.height.saturating_sub(2));
+        let height = height.max(8).min(area.height.saturating_sub(2));
 
         let max_name = entries
             .iter()
@@ -714,11 +714,11 @@ impl super::super::App {
             .max()
             .unwrap_or(8);
         let width = (max_name + 14) as u16;
-        let width = width.clamp(40, area.width.saturating_sub(6));
+        let width = width.max(40).min(area.width.saturating_sub(6));
 
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let arrow = match direction {
@@ -786,7 +786,7 @@ impl super::super::App {
         let footer_lines = 2usize;
         let body_lines = entries.len().max(1);
         let height = ((header_lines + body_lines + footer_lines + 2) as u16)
-            .clamp(8, area.height.saturating_sub(2));
+            .max(8).min(area.height.saturating_sub(2));
         let max_name = entries
             .iter()
             .map(|e| e.fname.chars().count())
@@ -797,10 +797,10 @@ impl super::super::App {
             .map(|e| e.title.chars().count())
             .max()
             .unwrap_or(16);
-        let width = ((max_name + max_title + 24) as u16).clamp(50, area.width.saturating_sub(6));
+        let width = ((max_name + max_title + 24) as u16).max(50).min(area.width.saturating_sub(6));
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
@@ -867,7 +867,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(14);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let title = " Typst function · Ctrl+B F ".to_string();
@@ -1006,7 +1006,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let title_line = format!(
@@ -1082,7 +1082,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let pages_note = if total > 1 {
@@ -1155,7 +1155,7 @@ impl super::super::App {
         let height: u16 = 7;
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
@@ -1208,7 +1208,7 @@ impl super::super::App {
         let render_h = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(render_w)) / 2;
         let y = area.y + (area.height.saturating_sub(render_h)) / 2;
-        let rect = Rect { x, y, width: render_w, height: render_h };
+        let rect = Rect { x, y, width: render_w, height: render_h }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let title_line = format!(" 🕸 Story · {book_title}  ·  {width}×{height} ");
@@ -1264,7 +1264,7 @@ impl super::super::App {
         let height: u16 = 7;
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
@@ -1305,13 +1305,13 @@ impl super::super::App {
         let footer_lines = 3usize;
         let body_lines = entries.len().max(1);
         let height = ((header_lines + body_lines + footer_lines + 2) as u16)
-            .clamp(10, area.height.saturating_sub(2));
+            .max(10).min(area.height.saturating_sub(2));
         let max_title = entries.iter().map(|e| e.title.chars().count()).max().unwrap_or(20);
         let max_crumb = entries.iter().map(|e| e.breadcrumb.chars().count()).max().unwrap_or(30);
-        let width = ((max_title + max_crumb + 12) as u16).clamp(60, area.width.saturating_sub(6));
+        let width = ((max_title + max_crumb + 12) as u16).max(60).min(area.width.saturating_sub(6));
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let title = format!(" Paragraphs with status [{status_label}] · scope: {scope} · Ctrl+B {} ",
@@ -1392,7 +1392,7 @@ impl super::super::App {
         let modal_h = area.height.saturating_sub(2).max(14);
         let x = area.x + (area.width.saturating_sub(modal_w)) / 2;
         let y = area.y + (area.height.saturating_sub(modal_h)) / 2;
-        let rect = Rect { x, y, width: modal_w, height: modal_h };
+        let rect = Rect { x, y, width: modal_w, height: modal_h }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let crumb = self.timeline_scope_crumb(state);
@@ -1849,7 +1849,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(14);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let title = match track_filter {
             Some(t) => format!(" Events ({total}) · track: {t} "),
@@ -1950,7 +1950,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
@@ -2057,7 +2057,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(20);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
@@ -2196,7 +2196,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = format!(
@@ -2301,7 +2301,7 @@ impl super::super::App {
             y,
             width,
             height,
-        };
+        }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = format!(" Quick reference · {} pane ", focus.label());
@@ -2403,7 +2403,7 @@ impl super::super::App {
             y,
             width,
             height,
-        };
+        }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = match picker.context {
@@ -2502,7 +2502,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let total = lines.len();
@@ -2577,7 +2577,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let scope_label = match scope {
@@ -2659,7 +2659,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = format!(" Linked paragraphs ({}) ", entries.len());
@@ -2750,7 +2750,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(14);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = format!(
@@ -2864,7 +2864,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(14);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = format!(" Cite ({}/{}) ", matches.len(), entries.len());
@@ -2957,7 +2957,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(14);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = format!(" Typst Universe ({}/{}) ", matches.len(), entries.len());
@@ -3050,7 +3050,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(14);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = format!(" Cross-reference ({}/{}) ", matches.len(), entries.len());
@@ -3143,7 +3143,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(14);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let verb = match mode {
@@ -3243,7 +3243,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(14);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -3325,7 +3325,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(16);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = format!(" Command palette ({}/{}) ", matches.len(), entries.len());
@@ -3429,7 +3429,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = match target {
@@ -3547,7 +3547,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(14);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = format!(
@@ -3645,7 +3645,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = format!(" Conversations ({}) ", entries.len());
@@ -3733,7 +3733,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = format!(" Bookmarks ({}) ", entries.len());
@@ -4176,7 +4176,7 @@ impl super::super::App {
         let h = area.height.saturating_sub(4).min(20);
         let x = area.x + (area.width - w) / 2;
         let y = area.y + (area.height - h) / 2;
-        let rect = Rect { x, y, width: w, height: h };
+        let rect = Rect { x, y, width: w, height: h }.intersection(area);
 
         f.render_widget(ratatui::widgets::Clear, rect);
         let block = Block::default()
@@ -4605,7 +4605,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = format!(
@@ -4647,10 +4647,13 @@ impl super::super::App {
         // body_h / 2 to keep the layout stable.
         let per_entry = 2usize;
         let visible = (body_h / per_entry).max(1);
+        // Window the entries around the cursor so it never walks off-screen.
+        let start = if *cursor >= visible { *cursor + 1 - visible } else { 0 };
         let lines: Vec<Line<'_>> = self
             .kill_ring
             .iter()
             .enumerate()
+            .skip(start)
             .take(visible)
             .flat_map(|(i, stash)| {
                 let parent_label = stash
@@ -4720,7 +4723,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = format!(" Backlinks ({}) ", entries.len());
@@ -4806,7 +4809,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = format!(" Similar paragraphs ({} hits) ", entries.len());
@@ -4904,7 +4907,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(10);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = format!(" Thesaurus · {} ({}) ", panel.word, panel.lang);
@@ -4975,7 +4978,7 @@ impl super::super::App {
             y,
             width,
             height,
-        };
+        }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -5038,7 +5041,7 @@ impl super::super::App {
         let height = (rows + 4).min(area.height.saturating_sub(2));
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -5165,7 +5168,7 @@ impl super::super::App {
         let height = (kinds.len() as u16 + 4).min(area.height.saturating_sub(2));
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -5245,7 +5248,7 @@ impl super::super::App {
         let height = (rows as u16 + 4).min(area.height.saturating_sub(2));
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let fw_label = crate::planning::Framework::parse(framework)
@@ -5280,6 +5283,8 @@ impl super::super::App {
             ))];
             let mut last_ch = String::new();
             let mk = |b: bool| if b { '●' } else { '○' };
+            // Line index of the selected card, for the scroll window below.
+            let mut sel_line = 0usize;
             for (i, s) in scenes.iter().enumerate() {
                 if s.chapter != last_ch {
                     last_ch = s.chapter.clone();
@@ -5317,6 +5322,9 @@ impl super::super::App {
                 );
                 let color = if weak { Color::Yellow } else { Color::Green };
                 let line = Line::from(Span::styled(head, Style::default().fg(color)));
+                if sel {
+                    sel_line = lines.len();
+                }
                 lines.push(if sel {
                     line.style(Style::default().fg(color).add_modifier(Modifier::REVERSED))
                 } else {
@@ -5333,7 +5341,10 @@ impl super::super::App {
                     }
                 }
             }
-            f.render_widget(Paragraph::new(lines), body);
+            // Scroll so the selected card (and its chapter header) stays in view.
+            let h = body.height.max(1) as usize;
+            let scroll = if sel_line >= h { (sel_line + 1 - h) as u16 } else { 0 };
+            f.render_widget(Paragraph::new(lines).scroll((scroll, 0)), body);
             f.render_widget(
                 Paragraph::new(Line::from(Span::styled(
                     " ↑↓ · g regenerate · v/Esc back to beats ",
@@ -5620,7 +5631,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let filt = {
@@ -5738,7 +5749,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -5809,7 +5820,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -5867,7 +5878,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -5927,7 +5938,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -5988,7 +5999,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -6041,7 +6052,7 @@ impl super::super::App {
         let height = 6u16.min(area.height);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
@@ -6069,7 +6080,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(10);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
@@ -6123,7 +6134,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -6387,7 +6398,7 @@ impl super::super::App {
                     " filter: ",
                     Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(format!("{}\u{2588}", state.filter_str), Style::default()),
+                Span::styled(self.outline_filter_input.render_with_cursor('\u{2588}'), Style::default()),
                 Span::styled(
                     "  · Enter apply · Esc exit ",
                     Style::default().add_modifier(Modifier::DIM),
@@ -6537,7 +6548,7 @@ impl super::super::App {
         let height = 9u16.min(area.height.saturating_sub(2));
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -6570,7 +6581,7 @@ impl super::super::App {
         let height = 11u16.min(area.height.saturating_sub(2));
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -6605,7 +6616,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -6653,7 +6664,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -6704,7 +6715,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -6765,7 +6776,7 @@ impl super::super::App {
         }
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
@@ -6813,7 +6824,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -6877,7 +6888,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -6932,7 +6943,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -6982,7 +6993,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -7029,10 +7040,10 @@ impl super::super::App {
             return;
         };
         let width = area.width.saturating_sub(6).clamp(40, 64);
-        let height = (rows.len() as u16 + 3).clamp(8, area.height.saturating_sub(4));
+        let height = (rows.len() as u16 + 3).max(8).min(area.height.saturating_sub(4));
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -7078,7 +7089,7 @@ impl super::super::App {
         let height = 12u16.min(area.height.saturating_sub(2));
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -7124,7 +7135,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -7178,7 +7189,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -7247,7 +7258,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -7306,7 +7317,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -7366,7 +7377,7 @@ impl super::super::App {
         let Modal::LangInsert { language, entries, query, cursor, .. } = &self.modal else {
             return;
         };
-        let q = query.to_lowercase();
+        let q = query.as_str().to_lowercase();
         let filtered: Vec<usize> = if query.is_empty() {
             (0..entries.len()).collect()
         } else {
@@ -7382,7 +7393,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).clamp(8, 20);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let block = Block::default()
@@ -7396,7 +7407,7 @@ impl super::super::App {
         let query_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: 1 };
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                format!("/{query}"),
+                format!("/{}", query.render_with_cursor('│')),
                 Style::default().add_modifier(Modifier::BOLD),
             ))),
             query_rect,
@@ -7456,7 +7467,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let kept = flat.len().saturating_sub(skipped.len());
@@ -7554,7 +7565,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = format!(
@@ -7690,7 +7701,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(4).max(20);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header = " Writing progress ".to_string();
@@ -7969,7 +7980,7 @@ impl super::super::App {
         let h: u16 = 10;
         let x = area.x + (area.width.saturating_sub(w)) / 2;
         let y = area.y + (area.height.saturating_sub(h)) / 2;
-        let rect = Rect { x, y, width: w, height: h };
+        let rect = Rect { x, y, width: w, height: h }.intersection(area);
 
         f.render_widget(ratatui::widgets::Clear, rect);
         let block = Block::default()
@@ -8031,14 +8042,20 @@ impl super::super::App {
         f: &mut ratatui::Frame,
         area: Rect,
     ) {
-        let (entries, cursor, filter, filter_focused) = match &self.modal {
+        let (entries, cursor, filter, filter_shown, filter_focused) = match &self.modal {
             Modal::SnapshotBrowser {
                 entries,
                 cursor,
                 filter,
                 filter_focused,
                 ..
-            } => (entries.clone(), *cursor, filter.clone(), *filter_focused),
+            } => (
+                entries.clone(),
+                *cursor,
+                filter.as_str().to_string(),
+                if *filter_focused { filter.render_with_cursor('│') } else { filter.as_str().to_string() },
+                *filter_focused,
+            ),
             _ => return,
         };
 
@@ -8046,7 +8063,7 @@ impl super::super::App {
         let h = area.height.saturating_sub(4).min(34);
         let x = area.x + (area.width.saturating_sub(w)) / 2;
         let y = area.y + (area.height.saturating_sub(h)) / 2;
-        let rect = Rect { x, y, width: w, height: h };
+        let rect = Rect { x, y, width: w, height: h }.intersection(area);
 
         f.render_widget(ratatui::widgets::Clear, rect);
         let visible = super::super::snapshot_impl::browser_visible_indices(&entries, &filter);
@@ -8064,7 +8081,7 @@ impl super::super::App {
         let filter_text = if filter.is_empty() {
             "/ (filter by paragraph or annotation)".to_string()
         } else {
-            format!("/ {filter}   ({} of {} match)", visible.len(), entries.len())
+            format!("/ {filter_shown}   ({} of {} match)", visible.len(), entries.len())
         };
         let filter_style = if filter_focused {
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
@@ -8152,7 +8169,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(2).max(20);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let header =
@@ -8268,7 +8285,7 @@ impl super::super::App {
         let h = area.height.saturating_sub(2).min(40).max(18);
         let x = area.x + (area.width.saturating_sub(w)) / 2;
         let y = area.y + (area.height.saturating_sub(h)) / 2;
-        let rect = Rect { x, y, width: w, height: h };
+        let rect = Rect { x, y, width: w, height: h }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
@@ -8474,7 +8491,7 @@ impl super::super::App {
         let h = area.height.saturating_sub(2).min(36).max(18);
         let x = area.x + (area.width.saturating_sub(w)) / 2;
         let y = area.y + (area.height.saturating_sub(h)) / 2;
-        let rect = Rect { x, y, width: w, height: h };
+        let rect = Rect { x, y, width: w, height: h }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let block = Block::default()
             .borders(Borders::ALL)
@@ -8497,8 +8514,11 @@ impl super::super::App {
             _ => return,
         };
 
-        let header_h: u16 = 4;
-        let footer_h: u16 = 8;
+        // Header and footer give way on a short frame so the three bands
+        // never extend past `inner` (ratatui's `Clear`/`set_string` index the
+        // buffer without clipping).
+        let header_h: u16 = 4u16.min(inner.height);
+        let footer_h: u16 = 8u16.min(inner.height.saturating_sub(header_h));
         let list_h: u16 = inner.height.saturating_sub(header_h + footer_h);
         let header_rect = Rect {
             x: inner.x,
@@ -8700,11 +8720,11 @@ impl super::super::App {
         let body_lines = visible.len().min(20).max(1);
         let footer_lines = 3usize;
         let height = ((header_lines + body_lines + footer_lines + 2) as u16)
-            .clamp(10, area.height.saturating_sub(2));
+            .max(10).min(area.height.saturating_sub(2));
         let width = (name_w as u16 + 60).min(area.width.saturating_sub(4)).max(70);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let title = format!(
@@ -8810,10 +8830,10 @@ impl super::super::App {
             + data.payoff_unfired.len()
             + data.dormant.len();
         let height = ((10 + extra_rows) as u16)
-            .clamp(14, area.height.saturating_sub(2));
+            .max(14).min(area.height.saturating_sub(2));
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let title = format!(
             " Thread doctor · {} threads · Ctrl+V Shift+D ",
@@ -8927,7 +8947,7 @@ impl super::super::App {
         let height = (area.height.saturating_sub(4)).min(12).max(8);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let style_label = match self.cfg.editor.footnote_style.to_lowercase().as_str() {
             "markdown" => " (markdown style)",
@@ -8977,7 +8997,7 @@ impl super::super::App {
         );
         f.render_widget(&ta, editor_rect);
         let hint_line = Line::from(Span::styled(
-            " Ctrl+S commit · Esc cancel (when empty) · Ctrl+C cancel anytime "
+            " Ctrl+S commit · Esc cancel (twice when non-empty) · editor chords "
                 .to_string(),
             Style::default().add_modifier(Modifier::DIM),
         ));
@@ -9003,7 +9023,7 @@ impl super::super::App {
             .max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let title = " Project goal · Ctrl+V Shift+G ";
         let block = Block::default()
@@ -9128,10 +9148,10 @@ impl super::super::App {
         let width = (area.width.saturating_sub(4)).min(80).max(50);
         let body = visible.len().min(20).max(1);
         let height = ((body + 6) as u16)
-            .clamp(10, area.height.saturating_sub(2));
+            .max(10).min(area.height.saturating_sub(2));
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let title = format!(
             " Style transfer — pick a voice sample · {} of {} ",
@@ -9168,7 +9188,10 @@ impl super::super::App {
             )));
         }
         lines.push(Line::from(""));
-        for (display_idx, src_idx) in visible.iter().enumerate() {
+        // Header (2) + footer (2) rows are fixed; window the rest around the cursor.
+        let budget = inner.height.saturating_sub(4).max(1) as usize;
+        let start = if *cursor >= budget { *cursor + 1 - budget } else { 0 };
+        for (display_idx, src_idx) in visible.iter().enumerate().skip(start).take(budget) {
             let Some((_, title)) = entries.get(*src_idx) else { continue; };
             let marker = if display_idx == *cursor { "›" } else { " " };
             let row = format!("  {marker} {title}");
@@ -9211,7 +9234,7 @@ impl super::super::App {
         let height = (area.height.saturating_sub(4)).min(28).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let title = format!(
@@ -9261,7 +9284,10 @@ impl super::super::App {
         // Body rows.
         let max_breadcrumb = 36usize;
         let max_author = 12usize;
-        for (display_idx, src_idx) in visible.iter().enumerate() {
+        // Two rows per comment; header (2) + footer (2) rows are fixed.
+        let budget = (inner.height.saturating_sub(4) / 2).max(1) as usize;
+        let start = if *cursor >= budget { *cursor + 1 - budget } else { 0 };
+        for (display_idx, src_idx) in visible.iter().enumerate().skip(start).take(budget) {
             let Some(e) = entries.get(*src_idx) else { continue; };
             let marker = if display_idx == *cursor { "›" } else { " " };
             let age = super::super::comments_impl::humanise_age(e.created_at);
@@ -9354,7 +9380,7 @@ impl super::super::App {
         let height = (area.height.saturating_sub(4)).min(14).max(10);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let title = format!(" Add comment · {span_chars} chars · Ctrl+V c ");
@@ -9433,7 +9459,7 @@ impl super::super::App {
 
         // Footer hint.
         let hint_line = Line::from(Span::styled(
-            " Ctrl+S commit · Esc cancel (when empty) · Ctrl+C cancel anytime "
+            " Ctrl+S commit · Esc cancel (twice when non-empty) · editor chords "
                 .to_string(),
             Style::default().add_modifier(Modifier::DIM),
         ));
@@ -9479,7 +9505,7 @@ impl super::super::App {
 
         let width = area.width.saturating_sub(2);
         let height = area.height.saturating_sub(2);
-        let rect = Rect { x: area.x + 1, y: area.y + 1, width, height };
+        let rect = Rect { x: area.x + 1, y: area.y + 1, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let title = format!(
@@ -9663,7 +9689,7 @@ impl super::super::App {
         let height = height.min(area.height.saturating_sub(2));
         let x = area.x + area.width.saturating_sub(width) / 2;
         let y = area.y + area.height.saturating_sub(height) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let title = if total == 0 {
             " Doctor — project is clean — Ctrl+B Shift+0 ".to_string()
@@ -9767,7 +9793,7 @@ impl super::super::App {
         let height = (5 + visible as u16).min(area.height.saturating_sub(2));
         let x = area.x + area.width.saturating_sub(width) / 2;
         let y = area.y + area.height.saturating_sub(height) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let title = format!(" Pick a {} — snippet expansion ", kind.label());
@@ -9840,7 +9866,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(2).clamp(20, 44);
         let x = area.x + area.width.saturating_sub(width) / 2;
         let y = area.y + area.height.saturating_sub(height) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
         let title = format!(
             " Journal — manuscript intelligence ({}) ",
@@ -9995,7 +10021,7 @@ impl super::super::App {
         let height = (7 + visible as u16).min(area.height.saturating_sub(2));
         let x = area.x + area.width.saturating_sub(width) / 2;
         let y = area.y + area.height.saturating_sub(height) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let title = " Piper voices ".to_string();
@@ -10049,10 +10075,16 @@ impl super::super::App {
         lines.push(Line::from(Span::styled(header, header_style)));
 
         // Filter input.
-        let filter_label = if state.filter.is_empty() {
-            "  filter: (type to filter by lang or name)".to_string()
+        let filter_label = if state.filter_focused {
+            format!(
+                "  filter: /{}  ({} match) · Enter/Esc done",
+                state.filter.render_with_cursor('│'),
+                filtered.len()
+            )
+        } else if state.filter.is_empty() {
+            "  filter: / to type (lang or name)".to_string()
         } else {
-            format!("  filter: /{}│  ({} match)", state.filter, filtered.len())
+            format!("  filter: /{}  ({} match)", state.filter.as_str(), filtered.len())
         };
         lines.push(Line::from(Span::styled(filter_label, dim)));
         lines.push(Line::from(""));
@@ -10064,7 +10096,10 @@ impl super::super::App {
             )));
         } else {
             let cursor = state.cursor;
-            for (row, idx) in filtered.iter().enumerate().take(body_max as usize) {
+            // Window the rows around the cursor so it never walks off-screen.
+            let body_max = body_max as usize;
+            let start = if cursor >= body_max { cursor + 1 - body_max } else { 0 };
+            for (row, idx) in filtered.iter().enumerate().skip(start).take(body_max) {
                 let Some(entry) = state.entries.get(*idx) else {
                     continue;
                 };
@@ -10144,7 +10179,7 @@ impl super::super::App {
         let height = area.height.saturating_sub(6).clamp(10, 24);
         let x = area.x + area.width.saturating_sub(width) / 2;
         let y = area.y + area.height.saturating_sub(height) / 2;
-        let rect = Rect { x, y, width, height };
+        let rect = Rect { x, y, width, height }.intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let finished = idx >= total;

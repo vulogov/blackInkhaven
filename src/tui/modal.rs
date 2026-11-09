@@ -1069,7 +1069,7 @@ pub(super) enum Modal {
         language: String,
         /// `(headword, gloss)` pairs.
         entries: Vec<(String, String)>,
-        query: String,
+        query: TextInput,
         cursor: usize,
         /// The `:lang:` trigger span to replace: `(row, start_col, end_col)`.
         trigger: (usize, usize, usize),
@@ -1094,7 +1094,7 @@ pub(super) enum Modal {
         cursor: usize,
         scroll: usize,
         /// Annotation / title substring filter (case-insensitive).
-        filter: String,
+        filter: TextInput,
         /// Whether the `/` filter input has focus.
         filter_focused: bool,
     },
@@ -1397,6 +1397,9 @@ pub(super) enum Modal {
     FootnoteEditor {
         textarea: tui_textarea::TextArea<'static>,
         paragraph_id: Uuid,
+        /// 3.19 — first `Esc` on a non-empty body arms the discard; the
+        /// second cancels. Any other key clears it.
+        discard_armed: bool,
     },
     /// 1.2.14+ Phase Q.4 — `Ctrl+V Shift+G`
     /// project goal modal.  Materialises the

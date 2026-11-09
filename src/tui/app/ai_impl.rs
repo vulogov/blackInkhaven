@@ -7,7 +7,7 @@
 //! this is the App-side state machinery around it. Extracted
 //! from `tui::app` in the 1.2.7 refactor, Phase 3 batch 7.
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Modifier, Style};
 use tui_textarea::TextArea;
 use uuid::Uuid;
@@ -1800,7 +1800,7 @@ surrounding paragraph, no preamble.\n\n── Paragraph: {title} (for context) �
         );
     }
 
-    fn start_translate_in_direction(
+    pub(super) fn start_translate_in_direction(
         &mut self,
         direction: super::super::modal::TranslationDirection,
     ) {
@@ -1928,7 +1928,7 @@ surrounding paragraph, no preamble.\n\n── Paragraph: {title} (for context) �
                 self.commit_translation_picker();
                 true
             }
-            KeyCode::Char(c) => {
+            KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
                 // First-letter shortcut: jump to (and commit on)
                 // the first language whose name starts with the
                 // typed letter, case-insensitive.  Unambiguous
