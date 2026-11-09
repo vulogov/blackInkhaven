@@ -20,17 +20,17 @@ use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-fn k(code: KeyCode) -> KeyEvent {
+pub(super) fn k(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
-fn km(code: KeyCode, m: KeyModifiers) -> KeyEvent {
+pub(super) fn km(code: KeyCode, m: KeyModifiers) -> KeyEvent {
     KeyEvent::new(code, m)
 }
-fn ctrl(c: char) -> KeyEvent {
+pub(super) fn ctrl(c: char) -> KeyEvent {
     km(KeyCode::Char(c), KeyModifiers::CONTROL)
 }
 
-fn panic_text(e: Box<dyn std::any::Any + Send>) -> String {
+pub(super) fn panic_text(e: Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = e.downcast_ref::<&str>() {
         s.to_string()
     } else if let Some(s) = e.downcast_ref::<String>() {
@@ -40,7 +40,7 @@ fn panic_text(e: Box<dyn std::any::Any + Send>) -> String {
     }
 }
 
-fn render(app: &mut App, w: u16, h: u16) -> Result<(), String> {
+pub(super) fn render(app: &mut App, w: u16, h: u16) -> Result<(), String> {
     let r = catch_unwind(AssertUnwindSafe(|| {
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|f| app.draw(f)).map(|_| ())
@@ -52,7 +52,7 @@ fn render(app: &mut App, w: u16, h: u16) -> Result<(), String> {
     }
 }
 
-fn battery() -> Vec<(String, KeyEvent)> {
+pub(super) fn battery() -> Vec<(String, KeyEvent)> {
     let mut v: Vec<(String, KeyEvent)> = Vec::new();
     let mut push = |n: &str, e: KeyEvent| v.push((n.to_string(), e));
     for _ in 0..3 { push("Up", k(KeyCode::Up)); }
@@ -88,7 +88,7 @@ fn battery() -> Vec<(String, KeyEvent)> {
     v
 }
 
-fn send(app: &mut App, key: KeyEvent) -> Result<bool, String> {
+pub(super) fn send(app: &mut App, key: KeyEvent) -> Result<bool, String> {
     match catch_unwind(AssertUnwindSafe(|| app.handle_key(key))) {
         Ok(Ok(b)) => Ok(b),
         Ok(Err(e)) => Err(format!("Err {e:#}")),
@@ -109,7 +109,7 @@ fn scroll(app: &mut App, up: bool) -> Result<(), String> {
     }
 }
 
-const SIZES: [(u16, u16); 9] = [(8, 3), (20, 6), (40, 12), (60, 20), (79, 24), (80, 24), (100, 30), (120, 40), (200, 60)];
+pub(super) const SIZES: [(u16, u16); 9] = [(8, 3), (20, 6), (40, 12), (60, 20), (79, 24), (80, 24), (100, 30), (120, 40), (200, 60)];
 
 fn exercise(
     app: &mut App,
@@ -241,7 +241,17 @@ fn select_span(a: &mut App) {
     }
 }
 
-fn probe_app() -> (tempfile::TempDir, App, Uuid) {
+/// Write a paragraph body to its `.typ` on disk AND into the store: the
+/// editor reads the file, and a reopen of the store syncs from disk, so a
+/// store-only write would come back as the bare heading template.
+fn write_body(store: &Store, root: &std::path::Path, node: &mut Node, body: &[u8]) {
+    if let Some(rel) = &node.file {
+        std::fs::write(root.join(rel), body).unwrap();
+    }
+    store.update_paragraph_content(node, body).unwrap();
+}
+
+pub(super) fn probe_app() -> (tempfile::TempDir, App, Uuid) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut cfg = Config::default();
     cfg.images.preview_enabled = false;
@@ -263,20 +273,117 @@ fn probe_app() -> (tempfile::TempDir, App, Uuid) {
     let mut para = store
         .create_node(&cfg, &h, NodeKind::Paragraph, "Para One", Some(&chapter), None, InsertPosition::End)
         .unwrap();
-    store
-        .update_paragraph_content(
-            &mut para,
-            "= Para One\n\nThe harbor froze in January. \"Either it was a blessing or a curse,\" said Mara. The town waited. Snow kept falling on the quay, and the long boats sat locked in the ice like sleeping animals.\n\nA second paragraph with more words to wrap around narrow widths and give the previews something to chew on — ünïcödé too.\n\n#figure(rect(), caption: [Harbor]) <fig:harbor>\n".as_bytes(),
-        )
-        .unwrap();
+    write_body(
+        &store,
+        tmp.path(),
+        &mut para,
+        "= Para One\n\nThe harbor froze in January. \"Either it was a blessing or a curse,\" said Mara. The town waited. Snow kept falling on the quay, and the long boats sat locked in the ice like sleeping animals.\n\nA second paragraph with more words to wrap around narrow widths and give the previews something to chew on — ünïcödé too.\n\n#figure(rect(), caption: [Harbor]) <fig:harbor>\n".as_bytes(),
+    );
     let h = Hierarchy::load(&store).unwrap();
     let mut para2 = store
         .create_node(&cfg, &h, NodeKind::Paragraph, "Para Two", Some(&chapter), None, InsertPosition::End)
         .unwrap();
-    store
-        .update_paragraph_content(&mut para2, b"= Para Two\n\nThe harbor thawed in March. Mara left.\n")
-        .unwrap();
+    write_body(&store, tmp.path(), &mut para2, b"= Para Two\n\nThe harbor thawed in March. Mara left.\n");
     let pid = para.id;
+    let h = Hierarchy::load(&store).unwrap();
+    let mut para3 = store
+        .create_node(&cfg, &h, NodeKind::Paragraph, "Para Three", Some(&chapter), None, InsertPosition::End)
+        .unwrap();
+    write_body(&store, tmp.path(), &mut para3, b"= Para Three\n\nA throwaway paragraph the kill-ring probe deletes.\n");
+    let h = Hierarchy::load(&store).unwrap();
+    let mut verse = store
+        .create_node(&cfg, &h, NodeKind::Paragraph, "Verse One", Some(&chapter), None, InsertPosition::End)
+        .unwrap();
+    write_body(&store, tmp.path(), &mut verse, b"= Verse One\n\nThe harbor sleeps\nunder a lid of ice\nand waits for March.\n");
+    // Metadata the pickers read: links both ways (LinkPicker / BacklinkPicker),
+    // a tag (TagSearchResults), an event (EventPicker / edit-event prompt) and
+    // a verse-translation tag (PoemFormPicker / VerseTranslationView).
+    let h = Hierarchy::load(&store).unwrap();
+    let mut n = h.get(pid).cloned().unwrap();
+    n.linked_paragraphs = vec![para2.id];
+    n.tags = vec!["probe".into()];
+    n.event = Some(crate::store::node::EventData {
+        start_ticks: 86_400 * 10,
+        end_ticks: None,
+        precision: Default::default(),
+        characters: vec![],
+        places: vec![],
+        track: None,
+    });
+    store.raw().update_metadata(n.id, n.to_json()).unwrap();
+    let mut n2 = h.get(para2.id).cloned().unwrap();
+    n2.linked_paragraphs = vec![pid];
+    store.raw().update_metadata(n2.id, n2.to_json()).unwrap();
+    let mut nv = h.get(verse.id).cloned().unwrap();
+    nv.tags = vec!["para:verse-translation".into()];
+    store.raw().update_metadata(nv.id, nv.to_json()).unwrap();
+    // An advisory (LLM-judged) edge for the graph inbox.
+    {
+        use crate::store::graph::{Edge, EdgeKind, EdgeOrigin, EndpointRef};
+        store
+            .add_edge(&Edge::new(EndpointRef::Node(pid), EdgeKind::Mentions, EndpointRef::Node(para2.id), EdgeOrigin::Judged).with_reason("probe"))
+            .unwrap();
+    }
+    // A pending world proposal, a submission digest, an imposition source PDF
+    // and a character state — the sidecars the respective panels load.
+    seed_world_proposal(tmp.path(), "place:probe");
+    crate::book_digest::BookDigest {
+        book_slug: book.slug.clone(),
+        title: "Probe Book".into(),
+        author: "probe".into(),
+        word_count: 60,
+        chapters: vec![crate::book_digest::ChapterSummary { title: "Chapter One".into(), summary: "The harbor froze.".into() }],
+        characters: vec!["Mara".into()],
+        threads: vec![],
+        content_hash: 0,
+    }
+    .save(tmp.path())
+    .unwrap();
+    {
+        let dir = store.resolve_artefacts_dir(&cfg).join(&book.slug);
+        std::fs::create_dir_all(&dir).unwrap();
+        use lopdf::dictionary;
+        let mut doc = lopdf::Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let mut kids = Vec::new();
+        for _ in 0..4 {
+            let content_id = doc.add_object(lopdf::Stream::new(lopdf::dictionary! {}, Vec::new()));
+            let page_id = doc.add_object(lopdf::dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "Contents" => content_id,
+                "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            });
+            kids.push(lopdf::Object::Reference(page_id));
+        }
+        let pages = lopdf::dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => 4 };
+        doc.objects.insert(pages_id, lopdf::Object::Dictionary(pages));
+        let catalog_id = doc.add_object(lopdf::dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog_id);
+        doc.save(dir.join(format!("{}.pdf", book.slug))).unwrap();
+    }
+    {
+        let cs = crate::character::CharStore::open(tmp.path()).unwrap();
+        cs.upsert_state(
+            &book.slug,
+            &crate::character::CharacterState {
+                character_name: "Mara".into(),
+                chapter_ord: 1,
+                state_summary: "waiting out the freeze".into(),
+                changed: true,
+                change_description: Some("leaves when the harbor thaws".into()),
+                agency_score: Some(0.5),
+                active_count: 2,
+                passive_count: 1,
+                utterance_count: Some(3),
+                chapter_hedge_density: None,
+                chapter_interiority_ratio: None,
+            },
+            "2026-01-01T00:00:00Z",
+            0,
+        )
+        .unwrap();
+    }
     // System books (Threads / Snippets / Character …) get one child each so
     // the pickers that read them have something to show.
     for (book_title, child, kind) in [("Threads", "Thread A", NodeKind::Paragraph), ("Snippets", "Snippet A", NodeKind::Paragraph), ("Character", "Mara", NodeKind::Paragraph), ("Characters", "Mara", NodeKind::Paragraph), ("Scripts", "script-a", NodeKind::Script), ("Sources", "Source A", NodeKind::Paragraph)] {
@@ -284,11 +391,83 @@ fn probe_app() -> (tempfile::TempDir, App, Uuid) {
         let Some(sys) = h.iter().find(|n| n.kind == NodeKind::Book && n.title == book_title).cloned() else { continue };
         let h = Hierarchy::load(&store).unwrap();
         if let Ok(mut n) = store.create_node(&cfg, &h, kind, child, Some(&sys), None, InsertPosition::End) {
-            let _ = store.update_paragraph_content(&mut n, format!("= {child}\n\nA body for {child}.\n").as_bytes());
+            let body = if book_title == "Sources" {
+                let e = crate::sources::BibEntry {
+                    key: "smith2024".into(),
+                    entry_type: "book".into(),
+                    author: "Smith, Ada".into(),
+                    title: "The Frozen Harbor".into(),
+                    year: "2024".into(),
+                    ..Default::default()
+                };
+                format!("= {child}\n\n{}", e.to_hjson())
+            } else {
+                format!("= {child}\n\nA body for {child}.\n")
+            };
+            write_body(&store, tmp.path(), &mut n, body.as_bytes());
         }
     }
-    let app = App::new(layout, cfg, store).expect("App::new");
+    // CLI-side seeds (each opens its own Store): structure beats for the plan
+    // outline, two invented languages for the translation picker and the
+    // `:Qya:` insert trigger, one dictionary word so the insert has entries.
+    drop(store);
+    crate::cli::plan::run(tmp.path(), crate::cli::PlanCommand::Init { framework: None }).expect("plan init");
+    crate::cli::language::init(tmp.path(), "Qya").expect("language init Qya");
+    crate::cli::language::init(tmp.path(), "Sjn").expect("language init Sjn");
+    crate::cli::language::add_word(tmp.path(), "Qya", "mara", "noun", "sea", None, None, false).expect("add-word");
+    let store = Store::open(layout.clone(), &cfg).expect("reopen store");
+    let book_id = book.id;
+    let mut app = App::new(layout, cfg, store).expect("App::new");
+    // The run loop's start-up hook: Output store, usage tracker, progress
+    // store (the streak heatmap reads it) and today's baselines.
+    app.install_progress();
+    // One progress event so the writing-streak heatmap has a day to show.
+    crate::progress::record_save(pid, Some(book_id), 0, 40);
     (tmp, app, pid)
+}
+
+/// Stage one pending world proposal (the proposals panel consumes them on
+/// Enter / `r`, so the step-back check seeds its own).
+pub(super) fn seed_world_proposal(root: &std::path::Path, signature: &str) {
+    use crate::world::proposals::PlaceProposal;
+    use crate::world::storage::WorldStore;
+    let ws = WorldStore::open_for_project(root).unwrap();
+    ws.insert(
+        &PlaceProposal {
+            id: Uuid::new_v4(),
+            signature: signature.into(),
+            kind: "place".into(),
+            name: "The Quay".into(),
+            payload: serde_json::json!({ "name": "The Quay", "summary": "where the boats froze" }),
+            rationale: "mentioned in Para One".into(),
+            status: "pending".into(),
+            created_at: 0,
+        },
+        None,
+    )
+    .unwrap();
+}
+
+/// Put `id`'s paragraph in the editor (the tree must show it).
+pub(super) fn open_para(a: &mut App, id: Uuid) {
+    if let Some(r) = a.rows.iter().position(|(rid, _)| *rid == id) {
+        a.tree_cursor = r;
+        let _ = a.open_selected();
+    }
+}
+
+/// Append `text` at the end of the open buffer and leave the cursor after it.
+fn append_line(a: &mut App, text: &str) {
+    if let Some(d) = a.opened.as_mut() {
+        d.textarea.cancel_selection();
+        d.textarea.move_cursor(tui_textarea::CursorMove::Bottom);
+        d.textarea.move_cursor(tui_textarea::CursorMove::End);
+        d.textarea.insert_str(text);
+    }
+}
+
+fn id_by_title(a: &App, title: &str) -> Option<Uuid> {
+    a.hierarchy.iter().find(|n| n.title == title).map(|n| n.id)
 }
 
 #[test]
@@ -301,12 +480,13 @@ fn modal_probe() {
     // Any modal that writes a file on Enter (SaveMarkdown with a battery-edited
     // path, say) must land in the temp dir, never in the working tree.
     std::env::set_current_dir(tmp.path()).unwrap();
-    let row = app.rows.iter().position(|(id, _)| *id == pid).expect("para row");
-    app.tree_cursor = row;
-    app.open_selected().unwrap();
+    open_para(&mut app, pid);
     assert!(app.opened.is_some(), "paragraph did not open");
     app.focus = Focus::Editor;
+    let fixture_lines: Vec<String> = app.opened.as_ref().unwrap().textarea.lines().to_vec();
     let mut out: Vec<String> = Vec::new();
+    out.push(format!("[FIXTURE] editor loaded {} lines · {} words", fixture_lines.len(), fixture_lines.join(" ").split_whitespace().count()));
+    assert!(fixture_lines.len() >= 5, "the fixture body did not reach the editor: {fixture_lines:?}");
     for (w, h) in SIZES {
         app.modal = Modal::None;
         if let Err(e) = render(&mut app, w, h) {
@@ -342,28 +522,38 @@ fn modal_probe() {
         ("CostDashboard", Focus::Editor, Box::new(|a: &mut App| a.open_cost_dashboard())),
         ("CommandPalette", Focus::Editor, Box::new(|a: &mut App| a.open_command_palette())),
         ("SimilarPicker", Focus::Editor, Box::new(|a: &mut App| a.toggle_similar_paragraph_mode())),
-        ("Thesaurus", Focus::Editor, Box::new(|a: &mut App| { if let Some(d) = a.opened.as_mut() { d.textarea.move_cursor(tui_textarea::CursorMove::Jump(2, 6)); } a.open_thesaurus(); })),
+        ("Thesaurus", Focus::Editor, Box::new(|a: &mut App| { if let Some(d) = a.opened.as_mut() { d.textarea.cancel_selection(); d.textarea.move_cursor(tui_textarea::CursorMove::Jump(2, 6)); } a.open_thesaurus(); })),
+        // The real opener needs an installed WordNet (or an AI round-trip);
+        // the panel itself is exercised from a built suggestion list.
+        ("Thesaurus*direct", Focus::Editor, Box::new(|a: &mut App| {
+            let suggestions = ["port", "haven", "anchorage", "dock", "marina", "quay", "wharf", "basin", "roadstead", "shelter", "refuge", "mooring"]
+                .iter()
+                .enumerate()
+                .map(|(i, w)| crate::wordnet::Suggestion { kind: if i % 4 == 3 { "antonym" } else { "synonym" }, word: (*w).into() })
+                .collect();
+            a.modal = Modal::Thesaurus { panel: super::super::wordnet_panel::WordnetPanel::new("harbor", "en", suggestions), row: 2, start_col: 4, end_col: 10, scroll: 0 };
+        })),
         ("FactsSearch", Focus::Editor, Box::new(|a: &mut App| a.open_facts_search())),
         ("FilePicker", Focus::Editor, Box::new(|a: &mut App| a.open_file_picker(super::super::file_picker::PickerContext::EditorLoad))),
         ("QuickRef", Focus::Editor, Box::new(|a: &mut App| a.open_quickref())),
         ("Credits", Focus::Editor, Box::new(|a: &mut App| a.open_credits())),
         ("BookInfo", Focus::Editor, Box::new(|a: &mut App| a.open_book_info())),
         ("LlmPicker", Focus::Editor, Box::new(|a: &mut App| a.open_llm_picker())),
-        ("ImagePicker", Focus::Editor, Box::new(|a: &mut App| { a.try_open_image_picker(); })),
+        ("ImagePicker", Focus::Editor, Box::new(|a: &mut App| { append_line(a, "\n#image(\""); a.try_open_image_picker(); })),
         ("ImagePreview", Focus::Tree, Box::new(|a: &mut App| {
             let picker = ratatui_image::picker::Picker::from_fontsize((10, 20));
             let img = image::DynamicImage::new_rgb8(4, 4);
             a.modal = Modal::ImagePreview { title: "img".into(), fs_rel: "x.png".into(), size_bytes: 1, proto: picker.new_resize_protocol(img) };
         })),
-        ("RenderedPreview", Focus::Editor, Box::new(|a: &mut App| a.open_rendered_paragraph_preview())),
-        ("SaveRenderedPng", Focus::Editor, Box::new(|a: &mut App| { a.open_rendered_paragraph_preview(); a.open_save_rendered_png_picker(false); })),
+        ("RenderedPreview", Focus::Editor, Box::new(|a: &mut App| { a.image_picker = Some(ratatui_image::picker::Picker::from_fontsize((10, 20))); a.open_rendered_paragraph_preview(); })),
+        ("SaveRenderedPng", Focus::Editor, Box::new(|a: &mut App| { a.image_picker = Some(ratatui_image::picker::Picker::from_fontsize((10, 20))); a.open_rendered_paragraph_preview(); a.open_save_rendered_png_picker(false); })),
         ("TagPicker", Focus::Tree, Box::new(move |a: &mut App| a.open_tag_picker_modal(super::super::modal::TagPickerTarget::TreeSelection(vec![pid])))),
         ("TagAddPrompt", Focus::Tree, Box::new(move |a: &mut App| { a.open_tag_picker_modal(super::super::modal::TagPickerTarget::TreeSelection(vec![pid])); a.open_tag_add_prompt(); })),
         ("TagDeleteConfirm", Focus::Tree, Box::new(move |a: &mut App| { a.open_tag_picker_modal(super::super::modal::TagPickerTarget::TreeSelection(vec![pid])); a.open_tag_delete_confirm(); })),
         ("TagRenamePrompt", Focus::Tree, Box::new(move |a: &mut App| { a.open_tag_picker_modal(super::super::modal::TagPickerTarget::TreeSelection(vec![pid])); a.open_tag_rename_prompt(); })),
         ("GotoLine", Focus::Editor, Box::new(|a: &mut App| a.open_goto_line())),
-        ("TagSearchResults", Focus::Tree, Box::new(move |a: &mut App| { a.open_tag_picker_modal(super::super::modal::TagPickerTarget::TreeSelection(vec![pid])); a.open_tag_add_prompt(); for c in "probe".chars() { let _ = a.handle_key(k(KeyCode::Char(c))); } let _ = a.handle_key(k(KeyCode::Enter)); let _ = a.handle_key(k(KeyCode::Char('t'))); a.modal = Modal::None; a.open_tag_search_results_for_cursor(); })),
-        ("DiagnosticsList", Focus::Editor, Box::new(|a: &mut App| a.open_diagnostics_list())),
+        ("TagSearchResults", Focus::Tree, Box::new(move |a: &mut App| { a.open_tag_picker_modal(super::super::modal::TagPickerTarget::TreeSelection(vec![pid])); a.open_tag_search_results_for_cursor(); })),
+        ("DiagnosticsList", Focus::Editor, Box::new(|a: &mut App| { append_line(a, "\n#let broken = (\n"); a.open_diagnostics_list(); })),
         ("EventPicker", Focus::Editor, Box::new(|a: &mut App| a.open_event_picker())),
         ("TimelineView", Focus::Editor, Box::new(|a: &mut App| a.open_timeline_view())),
         ("TimelineNewEventPrompt", Focus::Editor, Box::new(|a: &mut App| { a.open_timeline_view(); a.timeline_open_new_event_prompt(); })),
@@ -373,7 +563,13 @@ fn modal_probe() {
         ("StoryView", Focus::Editor, Box::new(|a: &mut App| { a.image_picker = Some(ratatui_image::picker::Picker::from_fontsize((10, 20))); a.open_story_view(); })),
         ("SaveStoryPng", Focus::Editor, Box::new(|a: &mut App| { a.image_picker = Some(ratatui_image::picker::Picker::from_fontsize((10, 20))); a.open_story_view(); a.open_save_story_png_picker(); })),
         ("FunctionPicker", Focus::Editor, Box::new(|a: &mut App| a.open_function_picker())),
-        ("ChatSearchPrompt", Focus::Editor, Box::new(|a: &mut App| a.open_chat_search_prompt())),
+        ("ChatSearchPrompt", Focus::Editor, Box::new(|a: &mut App| {
+            if a.chat_history.is_empty() {
+                a.chat_history.push(crate::ai::stream::ChatTurn::User("why did the harbor freeze?".into()));
+                a.chat_history.push(crate::ai::stream::ChatTurn::Assistant("January, and the long cold.".into()));
+            }
+            a.open_chat_search_prompt();
+        })),
         ("StatusFilter", Focus::Tree, Box::new(|a: &mut App| a.open_status_filter("Ready"))),
         ("HelpQuery", Focus::Editor, Box::new(|a: &mut App| a.open_help_query_modal())),
         ("FindReplace", Focus::Editor, Box::new(|a: &mut App| a.open_find_modal(true))),
@@ -404,14 +600,30 @@ fn modal_probe() {
         ("Bonds", Focus::Editor, Box::new(|a: &mut App| a.open_bonds())),
         ("ReaderHub", Focus::Editor, Box::new(|a: &mut App| a.open_reader_hub())),
         ("Cast", Focus::Editor, Box::new(|a: &mut App| a.open_cast())),
-        ("PoemFormPicker", Focus::Editor, Box::new(|a: &mut App| a.open_poem_form_picker())),
-        ("VerseTranslationView", Focus::Editor, Box::new(|a: &mut App| a.open_verse_translation_view())),
+        ("PoemFormPicker", Focus::Editor, Box::new(|a: &mut App| { if let Some(v) = id_by_title(a, "Verse One") { open_para(a, v); } a.open_poem_form_picker(); })),
+        ("VerseTranslationView", Focus::Editor, Box::new(|a: &mut App| { if let Some(v) = id_by_title(a, "Verse One") { open_para(a, v); } a.open_verse_translation_view(); })),
         ("InnerEditorOverview", Focus::Editor, Box::new(|a: &mut App| a.open_inner_editor_overview())),
-        ("LangInsert", Focus::Editor, Box::new(|a: &mut App| a.maybe_trigger_lang_insert())),
+        ("LangInsert", Focus::Editor, Box::new(|a: &mut App| { append_line(a, "\nsaid :Qya:"); a.maybe_trigger_lang_insert(); })),
         ("SnapshotPicker", Focus::Editor, Box::new(|a: &mut App| { a.create_snapshot_of_current(); let _ = a.handle_key(k(KeyCode::Enter)); a.open_snapshot_picker(); })),
         ("SnapshotDiff", Focus::Editor, Box::new(|a: &mut App| { a.create_snapshot_of_current(); let _ = a.handle_key(k(KeyCode::Enter)); a.open_snapshot_picker(); let _ = a.handle_key(k(KeyCode::Char('v'))); })),
         ("SnapshotBrowser", Focus::Editor, Box::new(|a: &mut App| a.open_snapshot_browser())),
-        ("KillRingPicker", Focus::Editor, Box::new(|a: &mut App| { a.modal = Modal::None; a.focus = Focus::Editor; let _ = a.handle_key(ctrl('k')); let _ = a.handle_key(ctrl('k')); a.open_kill_ring_picker(); })),
+        ("KillRingPicker", Focus::Editor, Box::new(|a: &mut App| {
+            // The kill ring holds deleted *paragraphs*: delete the throwaway
+            // one through the real Deleting modal the first time round.
+            if a.kill_ring.is_empty() {
+                if let Some(p3) = id_by_title(a, "Para Three") {
+                    if let Some(r) = a.rows.iter().position(|(id, _)| *id == p3) {
+                        a.tree_cursor = r;
+                        a.focus = Focus::Tree;
+                        a.open_delete_modal();
+                        a.commit_delete();
+                    }
+                }
+            }
+            a.modal = Modal::None;
+            a.focus = Focus::Editor;
+            a.open_kill_ring_picker();
+        })),
         ("ShellPane", Focus::Editor, Box::new(|a: &mut App| a.open_shell_pane(true))),
         ("HjsonEditor", Focus::Editor, Box::new(|a: &mut App| a.open_hjson_editor())),
         ("ConfirmQuit", Focus::Editor, Box::new(|a: &mut App| a.modal = Modal::ConfirmQuit)),
@@ -425,7 +637,15 @@ fn modal_probe() {
         ("TranslationLanguagePicker", Focus::Editor, Box::new(|a: &mut App| a.start_translate_in_direction(super::super::modal::TranslationDirection::ToInvented))),
         ("ThreadsPicker", Focus::Editor, Box::new(|a: &mut App| a.open_threads_picker())),
         ("ThreadWeaveView", Focus::Editor, Box::new(|a: &mut App| { a.open_threads_picker(); a.open_thread_weave_view(); })),
-        ("CommentsPanel", Focus::Editor, Box::new(|a: &mut App| { select_span(a); a.start_add_comment(); for c in "probe comment".chars() { let _ = a.handle_key(k(KeyCode::Char(c))); } let _ = a.handle_key(ctrl('s')); a.open_comments_panel(); })),
+        ("CommentsPanel", Focus::Editor, Box::new(|a: &mut App| {
+            select_span(a);
+            a.start_add_comment();
+            for c in "probe comment".chars() { let _ = a.handle_key(k(KeyCode::Char(c))); }
+            let _ = a.handle_key(ctrl('s'));
+            let commit_status = a.status.clone();
+            a.open_comments_panel();
+            if matches!(a.modal, Modal::None) { a.status = format!("{} ← after commit: {commit_status}", a.status); }
+        })),
         ("FootnoteEditor", Focus::Editor, Box::new(|a: &mut App| a.start_insert_footnote())),
         ("ProjectGoalModal", Focus::Editor, Box::new(|a: &mut App| a.open_project_goal_modal())),
         ("StyleTransferPicker", Focus::Editor, Box::new(|a: &mut App| a.start_style_transfer_picker())),
@@ -522,10 +742,26 @@ fn modal_probe() {
 
     let mut unopened: Vec<String> = Vec::new();
     for (label, focus, open) in openers.iter_mut() {
-        // Keep a paragraph open for every modal (some openers close it).
-        if app.opened.is_none() {
-            app.tree_cursor = row;
-            let _ = app.open_selected();
+        // Every opener starts from the fixture paragraph (some openers close
+        // it or switch to another one, and several panels scope to the book
+        // the open paragraph lives in).
+        if app.opened.as_ref().map(|d| d.id) != Some(pid) {
+            app.modal = Modal::None;
+            open_para(&mut app, pid);
+        }
+        // Earlier openers append trigger text (`#image("`, `#let broken = (`,
+        // `:Qya:`); put the fixture body back (and on disk) so the typst
+        // renderer and the dialogue scanner see valid prose.
+        if app.opened.as_ref().is_some_and(|d| d.textarea.lines() != fixture_lines.as_slice()) {
+            if let Some(d) = app.opened.as_mut() {
+                d.textarea = tui_textarea::TextArea::new(fixture_lines.clone());
+                d.dirty = true;
+            }
+            app.modal = Modal::None;
+            let _ = app.save_focused();
+        }
+        if let Some(r) = app.rows.iter().position(|(id, _)| *id == pid) {
+            app.tree_cursor = r;
         }
         if !exercise(&mut app, label, *focus, open.as_mut(), &mut out) {
             unopened.push(label.to_string());
@@ -570,6 +806,68 @@ fn modal_probe() {
         assert!(matches!(app.modal, Modal::None), "second Esc should close the voice picker");
     } else {
         out.push(format!("[FILTER TtsVoicePicker] did not open: {}", app.status));
+    }
+    // Step-back Esc arms: a sub-mode leaves the sub-mode, not the panel.
+    app.modal = Modal::None;
+    app.focus = Focus::Editor;
+    open_para(&mut app, pid);
+    app.open_plan_outline();
+    if matches!(app.modal, Modal::PlanOutline { .. }) {
+        let _ = app.handle_key(k(KeyCode::Char('m')));
+        let picking = matches!(&app.modal, Modal::PlanOutline { picking: Some(_), .. });
+        let _ = app.handle_key(k(KeyCode::Esc));
+        let after = match &app.modal {
+            Modal::PlanOutline { picking: None, .. } => "outline (sub-mode left)",
+            Modal::PlanOutline { .. } => "outline (still picking)",
+            Modal::None => "CLOSED",
+            _ => "other modal",
+        };
+        out.push(format!("[ESC-STEP PlanOutline] m→picking={picking} · Esc→{after}"));
+        if picking {
+            assert!(matches!(&app.modal, Modal::PlanOutline { picking: None, .. }), "Esc in the plan map picker closed the outline");
+        }
+        let _ = app.handle_key(k(KeyCode::Char('v')));
+        let scene_view = matches!(&app.modal, Modal::PlanOutline { scene_view: true, .. });
+        let _ = app.handle_key(k(KeyCode::Esc));
+        let after = match &app.modal {
+            Modal::PlanOutline { scene_view: false, .. } => "outline (scene view left)",
+            Modal::PlanOutline { .. } => "outline (still scenes)",
+            Modal::None => "CLOSED",
+            _ => "other modal",
+        };
+        out.push(format!("[ESC-STEP PlanOutline] v→scene_view={scene_view} · Esc→{after}"));
+        if scene_view {
+            assert!(matches!(&app.modal, Modal::PlanOutline { scene_view: false, .. }), "Esc in the scene board closed the outline");
+        }
+    } else {
+        out.push(format!("[ESC-STEP PlanOutline] did not open: {}", app.status));
+    }
+    app.modal = Modal::None;
+    seed_world_proposal(tmp.path(), "place:probe-step");
+    app.open_world_proposals();
+    if matches!(app.modal, Modal::WorldProposals { .. }) {
+        let _ = app.handle_key(k(KeyCode::Esc));
+        let after = match &app.modal { Modal::WorldOverview { .. } => "WorldOverview", Modal::None => "CLOSED", _ => "other" };
+        out.push(format!("[ESC-STEP WorldProposals] Esc→{after}"));
+        assert!(matches!(app.modal, Modal::WorldOverview { .. }), "Esc on proposals should step back to the world overview");
+    } else {
+        out.push(format!("[ESC-STEP WorldProposals] did not open: {}", app.status));
+    }
+    app.modal = Modal::None;
+    open_para(&mut app, pid);
+    app.start_translate_in_direction(super::super::modal::TranslationDirection::ToInvented);
+    if matches!(app.modal, Modal::TranslationLanguagePicker { .. }) {
+        let before = format!("{:?}", std::mem::discriminant(&app.modal));
+        for key in [ctrl('a'), ctrl('x'), km(KeyCode::Char('q'), KeyModifiers::ALT)] {
+            let _ = app.handle_key(key);
+        }
+        let same = matches!(app.modal, Modal::TranslationLanguagePicker { .. });
+        out.push(format!("[GUARD TranslationLanguagePicker] chorded letters: still picker={same} ({before})"));
+        assert!(same, "a chorded letter was taken as a picker key");
+        let _ = app.handle_key(k(KeyCode::Esc));
+        assert!(matches!(app.modal, Modal::None), "Esc should close the translation picker");
+    } else {
+        out.push(format!("[GUARD TranslationLanguagePicker] did not open: {}", app.status));
     }
     // Shell pane: `?`/help overlay then Esc — does Esc close the overlay or the pane?
     app.modal = Modal::None; app.open_shell_pane(true);

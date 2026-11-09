@@ -303,9 +303,11 @@ of cycling to the missing AI pane).
 
 ## 2. Tree pane
 
-Focused on launch. Shows the project hierarchy with depth indentation, kind
-glyphs (`📖` book, `▸` chapter, `▹` subchapter, `¶` paragraph), and a dim
-`Nw` word-count suffix for paragraphs. (3.8) Branch rows (Book / Chapter /
+Focused on launch. Shows the project hierarchy with depth indentation and
+kind glyphs: `▾` / `▸` for an expanded / folded branch (book, chapter,
+subchapter), `¶` paragraph, `◆` event, `❴` HJSON, `⟡` Jinja template, `▣`
+image, `λ` script, `►` the paragraph open in the editor. Long titles wrap
+with a hanging indent. (3.8) Branch rows (Book / Chapter /
 Subchapter) show a dim **aggregate descendant word count** (e.g. `12.3k`) plus
 a roll-up progress pip when the subtree carries target-word goals; bookmarked
 paragraphs (`Ctrl+V B`) show a **`⚑` flag** glyph. A dimmed **key-legend
@@ -323,7 +325,7 @@ footer** sits on the pane's bottom line.
 | `PageUp`             | Move cursor 10 rows up (configurable: `page_up`).           |
 | `PageDown`           | Move cursor 10 rows down (configurable: `page_down`).       |
 | `{` / `}`            | (3.8) **Jump by kind** — move the cursor to the previous / next major structural row (**Book or Chapter**), skipping past long paragraph runs. Stops at the first/last with a status hint; no wrap. |
-| `/`                  | (3.8) **Filter the tree** — type to narrow the tree live to nodes whose **title or slug** matches (case-insensitive, Unicode-aware) plus their ancestors, folding ignored. `Enter` keeps the filter (cursor on the first match); `Backspace` edits; `↑`/`↓` move within matches while typing; `Esc` clears. The active needle shows in the pane title. |
+| `/`                  | (3.8) **Filter the tree** — type to narrow the tree live to nodes whose **title or slug** matches (case-insensitive, Unicode-aware) plus their ancestors, folding ignored. `Enter` keeps the filter (cursor on the first match); the needle is a normal text box (3.19 — the shared chord set of §4.5: `←`/`→`, `Home`/`End`, `Ctrl+W`/`Ctrl+K` kills, word jumps); `↑`/`↓` move within matches while typing; `Esc` clears. Leaving the pane (`Tab`, a mouse click) keeps the needle as if `Enter` had been pressed. The active needle shows in the pane title with its cursor. |
 | `Enter`              | Open the cursor's node. Paragraphs load into the editor and shift focus there; if a different paragraph was open with unsaved edits, it's autosaved first. Branches print a status hint and stay in Tree. |
 | `F2`                 | Open the **Rename** modal pre-filled with the current node's title. Slug + filesystem entry stay; only the displayed title changes (re-embeds for search). |
 | `F3`                 | Open the **file picker** dialog. Enter on a file creates a new paragraph (inserted after the current cursor) with that file's content. Enter on a directory **recursively imports** the tree — subdirectories become branches one level deeper (Book→Chapter→Subchapter), files become paragraphs. If the directory tree exceeds the hierarchy depth, the deeper files are flattened into the deepest legal branch (with `unbounded_subchapters: false`). See §12. |
@@ -369,7 +371,7 @@ confirmation.
 | `T` / `t` | (1.2.4) **Cycle node type** (`paragraph(typst) → paragraph(hjson) → paragraph(jinja) → script`; STRUCT-1 added the **jinja** rung). No marks: cursor row only (folders skipped). With marks: every marked leaf. |
 | `E` / `e` | (1.4.10) **New Jinja template** — open the Add modal for a `.jinja` paragraph (rendered to Typst at assembly). Seeds a manuscript template under a user book, or a reusable `{% include %}` fragment under the **Snippets** book; rejected elsewhere. (`t`/`T` *converts* an existing paragraph; `e` *creates* a fresh seeded one.) See [JINJA_TEMPLATES.md](JINJA_TEMPLATES.md). |
 | `I` / `i` | (1.4.11) **New structural paragraph** — open a picker of structural subtypes (code listing · admonition note/warning/tip/caution · math · procedure · table) and create a `.typ` paragraph tagged `para:*` with the matching Typst boilerplate seeded. Structural paragraphs get a type-specific tree glyph (`⌨ ⚠ ∫ ≡ ⊞`), are skipped by the prose companions, and are excluded from prose word counts (except procedure). Add/remove the tag later via `Ctrl+B ]`. See [STRUCTURAL_PARAGRAPHS.md](STRUCTURAL_PARAGRAPHS.md). |
-| `O` / `o` | (1.2.4) **Cycle status** one rung up the ladder (`napkin → first → … → ready → napkin`). No marks: cursor row. With marks: every marked paragraph. |
+| `O` / `o` | (1.2.4) **Cycle status** one rung up the ladder (`napkin → first → … → ready → napkin`). No marks: cursor row (3.19 — it used to target the paragraph open in the editor whenever one was loaded). With marks: every marked paragraph. |
 | `G` / `g` | (1.2.5) **Tag the marked set** — open the floating tag picker scoped to every marked paragraph (or just the cursor row when no marks). Same modal as `Ctrl+B ]`; T applies the selected tag set across every target at once. |
 | `y`       | (1.4.13, OUTLINE-1) **Copy** the cursor paragraph onto the cross-pane clipboard (shared with the Outline pane). |
 | `m`       | (1.4.13, OUTLINE-1) **Move** (cut) the cursor paragraph onto the clipboard. |
@@ -671,7 +673,7 @@ keystroke away. Pane title shows provider, streaming status, and a
 | `Esc`     | inference in flight             | (3.9) **Cancel** the in-flight inference — stops the stream and **keeps the chat history** (vs `Ctrl+B c`, which wipes the whole conversation). Works from the AI prompt too. A `Esc cancel` cue shows in the title while streaming. |
 | `Esc`     | otherwise                       | Bounce focus back to the **AI prompt** bar (mirror of the AI-prompt → AI Esc). |
 | `↑`/`↓` (or `k`/`j`), `PgUp`/`PgDn` | inference present (non-Book scope) | (3.9) **Scroll** the single response. It follows the streaming tail by default (`⟳follow` in the title); scrolling up detaches (`↑scrolled`). Mouse wheel too. |
-| `Home` / `End` | inference present (non-Book scope) | (3.9) Jump to the **top** / **bottom**. `End` re-arms follow-the-tail. |
+| `Home` / `End` | inference present (non-Book scope) | (3.9) Jump to the **top** / **bottom**. `End` re-arms follow-the-tail. (3.19) Scrolling stops at the rendered extent, so `↓` / `PgDn` move again right after `Home`. |
 | `z` | chat has a completed turn | (3.9) **Regenerate** — re-send the last prompt under the current scope. |
 | `e` | chat has a completed turn | (3.9) **Edit last** — pull the last prompt back into the compose box to tweak and resend. |
 | `[` / `]` | Book-scope answer with retrieval | (3.9) **Navigable citations** — jump to the previous / next cited paragraph (in citation order; falls back to the direct hits). A `[ ] cited ¶` cue shows in the title. |
@@ -686,7 +688,9 @@ keystroke away. Pane title shows provider, streaming status, and a
 
 Action keys fire only when `inference.status == Done` and the response is
 non-empty. While streaming or on error, single-character keys do nothing
-(except `q` to quit and `Esc` to bounce).
+(except `q` to quit and `Esc` to bounce). (3.19) The letters are plain keys:
+a chord such as `Ctrl+R` or `Alt+C` that no global binding claims is ignored
+here rather than applied.
 
 **Chat history.** Each non-Help inference appends a `(User, Assistant)` pair
 to the in-memory chat history; the next prompt replays the whole history to
@@ -708,9 +712,10 @@ long reflective output, e.g. the Inner Theologian slow track (`Ctrl+B J→T`) �
 and (3.14; CANON-UI-1) the **Canon** pane, which follows the *open paragraph*
 and lists the canon decisions it sources, each with how many decisions rest on
 it and what it rests on (see below). In
-the Thoughts pane: `↑↓`/`j`/`k` scroll, `PageUp`/`PageDown`, `g`/`G` top/bottom,
-(3.9) **`y` copy** the whole transcript to the clipboard, `c` clear, `Esc` to
-the editor. Plain **`Tab`** now cycles Tree → Editor → *the
+the Thoughts pane: `↑↓`/`j`/`k` scroll, `PageUp`/`PageDown`, `g`/`G` top/bottom
+(3.19 — clamped to the text, so `↑` moves again right after `G`),
+(3.9) **`y` copy** the whole transcript to the clipboard, `c` clear (plain
+keys only — `Ctrl+C` does nothing here), `Esc` to the editor. Plain **`Tab`** now cycles Tree → Editor → *the
 currently-shown right pane* (no longer forced to AI). The active right pane is
 remembered across restarts. **`Ctrl+Z f`** fullscreens the current right pane
 (Output / Thoughts / Canon; the AI pane uses `Ctrl+B K`). When content arrives for a
@@ -762,7 +767,7 @@ the top and it turns back on.
 | `d`       | Dismiss the selected message (the cursor stays on the row that shifts up).       |
 | `p`       | Pin / unpin (pinned messages sort to the top).                                  |
 | `Enter`   | Primary action — kind-specific (accept proposal, insert translation, jump to event, …); (3.8) **for any other finding that records a source paragraph, opens that paragraph** in the editor. |
-| `/`       | (PANE-2) Open the free-text search line — type to filter live by message text / kind; `Enter` keeps, `Esc` clears. |
+| `/`       | (PANE-2) Open the free-text search line — type to filter live by message text / kind; `Enter` keeps, `Esc` clears. (3.19) The line is a normal text box: the shared chord set of §4.5 applies, and the cursor shows. |
 | `r` / `e` | (translations) remember / edit+remember.                                        |
 | `i` / `m` / `x` | (Socratic) record-as-intent / make-note / mark-addressed.                 |
 

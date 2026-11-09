@@ -2066,6 +2066,9 @@ pub(crate) struct App {
     glossary_detector_cache: Option<super::style_warnings::BannedSynonymDetector>,
     tree_cursor: usize,
     tree_scroll: usize,
+    /// 3.19 — the tree row drawn on each body line of the last frame (rows
+    /// wrap, so a line is not a row). Mouse clicks map through it.
+    tree_line_rows: Vec<usize>,
 
     search_input: TextInput,
     ai_input: TextInput,
@@ -2288,10 +2291,13 @@ pub(crate) struct App {
     /// tree (every node whose title/slug matches, case-insensitive and
     /// Unicode-aware, plus its ancestors), ignoring folding — mirrors the
     /// Outline pane's filter.
-    tree_filter: String,
+    tree_filter: TextInput,
     /// True while the user is typing into the `/` filter (keystrokes edit the
     /// needle rather than driving tree commands).
     tree_filter_editing: bool,
+    /// 3.19 — the Output pane's `/` query box (mirrored into
+    /// `output_filter.text_query`, which is what the session persists).
+    output_query_input: TextInput,
     /// In similar-paragraph mode, which pane has keyboard focus.
     /// `false` (default) → left pane = `self.opened` is the
     /// keyboard target. `true` → right pane = `self.secondary`
@@ -2613,6 +2619,10 @@ pub(crate) struct App {
     /// at the top of the history. Reset to 0 each time a new user
     /// message is sent so the streaming reply is visible.
     chat_history_scroll: usize,
+    /// 3.19 — the largest useful `chat_history_scroll` as of the last frame
+    /// (lines above the bottom pin); key handlers clamp to it so a jump to
+    /// the top is one keypress away from scrolling back.
+    chat_history_scroll_max: std::cell::Cell<usize>,
 
     /// 3.9 — scroll for the split-view single-response AI view (non-Book scope),
     /// as a distance UP from the auto-bottom-pin: `0` = pinned to the newest
@@ -2620,12 +2630,17 @@ pub(crate) struct App {
     /// toward the top. The render clamps it to the wrapped total. Reset to 0 on
     /// each new inference so the reply is followed from the start.
     ai_response_scroll: usize,
+    /// 3.19 — rendered extent of the single-response view (see
+    /// `chat_history_scroll_max`).
+    ai_response_scroll_max: std::cell::Cell<usize>,
 
     /// THOUGHTS-1 — the Thoughts pane's entries (each a block of reflective
     /// text, e.g. an Inner Theologian session), newest last. Read-only.
     thoughts: Vec<String>,
     /// Lines scrolled up from the bottom of the Thoughts pane (PageUp adds).
     thoughts_scroll: usize,
+    /// 3.19 — rendered extent of the Thoughts pane (see `chat_history_scroll_max`).
+    thoughts_scroll_max: std::cell::Cell<usize>,
     /// CANON-UI-1 (CU1-P3) — the Canon pane's rows for the open paragraph, and
     /// when they were computed (refreshed on paragraph change + a slow tick).
     canon_pane: CanonPaneState,
@@ -2699,6 +2714,8 @@ mod timeline_impl;
 mod tree_impl;
 #[cfg(test)]
 mod modal_probe;
+#[cfg(test)]
+mod pane_probe;
 
 /// The next rung in the leaf-type morph cycle (`t`/`T` in the Tree pane, and
 /// `Ctrl+B M`). Single source of truth for both the single-node and bulk paths
@@ -3875,6 +3892,7 @@ impl App {
             canon_source_nodes_at: std::time::Instant::now(),
             tree_cursor: 0,
             tree_scroll: 0,
+            tree_line_rows: Vec::new(),
             search_input: TextInput::new(),
             // 3.9 — the AI prompt is a multi-line compose box (Shift+Enter
             // newline, paste keeps newlines, box grows/collapses with content).
@@ -3915,8 +3933,9 @@ impl App {
             progress_cache: None,
             link_pick_for: None,
             tree_marked: std::collections::HashSet::new(),
-            tree_filter: String::new(),
+            tree_filter: TextInput::new(),
             tree_filter_editing: false,
+            output_query_input: TextInput::new(),
             status: String::from(
                 "Tab=panes · Enter=open · Ctrl+S=save · Ctrl+B then B/C/S/P add · D delete · ↑/↓ reorder · Ctrl+Q quit",
             ),
@@ -3938,6 +3957,7 @@ impl App {
             chat_history: Vec::new(),
             thoughts: Vec::new(),
             thoughts_scroll: 0,
+            thoughts_scroll_max: std::cell::Cell::new(0),
             canon_pane: CanonPaneState::default(),
             canon_pane_at: std::time::Instant::now(),
             system_prompt_override: None,
@@ -3989,7 +4009,9 @@ impl App {
             ai_fullscreen: false,
             right_fullscreen: false,
             chat_history_scroll: 0,
+            chat_history_scroll_max: std::cell::Cell::new(0),
             ai_response_scroll: 0,
+            ai_response_scroll_max: std::cell::Cell::new(0),
             chat_search: None,
             chat_selection: None,
             last_crash_mirror_at: None,
@@ -5413,9 +5435,9 @@ impl App {
                     // 3.9 — the split single-response view has its own scroll;
                     // the Book conversation / fullscreen use chat_history_scroll.
                     if self.ai_single_response_scrollable() {
-                        self.ai_response_scroll = self.ai_response_scroll.saturating_add(3);
+                        self.scroll_ai_response_up(3);
                     } else {
-                        self.chat_history_scroll = self.chat_history_scroll.saturating_add(3);
+                        self.scroll_chat_history_up(3);
                     }
                 }
                 _ => {}
@@ -5573,7 +5595,13 @@ impl App {
             return;
         }
         let row_in_view = (row - body_y) as usize;
-        let idx = self.tree_scroll + row_in_view;
+        // 3.19 — rows wrap, so the click maps through the line → row table the
+        // last frame drew (it was `scroll + line`, which also assumed a scroll
+        // offset the renderer never wrote back).
+        let idx = match self.tree_line_rows.get(row_in_view) {
+            Some(r) => *r,
+            None => return,
+        };
         if idx < self.rows.len() {
             self.tree_cursor = idx;
         }
@@ -5960,7 +5988,7 @@ impl App {
         // way to move the selection.
         if self.ai_fullscreen {
             if self.keymap.page_up.matches(&key) {
-                self.chat_history_scroll = self.chat_history_scroll.saturating_add(10);
+                self.scroll_chat_history_up(10);
                 return Ok(false);
             }
             if self.keymap.page_down.matches(&key) {
@@ -5969,7 +5997,7 @@ impl App {
             }
             if !self.show_prompt_picker {
                 if matches!(key.code, KeyCode::Up) {
-                    self.chat_history_scroll = self.chat_history_scroll.saturating_add(1);
+                    self.scroll_chat_history_up(1);
                     return Ok(false);
                 }
                 if matches!(key.code, KeyCode::Down) {
@@ -6085,28 +6113,29 @@ impl App {
                 }
                 KeyCode::Enter => {
                     self.tree_filter_editing = false;
-                    if self.tree_filter.trim().is_empty() {
+                    if self.tree_filter.as_str().trim().is_empty() {
                         self.tree_filter.clear();
                         self.rebuild_rows_preserving_cursor();
                     } else {
-                        self.status =
-                            format!("filter `{}` · {} row(s)", self.tree_filter, self.rows.len());
+                        self.status = format!(
+                            "filter `{}` · {} row(s)",
+                            self.tree_filter.as_str(),
+                            self.rows.len()
+                        );
                     }
-                }
-                KeyCode::Backspace => {
-                    self.tree_filter.pop();
-                    self.rebuild_rows_preserving_cursor();
-                    self.tree_cursor = 0;
                 }
                 // Arrows still move within the filtered matches while typing.
                 KeyCode::Up => self.move_cursor(-1),
                 KeyCode::Down => self.move_cursor(1),
-                KeyCode::Char(c) if plain => {
-                    self.tree_filter.push(c);
-                    self.rebuild_rows_preserving_cursor();
-                    self.tree_cursor = 0;
+                // 3.19 — everything else is the shared one-line chord set
+                // (cursor moves, kills, word jumps; Ctrl+letter never lands
+                // as text). A changed needle re-narrows from the top.
+                _ => {
+                    if handle_text_input_key(&mut self.tree_filter, key) {
+                        self.rebuild_rows_preserving_cursor();
+                        self.tree_cursor = 0;
+                    }
                 }
-                _ => {}
             }
             return Ok(false);
         }
@@ -6335,7 +6364,7 @@ impl App {
 
     fn rebuild_rows_preserving_cursor(&mut self) {
         let prev_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
-        let needle = self.tree_filter.trim().to_lowercase();
+        let needle = self.tree_filter.as_str().trim().to_lowercase();
         self.rows = if needle.is_empty() {
             self.hierarchy
                 .flatten_with_collapsed(&self.collapsed_nodes)
@@ -7118,6 +7147,24 @@ impl App {
         content as u16 + 2
     }
 
+    /// 3.19 — scroll the single-response view back by `n` lines, clamped to
+    /// the extent the last frame rendered (so the opposite key always moves).
+    fn scroll_ai_response_up(&mut self, n: usize) {
+        self.ai_response_scroll = self
+            .ai_response_scroll
+            .saturating_add(n)
+            .min(self.ai_response_scroll_max.get());
+    }
+
+    /// 3.19 — lift the chat-history window by `n` lines, clamped to the extent
+    /// the last frame rendered.
+    fn scroll_chat_history_up(&mut self, n: usize) {
+        self.chat_history_scroll = self
+            .chat_history_scroll
+            .saturating_add(n)
+            .min(self.chat_history_scroll_max.get());
+    }
+
     fn ai_single_response_scrollable(&self) -> bool {
         self.inference.is_some()
             && self.ai_mode != AiMode::Book
@@ -7147,6 +7194,16 @@ impl App {
         // bounce in handle_input_key.
         if self.focus == Focus::Ai && matches!(key.code, KeyCode::Esc) {
             self.change_focus(Focus::AiPrompt);
+            return Ok(false);
+        }
+        // 3.19 — the pane's letter actions are PLAIN keys (Shift allowed). A
+        // chord that no global binding claimed (Ctrl+R, Alt+C …) must not
+        // replace the paragraph or copy the reply.
+        if matches!(key.code, KeyCode::Char(_))
+            && key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+        {
             return Ok(false);
         }
         // BOOK_RAG-1 — `p` toggles the "Retrieved passages" transparency
@@ -7183,7 +7240,7 @@ impl App {
         if self.focus == Focus::Ai && self.ai_single_response_scrollable() {
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
-                    self.ai_response_scroll = self.ai_response_scroll.saturating_add(1);
+                    self.scroll_ai_response_up(1);
                     return Ok(false);
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
@@ -7191,7 +7248,7 @@ impl App {
                     return Ok(false);
                 }
                 KeyCode::PageUp => {
-                    self.ai_response_scroll = self.ai_response_scroll.saturating_add(10);
+                    self.scroll_ai_response_up(10);
                     return Ok(false);
                 }
                 KeyCode::PageDown => {
@@ -7199,7 +7256,9 @@ impl App {
                     return Ok(false);
                 }
                 KeyCode::Home => {
-                    self.ai_response_scroll = usize::MAX;
+                    // 3.19 — the rendered extent, not `usize::MAX`: a jump to the
+                    // top used to leave ↓ / PgDn dead until End.
+                    self.ai_response_scroll = self.ai_response_scroll_max.get();
                     return Ok(false);
                 }
                 KeyCode::End => {
@@ -9926,17 +9985,27 @@ impl App {
     /// the newest-first list (0 = newest); the renderer clamps it to the
     /// wrapped-row count.
     fn handle_thoughts_key(&mut self, key: KeyEvent) -> Result<bool> {
+        // 3.19 — letter keys are plain keys: Ctrl+C must not clear the pane.
+        if matches!(key.code, KeyCode::Char(_))
+            && key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+        {
+            return Ok(false);
+        }
+        // 3.19 — clamp to the rendered extent so End then ↑ moves at once.
+        let max = self.thoughts_scroll_max.get();
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                self.thoughts_scroll = self.thoughts_scroll.saturating_sub(1);
+                self.thoughts_scroll = self.thoughts_scroll.min(max).saturating_sub(1);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.thoughts_scroll = self.thoughts_scroll.saturating_add(1);
+                self.thoughts_scroll = self.thoughts_scroll.saturating_add(1).min(max);
             }
-            KeyCode::PageUp => self.thoughts_scroll = self.thoughts_scroll.saturating_sub(10),
-            KeyCode::PageDown => self.thoughts_scroll = self.thoughts_scroll.saturating_add(10),
+            KeyCode::PageUp => self.thoughts_scroll = self.thoughts_scroll.min(max).saturating_sub(10),
+            KeyCode::PageDown => self.thoughts_scroll = self.thoughts_scroll.saturating_add(10).min(max),
             KeyCode::Char('g') | KeyCode::Home => self.thoughts_scroll = 0,
-            KeyCode::Char('G') | KeyCode::End => self.thoughts_scroll = usize::MAX,
+            KeyCode::Char('G') | KeyCode::End => self.thoughts_scroll = max,
             // 3.9 — `y` yanks the whole reflective transcript to the clipboard
             // (the pane has no per-block selection). Distinct from `c` = clear.
             KeyCode::Char('y') | KeyCode::Char('Y') => self.thoughts_copy(),
@@ -10075,6 +10144,7 @@ impl App {
             match key.code {
                 KeyCode::Esc => {
                     self.output_filter.text_query = None;
+                    self.output_query_input.clear();
                     self.output_query_focused = false;
                     self.after_output_filter_change("output search cleared".into());
                 }
@@ -10082,17 +10152,15 @@ impl App {
                     self.output_query_focused = false;
                     self.status = self.output_filter_status();
                 }
-                KeyCode::Backspace => {
-                    if let Some(q) = self.output_filter.text_query.as_mut() {
-                        q.pop();
+                // 3.19 — the shared one-line chord set; the box mirrors into
+                // the persisted filter on every change.
+                _ => {
+                    if handle_text_input_key(&mut self.output_query_input, key) {
+                        self.output_filter.text_query =
+                            Some(self.output_query_input.as_str().to_string());
+                        self.after_output_filter_change(self.output_filter_status());
                     }
-                    self.after_output_filter_change(self.output_filter_status());
                 }
-                KeyCode::Char(c) if plain => {
-                    self.output_filter.text_query.get_or_insert_with(String::new).push(c);
-                    self.after_output_filter_change(self.output_filter_status());
-                }
-                _ => {}
             }
             return Ok(true);
         }
@@ -10100,7 +10168,13 @@ impl App {
             // PANE-2 — open the free-text query line.
             KeyCode::Char('/') if plain => {
                 self.output_query_focused = true;
-                self.output_filter.text_query.get_or_insert_with(String::new);
+                let existing = self
+                    .output_filter
+                    .text_query
+                    .get_or_insert_with(String::new)
+                    .clone();
+                self.output_query_input.clear();
+                self.output_query_input.insert_str(&existing);
                 self.status = "search Output: type to filter · Enter keep · Esc clear".into();
             }
             // PANE-1 filtering (road to 1.4.0): narrow the pane by source / severity
@@ -15381,8 +15455,11 @@ impl App {
             return;
         };
         if node.kind != NodeKind::Paragraph {
-            self.status =
-                "copy/move: paragraphs only — use J/K to reorder, </> to promote/demote".into();
+            self.status = if self.focus == Focus::Tree {
+                "copy/move: paragraphs only — u/j reorder siblings".into()
+            } else {
+                "copy/move: paragraphs only — use J/K to reorder, </> to promote/demote".into()
+            };
             return;
         }
         let slug = node.slug.clone();
@@ -15426,8 +15503,9 @@ impl App {
                     .map(|n| n.slug.clone())
                     .unwrap_or_default();
                 if self.hierarchy.get(clip.id).and_then(|n| n.parent_id) == dest_parent {
+                    let reorder = if self.focus == Focus::Tree { "u/j" } else { "J/K" };
                     self.status =
-                        format!("affix: `{slug}` is already in that parent (J/K to reorder)");
+                        format!("affix: `{slug}` is already in that parent ({reorder} to reorder)");
                     return;
                 }
                 match self
@@ -27027,15 +27105,20 @@ impl App {
         // from the tree pane via `O`), fall back to the
         // cursor's row. Lets tree O cycle status without
         // first having to open the paragraph.
-        let id = match self.opened.as_ref().map(|d| d.id) {
-            Some(id) => id,
-            None => match self.rows.get(self.tree_cursor) {
-                Some((id, _)) => *id,
-                None => {
-                    self.status = "no paragraph selected".into();
-                    return;
-                }
-            },
+        // 3.19 — from the Tree pane the cursor row is the target (the legend
+        // says so); the open paragraph only wins from the other panes. It used
+        // to cycle the open paragraph whenever one was loaded, so tree `o` on
+        // another row silently changed the wrong paragraph.
+        let cursor_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
+        let open_id = self.opened.as_ref().map(|d| d.id);
+        let target = if self.focus == Focus::Tree {
+            cursor_id.or(open_id)
+        } else {
+            open_id.or(cursor_id)
+        };
+        let Some(id) = target else {
+            self.status = "no paragraph selected".into();
+            return;
         };
         let Some(node) = self.hierarchy.get(id).cloned() else {
             self.status = "couldn't find the target paragraph in the hierarchy".into();
@@ -33256,6 +33339,15 @@ impl App {
     }
 
     fn change_focus(&mut self, new: Focus) {
+        // 3.19 — a `/` filter still being typed is kept as if Enter had been
+        // pressed, so keys in the next pane don't keep editing the needle.
+        if self.tree_filter_editing && new != Focus::Tree {
+            self.tree_filter_editing = false;
+            if self.tree_filter.as_str().trim().is_empty() {
+                self.tree_filter.clear();
+                self.rebuild_rows_preserving_cursor();
+            }
+        }
         if self.focus == Focus::Editor && new != Focus::Editor {
             // Focus-out also counts as "I'm done reviewing the
             // corrections" — drop the highlight so the next time the
