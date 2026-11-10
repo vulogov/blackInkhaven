@@ -466,6 +466,25 @@ fn append_line(a: &mut App, text: &str) {
     }
 }
 
+/// A five-word WN-LMF lexicon around `word`: two synonyms in its synset, a
+/// hypernym synset and an antonym, enough for the thesaurus panel to list
+/// every relation kind the real index yields.
+fn mini_wordnet(word: &str) -> String {
+    let word = word.replace('&', "&amp;").replace('"', "&quot;");
+    format!(
+        "<?xml version=\"1.0\"?><LexicalResource><Lexicon id=\"probe\" language=\"en\">\
+         <LexicalEntry id=\"w1\"><Lemma writtenForm=\"{word}\" partOfSpeech=\"n\"/><Sense id=\"w1-s1\" synset=\"s1\"><SenseRelation relType=\"antonym\" target=\"w4-s1\"/></Sense></LexicalEntry>\
+         <LexicalEntry id=\"w2\"><Lemma writtenForm=\"port\" partOfSpeech=\"n\"/><Sense id=\"w2-s1\" synset=\"s1\"/></LexicalEntry>\
+         <LexicalEntry id=\"w3\"><Lemma writtenForm=\"haven\" partOfSpeech=\"n\"/><Sense id=\"w3-s1\" synset=\"s1\"/></LexicalEntry>\
+         <LexicalEntry id=\"w4\"><Lemma writtenForm=\"desert\" partOfSpeech=\"n\"/><Sense id=\"w4-s1\" synset=\"s3\"/></LexicalEntry>\
+         <LexicalEntry id=\"w5\"><Lemma writtenForm=\"shelter\" partOfSpeech=\"n\"/><Sense id=\"w5-s1\" synset=\"s2\"/></LexicalEntry>\
+         <Synset id=\"s1\" ili=\"i1\" partOfSpeech=\"n\"><Definition>a sheltered place</Definition><SynsetRelation relType=\"hypernym\" target=\"s2\"/></Synset>\
+         <Synset id=\"s2\" ili=\"i2\" partOfSpeech=\"n\"><Definition>cover from the weather</Definition></Synset>\
+         <Synset id=\"s3\" ili=\"i3\" partOfSpeech=\"n\"><Definition>a barren place</Definition></Synset>\
+         </Lexicon></LexicalResource>"
+    )
+}
+
 fn id_by_title(a: &App, title: &str) -> Option<Uuid> {
     a.hierarchy.iter().find(|n| n.title == title).map(|n| n.id)
 }
@@ -522,9 +541,17 @@ fn modal_probe() {
         ("CostDashboard", Focus::Editor, Box::new(|a: &mut App| a.open_cost_dashboard())),
         ("CommandPalette", Focus::Editor, Box::new(|a: &mut App| a.open_command_palette())),
         ("SimilarPicker", Focus::Editor, Box::new(|a: &mut App| a.toggle_similar_paragraph_mode())),
-        ("Thesaurus", Focus::Editor, Box::new(|a: &mut App| { if let Some(d) = a.opened.as_mut() { d.textarea.cancel_selection(); d.textarea.move_cursor(tui_textarea::CursorMove::Jump(2, 6)); } a.open_thesaurus(); })),
-        // The real opener needs an installed WordNet (or an AI round-trip);
-        // the panel itself is exercised from a built suggestion list.
+        // 3.20 — the real opener, against a WordNet index seeded in memory
+        // for the word under the cursor (the on-disk index is a user-level
+        // install the probe must not depend on).
+        ("Thesaurus", Focus::Editor, Box::new(|a: &mut App| {
+            if let Some(d) = a.opened.as_mut() { d.textarea.cancel_selection(); d.textarea.move_cursor(tui_textarea::CursorMove::Jump(2, 6)); }
+            let word = a.opened.as_ref().and_then(current_word_bounds).map(|(w, _, _, _)| w).unwrap_or_else(|| "harbor".into());
+            let lang = a.active_prompt_language();
+            a.wordnet_index = Some((lang, crate::wordnet::parse_lmf(&mini_wordnet(&word)).expect("probe wordnet")));
+            a.open_thesaurus();
+        })),
+        // The panel itself, from a longer built suggestion list (antonyms too).
         ("Thesaurus*direct", Focus::Editor, Box::new(|a: &mut App| {
             let suggestions = ["port", "haven", "anchorage", "dock", "marina", "quay", "wharf", "basin", "roadstead", "shelter", "refuge", "mooring"]
                 .iter()
