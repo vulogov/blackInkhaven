@@ -233,8 +233,8 @@ pub enum Action {
     /// the persisted default is `editor.wrap`).
     #[serde(rename = "editor.toggle_wrap")]
     ToggleSoftWrap,
-    /// `Ctrl+Z t`. Strip trailing whitespace from every line of the open buffer,
-    /// as one undoable edit.
+    /// `Ctrl+Z t`. Strip trailing whitespace from every line of the open buffer
+    /// (a cut plus an insert — two `Ctrl+U` presses revert it).
     #[serde(rename = "editor.strip_trailing_ws")]
     StripTrailingWhitespace,
     /// `Ctrl+Z m`. Jump the cursor to the bracket matching the one at/before it,
@@ -1339,7 +1339,7 @@ impl Action {
             Action::ToggleSoftWrap =>
                 "Toggle soft-wrap (Ctrl+Z w) — flip word-wrap display for the open buffer at runtime, without editing config + restarting. Session-only; the persisted default is `editor.wrap`. Handy when switching between reading wrapped prose and editing unwrapped code/tables. Mnemonic: W for Wrap.".into(),
             Action::StripTrailingWhitespace =>
-                "Strip trailing whitespace (Ctrl+Z t) — remove trailing spaces/tabs from every line of the open buffer as ONE undoable edit (Ctrl+U reverts it). Cleans the noisy diffs and stray whitespace that `Ctrl+V ?` reports. Mnemonic: T for Trim.".into(),
+                "Strip trailing whitespace (Ctrl+Z t) — remove trailing spaces/tabs from every line of the open buffer (two Ctrl+U presses revert it — the trim is a cut plus an insert). Cleans the noisy diffs and stray whitespace that `Ctrl+V ?` reports. Mnemonic: T for Trim.".into(),
             Action::JumpMatchingBracket =>
                 "Jump to matching bracket (Ctrl+Z m) — move the cursor to the (), [], or {} that pairs with the bracket at or just before the cursor, across lines and respecting nesting. Handy for balancing #figure(...), #footnote[...], and #table(...). Mnemonic: M for Match.".into(),
             Action::OpenCharacterArc =>
@@ -1675,9 +1675,10 @@ impl KeyBindings {
                 entry("m", Action::MorphType, Scope::Tree),
                 entry("Up", Action::ReorderUp, Scope::Tree),
                 entry("Down", Action::ReorderDown, Scope::Tree),
-                // Reorder aliases used in the old keymap.
-                entry("u", Action::ReorderUp, Scope::Tree),
-                entry("j", Action::ReorderDown, Scope::Tree),
+                // 3.19 — the old `u` / `j` reorder aliases are gone: in the
+                // Tree pane they shadowed the global `Ctrl+B U` (undo last
+                // delete) and `Ctrl+B J` (Inner Socrates). The bare tree keys
+                // `u` / `j` and `Ctrl+B ↑` / `↓` still reorder.
 
                 // ── Editor pane ───────────────────────────────
                 // 1.2.9+ — editor-scope Ctrl+B S was a redundant
@@ -3053,6 +3054,26 @@ mod tests {
         };
         assert_eq!(plain('u'), Some(Action::UndoLastDelete), "bare Ctrl+B u still UndoLastDelete");
         assert_eq!(plain('z'), Some(Action::OpenGraphHub), "bare Ctrl+B z still the graph hub");
+    }
+
+    #[test]
+    fn tree_pane_reaches_the_global_ctrl_b_u_and_j() {
+        // 3.19 — the Tree-scoped reorder aliases used to win these chords, so
+        // undo-last-delete and the Inner Socrates overview were unreachable
+        // from the tree (the reorder keys are the bare `u` / `j` and the arrows).
+        let k = KeyBindings::defaults();
+        for focus in [Focus::Tree, Focus::SearchBar, Focus::Editor, Focus::Ai] {
+            let plain = |c: char| {
+                k.resolve_meta_sub(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE), focus)
+            };
+            assert_eq!(plain('u'), Some(Action::UndoLastDelete), "Ctrl+B u in {focus:?}");
+            assert_eq!(plain('j'), Some(Action::OpenInnerSocratesOverview), "Ctrl+B j in {focus:?}");
+        }
+        let arrow = |code: KeyCode| {
+            k.resolve_meta_sub(&KeyEvent::new(code, KeyModifiers::NONE), Focus::Tree)
+        };
+        assert_eq!(arrow(KeyCode::Up), Some(Action::ReorderUp));
+        assert_eq!(arrow(KeyCode::Down), Some(Action::ReorderDown));
     }
 
     #[test]

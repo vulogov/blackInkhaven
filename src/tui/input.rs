@@ -13,6 +13,15 @@ pub struct TextInput {
     multiline: bool,
 }
 
+impl From<&str> for TextInput {
+    /// A single-line buffer holding `s` with the cursor after its last char.
+    fn from(s: &str) -> Self {
+        let mut t = Self::new();
+        t.insert_str(s);
+        t
+    }
+}
+
 impl TextInput {
     pub fn new() -> Self {
         Self::default()
@@ -207,8 +216,9 @@ impl TextInput {
         true
     }
 
-    /// Cursor's `(line, column)` in the multi-line buffer (both 0-based).
-    fn cursor_line_col(&self) -> (usize, usize) {
+    /// Cursor's `(line, column)` in the multi-line buffer (both 0-based);
+    /// `(0, cursor)` for a single-line input.
+    pub fn cursor_line_col(&self) -> (usize, usize) {
         let mut line = 0;
         let mut col = 0;
         for c in self.buffer.chars().take(self.cursor) {
@@ -311,6 +321,61 @@ impl TextInput {
         self.buffer.replace_range(kill_start_byte..kill_end_byte, "");
     }
 
+    /// 3.19 — display cells between the start of the cursor's line and the
+    /// cursor (a wide glyph is two cells, a combining mark none). Drives the
+    /// horizontal scroll that keeps the cursor visible in a narrow box.
+    pub fn cursor_display_col(&self) -> usize {
+        let before: Vec<char> = self.buffer.chars().take(self.cursor).collect();
+        before
+            .iter()
+            .rev()
+            .take_while(|c| **c != '\n')
+            .map(|c| unicode_width::UnicodeWidthChar::width(*c).unwrap_or(0))
+            .sum()
+    }
+
+    /// 3.19 — [`render_with_cursor`](Self::render_with_cursor) windowed to
+    /// `width` display cells so the cursor is always on screen: text that
+    /// does not fit is clipped on the side away from the cursor, and a leading
+    /// `…` marks clipped text on the left. `width == 0` and multi-line inputs
+    /// (scrolled by their renderer) return the full string.
+    pub fn render_with_cursor_fit(&self, cursor_char: char, width: usize) -> String {
+        let full = self.render_with_cursor(cursor_char);
+        if width == 0 || self.multiline {
+            return full;
+        }
+        let cells: Vec<(char, usize)> = full
+            .chars()
+            .map(|c| (c, unicode_width::UnicodeWidthChar::width(c).unwrap_or(0)))
+            .collect();
+        let total: usize = cells.iter().map(|(_, w)| w).sum();
+        if total <= width {
+            return full;
+        }
+        // The cursor glyph sits at char index `cursor`.
+        let ci = self.cursor.min(cells.len().saturating_sub(1));
+        let mut start = 0usize;
+        let mut used: usize = cells[..=ci].iter().map(|(_, w)| w).sum();
+        while used > width && start < ci {
+            used -= cells[start].1;
+            start += 1;
+        }
+        let mut end = ci + 1;
+        while end < cells.len() && used + cells[end].1 <= width {
+            used += cells[end].1;
+            end += 1;
+        }
+        let mut out: String = cells[start..end].iter().map(|(c, _)| *c).collect();
+        if start > 0 {
+            // Replace the first visible char with the clip marker (its cell
+            // budget is already paid for).
+            let mut it = out.chars();
+            it.next();
+            out = format!("…{}", it.as_str());
+        }
+        out
+    }
+
     fn byte_offset(&self, char_idx: usize) -> usize {
         self.buffer
             .char_indices()
@@ -335,6 +400,141 @@ fn is_word_separator(c: char) -> bool {
             | '`' | '<' | '>' | '!' | '?' | '*' | '&'
             | '=' | '+' | '~'
         )
+}
+
+/// 3.19 — shell-style history recall shared by every input that has a history
+/// ring (search bar, AI prompt, F1 help query, shell pane). `cursor` is the
+/// ring index being walked (`None` = not walking); `draft` keeps whatever was
+/// typed when the walk began, so walking past the newest entry brings the
+/// draft back instead of wiping it. Returns the text to put in the input.
+pub fn recall_older(
+    history: &[String],
+    cursor: &mut Option<usize>,
+    draft: &mut Option<String>,
+    current: &str,
+) -> Option<String> {
+    if history.is_empty() {
+        return None;
+    }
+    let last = history.len() - 1;
+    let next = match *cursor {
+        Some(i) => i.min(last).saturating_sub(1),
+        None => {
+            *draft = Some(current.to_string());
+            last
+        }
+    };
+    *cursor = Some(next);
+    Some(history[next].clone())
+}
+
+/// The `↓` half of [`recall_older`]: the next newer entry, or — past the
+/// newest — the stashed draft (empty when there was none), leaving the walk.
+pub fn recall_newer(
+    history: &[String],
+    cursor: &mut Option<usize>,
+    draft: &mut Option<String>,
+) -> Option<String> {
+    let cur = (*cursor)?;
+    let next = cur + 1;
+    if next >= history.len() {
+        *cursor = None;
+        return Some(draft.take().unwrap_or_default());
+    }
+    *cursor = Some(next);
+    Some(history[next].clone())
+}
+
+/// Leave a history walk (after an edit or a submit): the next `↑` starts at
+/// the newest entry again and the stale draft is dropped.
+pub fn reset_recall(cursor: &mut Option<usize>, draft: &mut Option<String>) {
+    *cursor = None;
+    *draft = None;
+}
+
+#[cfg(test)]
+mod shared_behaviour_tests {
+    use super::*;
+
+    fn input(s: &str) -> TextInput {
+        let mut t = TextInput::new();
+        t.insert_str(s);
+        t
+    }
+
+    #[test]
+    fn fit_keeps_the_cursor_visible_at_the_end() {
+        let t = input("abcdefghij"); // cursor after j → "abcdefghij│" is 11 cells
+        assert_eq!(t.render_with_cursor_fit('│', 20), "abcdefghij│");
+        // Six cells: the clip marker takes the first one.
+        assert_eq!(t.render_with_cursor_fit('│', 6), "…ghij│");
+        assert_eq!(t.render_with_cursor_fit('│', 0), "abcdefghij│");
+    }
+
+    #[test]
+    fn fit_keeps_the_cursor_visible_in_the_middle_and_start() {
+        let mut t = input("abcdefghij");
+        t.move_home();
+        assert_eq!(t.render_with_cursor_fit('│', 5), "│abcd");
+        for _ in 0..5 {
+            t.move_right();
+        }
+        let shown = t.render_with_cursor_fit('│', 5);
+        assert!(shown.contains('│'), "{shown}");
+        assert!(shown.chars().count() <= 5, "{shown}");
+    }
+
+    #[test]
+    fn fit_counts_wide_glyphs_as_two_cells() {
+        let t = input("中中中中"); // 8 cells + cursor
+        let shown = t.render_with_cursor_fit('│', 5);
+        assert_eq!(shown, "…中│", "{shown}");
+        assert_eq!(input("中中").cursor_display_col(), 4);
+    }
+
+    #[test]
+    fn fit_leaves_multiline_inputs_alone() {
+        let mut t = TextInput::multiline();
+        t.insert_str("a long first line
+second");
+        assert_eq!(t.render_with_cursor_fit('│', 4), t.render_with_cursor('│'));
+        assert_eq!(t.cursor_line_col(), (1, 6));
+        assert_eq!(t.cursor_display_col(), 6);
+    }
+
+    #[test]
+    fn recall_walks_the_ring_and_restores_the_draft() {
+        let history = vec!["one".to_string(), "two".to_string(), "three".to_string()];
+        let mut cursor = None;
+        let mut draft = None;
+        assert_eq!(recall_older(&history, &mut cursor, &mut draft, "typing…").as_deref(), Some("three"));
+        assert_eq!(draft.as_deref(), Some("typing…"));
+        assert_eq!(recall_older(&history, &mut cursor, &mut draft, "three").as_deref(), Some("two"));
+        assert_eq!(recall_older(&history, &mut cursor, &mut draft, "two").as_deref(), Some("one"));
+        // Oldest entry: ↑ stays.
+        assert_eq!(recall_older(&history, &mut cursor, &mut draft, "one").as_deref(), Some("one"));
+        assert_eq!(recall_newer(&history, &mut cursor, &mut draft).as_deref(), Some("two"));
+        assert_eq!(recall_newer(&history, &mut cursor, &mut draft).as_deref(), Some("three"));
+        // Past the newest: the draft comes back and the walk ends.
+        assert_eq!(recall_newer(&history, &mut cursor, &mut draft).as_deref(), Some("typing…"));
+        assert_eq!(cursor, None);
+        assert_eq!(draft, None);
+        // Not walking: ↓ does nothing.
+        assert_eq!(recall_newer(&history, &mut cursor, &mut draft), None);
+        // Empty ring: ↑ does nothing and keeps the draft untouched.
+        assert_eq!(recall_older(&[], &mut cursor, &mut draft, "x"), None);
+        assert_eq!(draft, None);
+    }
+
+    #[test]
+    fn recall_survives_a_ring_that_shrank_under_the_cursor() {
+        let history = vec!["only".to_string()];
+        let mut cursor = Some(7);
+        let mut draft = None;
+        assert_eq!(recall_older(&history, &mut cursor, &mut draft, "").as_deref(), Some("only"));
+        reset_recall(&mut cursor, &mut draft);
+        assert_eq!(cursor, None);
+    }
 }
 
 #[cfg(test)]

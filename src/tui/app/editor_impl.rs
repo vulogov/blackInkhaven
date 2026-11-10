@@ -8,6 +8,7 @@
 
 
 use anyhow::Result;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders};
@@ -188,18 +189,9 @@ impl super::App {
         let Some(doc) = self.opened.as_mut() else {
             return;
         };
-        let saved_yank = doc.textarea.yank_text();
-        // Move to start of line, clear to end, then remove the newline so
-        // the next line collapses up.
-        doc.textarea.move_cursor(CursorMove::Head);
-        doc.textarea.delete_line_by_end();
-        // delete_next_char removes the newline; on the last line it's a
-        // no-op which leaves an empty line where the deleted one was. That's
-        // an acceptable quirk — the user can hit Ctrl+D again to remove it,
-        // or move up and delete the previous newline.
-        doc.textarea.delete_next_char();
-        doc.textarea.set_yank_text(saved_yank);
-        doc.dirty = true;
+        if delete_whole_line(&mut doc.textarea) {
+            doc.dirty = true;
+        }
     }
 
     /// Delete from the cursor to the end of the current line. Used by both
@@ -544,10 +536,11 @@ impl super::App {
                 "no paragraph open — open one first, then F3 to replace its body".into();
             return;
         };
-        let mut new_textarea = TextArea::new(body_to_lines(&body));
-        new_textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
-        new_textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
-        doc.textarea = new_textarea;
+        if doc.read_only {
+            self.status = "Help is read-only — file not loaded".into();
+            return;
+        }
+        doc.textarea = editor_textarea(body_to_lines(&body), self.cfg.editor.tab_width);
         doc.dirty = true;
         doc.scroll_row = 0;
         doc.scroll_col = 0;
@@ -626,9 +619,7 @@ impl super::App {
 
         let lines = body_to_lines(&body);
         let saved_lines = lines.clone();
-        let mut textarea = TextArea::new(lines);
-        textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
-        textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
+        let mut textarea = editor_textarea(lines, self.cfg.editor.tab_width);
 
         let read_only = self.hierarchy.ancestors(node).iter().any(|a| {
             a.protected && a.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_HELP)
@@ -1156,9 +1147,7 @@ impl super::App {
         };
         let lines = body_to_lines(&body);
         let saved_lines = lines.clone();
-        let mut textarea = TextArea::new(lines);
-        textarea.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
-        textarea.set_line_number_style(Style::default().fg(Color::DarkGray));
+        let mut textarea = editor_textarea(lines, self.cfg.editor.tab_width);
         let read_only = self.hierarchy.ancestors(&node).iter().any(|a| {
             a.protected && a.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_HELP)
         });
@@ -1835,8 +1824,15 @@ impl super::App {
                 }
                 true
             }
-            KeyCode::Char(c) => {
-                input.insert_char(c);
+            KeyCode::Char(_)
+            | KeyCode::Delete
+            | KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Home
+            | KeyCode::End => {
+                if !super::handle_text_input_key(input, key) {
+                    return true;
+                }
                 let filter = input.as_str().to_lowercase();
                 *matches = candidates
                     .iter()
@@ -1850,7 +1846,7 @@ impl super::App {
                 true
             }
             KeyCode::Backspace => {
-                input.backspace();
+                super::handle_text_input_key(input, key);
                 let filter = input.as_str().to_lowercase();
                 *matches = candidates
                     .iter()
@@ -1935,4 +1931,327 @@ fn read_selection_text(textarea: &tui_textarea::TextArea<'static>) -> String {
         }
     }
     out
+}
+
+/// Undo depth of an editor buffer. tui-textarea's default is 50 edits — one
+/// per keystroke, i.e. less than a sentence of typing before `Ctrl+U` stops.
+pub(super) const EDITOR_UNDO_DEPTH: usize = 1000;
+
+/// The settings every editor-pane buffer must carry: `Tab` indents by
+/// `editor.tab_width` (soft tabs, as the config documents) and the undo
+/// history is deep enough for real writing. Every site that builds a
+/// `TextArea` for the editor pane goes through this (or [`editor_textarea`]).
+pub(super) fn configure_editor_textarea(ta: &mut TextArea<'static>, tab_width: usize) {
+    ta.set_tab_length(tab_width.clamp(1, 16) as u8);
+    ta.set_max_histories(EDITOR_UNDO_DEPTH);
+}
+
+/// A fully configured editor-pane buffer over `lines`.
+pub(super) fn editor_textarea(lines: Vec<String>, tab_width: usize) -> TextArea<'static> {
+    let mut ta = TextArea::new(lines);
+    ta.set_cursor_line_style(Style::default().add_modifier(Modifier::REVERSED));
+    ta.set_line_number_style(Style::default().fg(Color::DarkGray));
+    configure_editor_textarea(&mut ta, tab_width);
+    ta
+}
+
+/// Delete the cursor's whole line — content plus its newline — so the next
+/// line takes its place. On the last line the content is cleared and the (now
+/// empty) line remains. The yank buffer is preserved. Returns whether the
+/// buffer changed. Shared by `Ctrl+D` and the Bund word `ink.editor.delete_line`.
+pub(super) fn delete_whole_line(ta: &mut TextArea<'static>) -> bool {
+    let saved_yank = ta.yank_text();
+    let (row, _) = ta.cursor();
+    let was_empty = ta.lines().get(row).is_some_and(|l| l.is_empty());
+    ta.move_cursor(CursorMove::Head);
+    let mut changed = false;
+    // On an empty line `delete_line_by_end` already swallows the newline (it
+    // falls through to "delete next char"), and a second delete would then eat
+    // the following line's first character — so clear content only when there
+    // is some, and let the single `delete_next_char` take the newline.
+    if !was_empty {
+        changed |= ta.delete_line_by_end();
+    }
+    changed |= ta.delete_next_char();
+    ta.set_yank_text(saved_yank);
+    changed
+}
+
+/// 3.19 — the chord set every multi-line text box shares: the HJSON config
+/// editor and the comment editor call this for everything that is not their
+/// own command key; the paragraph editor applies the same bindings in
+/// `handle_editor_key_inner` on top of its paragraph-only features (auto-pair,
+/// snippets, search, block select). Arrows / `Home` / `End` / `PgUp` / `PgDn`
+/// move (with `Shift` extending the selection; a page is `page` rows),
+/// `Ctrl+U` / `Ctrl+Y` undo / redo, `Ctrl+K` / `Ctrl+C` / `Ctrl+P` cut / copy /
+/// paste through the system clipboard when there is one, `Ctrl+A` selects all,
+/// `Ctrl+D` / `Ctrl+E` / `Ctrl+W` delete the line / to its end / to its start
+/// (yank buffer preserved), `Ctrl+Home` / `Ctrl+End` jump to the buffer ends,
+/// `Ctrl+←` / `Ctrl+→` by word, `Ctrl+Backspace` deletes a word; anything
+/// else is plain typing (`input_without_shortcuts`, so tui-textarea's emacs
+/// defaults never fire).
+pub(super) fn textarea_edit_key(
+    textarea: &mut TextArea<'static>,
+    key: KeyEvent,
+    clipboard: Option<&mut arboard::Clipboard>,
+    page: usize,
+) {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+    if !alt && !ctrl {
+        let (cmove, times) = match key.code {
+            KeyCode::Up => (Some(CursorMove::Up), 1),
+            KeyCode::Down => (Some(CursorMove::Down), 1),
+            KeyCode::Left => (Some(CursorMove::Back), 1),
+            KeyCode::Right => (Some(CursorMove::Forward), 1),
+            KeyCode::Home => (Some(CursorMove::Head), 1),
+            KeyCode::End => (Some(CursorMove::End), 1),
+            KeyCode::PageUp => (Some(CursorMove::Up), page.max(1)),
+            KeyCode::PageDown => (Some(CursorMove::Down), page.max(1)),
+            _ => (None, 0),
+        };
+        if let Some(m) = cmove {
+            if shift {
+                if textarea.selection_range().is_none() {
+                    textarea.start_selection();
+                }
+            } else {
+                textarea.cancel_selection();
+            }
+            for _ in 0..times {
+                textarea.move_cursor(m);
+            }
+            return;
+        }
+    }
+    if ctrl {
+        match key.code {
+            KeyCode::Char('u') | KeyCode::Char('U') if !shift => {
+                textarea.undo();
+                return;
+            }
+            KeyCode::Char('y') | KeyCode::Char('Y') if !shift => {
+                textarea.redo();
+                return;
+            }
+            KeyCode::Char('k') | KeyCode::Char('K') if !shift => {
+                if textarea.cut() {
+                    if let Some(cb) = clipboard {
+                        let _ = cb.set_text(textarea.yank_text());
+                    }
+                }
+                return;
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') if !shift => {
+                textarea.copy();
+                let text = textarea.yank_text();
+                if !text.is_empty() {
+                    if let Some(cb) = clipboard {
+                        let _ = cb.set_text(text);
+                    }
+                }
+                return;
+            }
+            KeyCode::Char('p') | KeyCode::Char('P') if !shift => {
+                if let Some(cb) = clipboard {
+                    if let Ok(text) = cb.get_text() {
+                        textarea.set_yank_text(text);
+                    }
+                }
+                textarea.paste();
+                return;
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') if !shift => {
+                textarea.select_all();
+                return;
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') if !shift => {
+                delete_whole_line(textarea);
+                return;
+            }
+            KeyCode::Char('e') | KeyCode::Char('E') if !shift => {
+                let yank = textarea.yank_text();
+                textarea.delete_line_by_end();
+                textarea.set_yank_text(yank);
+                return;
+            }
+            KeyCode::Char('w') | KeyCode::Char('W') if !shift => {
+                let yank = textarea.yank_text();
+                textarea.delete_line_by_head();
+                textarea.set_yank_text(yank);
+                return;
+            }
+            KeyCode::Home => {
+                textarea.move_cursor(CursorMove::Top);
+                return;
+            }
+            KeyCode::End => {
+                textarea.move_cursor(CursorMove::Bottom);
+                return;
+            }
+            KeyCode::Left => {
+                textarea.move_cursor(CursorMove::WordBack);
+                return;
+            }
+            KeyCode::Right => {
+                textarea.move_cursor(CursorMove::WordForward);
+                return;
+            }
+            KeyCode::Backspace => {
+                textarea.delete_word();
+                return;
+            }
+            _ => {}
+        }
+    }
+    let input: tui_textarea::Input = key.into();
+    textarea.input_without_shortcuts(input);
+}
+
+#[cfg(test)]
+mod textarea_chord_tests {
+    use super::textarea_edit_key;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use tui_textarea::{CursorMove, TextArea};
+
+    fn ta(lines: &[&str]) -> TextArea<'static> {
+        TextArea::new(lines.iter().map(|s| s.to_string()).collect())
+    }
+    fn key(code: KeyCode, m: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, m)
+    }
+
+    #[test]
+    fn ctrl_d_removes_the_line_even_when_empty() {
+        let mut t = ta(&["alpha", "", "gamma"]);
+        t.move_cursor(CursorMove::Jump(1, 0));
+        textarea_edit_key(&mut t, key(KeyCode::Char('d'), KeyModifiers::CONTROL), None, 5);
+        assert_eq!(t.lines(), &["alpha", "gamma"]);
+    }
+
+    #[test]
+    fn page_keys_move_by_the_page_and_shift_selects() {
+        let lines: Vec<String> = (0..30).map(|i| format!("line {i}")).collect();
+        let mut t = TextArea::new(lines);
+        textarea_edit_key(&mut t, key(KeyCode::PageDown, KeyModifiers::NONE), None, 10);
+        assert_eq!(t.cursor().0, 10);
+        textarea_edit_key(&mut t, key(KeyCode::PageDown, KeyModifiers::SHIFT), None, 10);
+        assert_eq!(t.cursor().0, 20);
+        assert!(t.selection_range().is_some());
+        textarea_edit_key(&mut t, key(KeyCode::Up, KeyModifiers::NONE), None, 10);
+        assert!(t.selection_range().is_none(), "a plain move cancels the selection");
+        assert_eq!(t.cursor().0, 19);
+    }
+
+    #[test]
+    fn cut_copy_paste_and_kills_keep_the_yank_contract() {
+        let mut t = ta(&["hello world"]);
+        t.move_cursor(CursorMove::Jump(0, 6));
+        textarea_edit_key(&mut t, key(KeyCode::Char('a'), KeyModifiers::CONTROL), None, 5);
+        textarea_edit_key(&mut t, key(KeyCode::Char('c'), KeyModifiers::CONTROL), None, 5);
+        assert_eq!(t.yank_text(), "hello world");
+        // Line-targeted deletes must not clobber the yank buffer.
+        t.cancel_selection();
+        t.move_cursor(CursorMove::Jump(0, 6));
+        textarea_edit_key(&mut t, key(KeyCode::Char('e'), KeyModifiers::CONTROL), None, 5);
+        assert_eq!(t.lines(), &["hello "]);
+        assert_eq!(t.yank_text(), "hello world");
+        textarea_edit_key(&mut t, key(KeyCode::Char('p'), KeyModifiers::CONTROL), None, 5);
+        assert_eq!(t.lines(), &["hello hello world"]);
+        textarea_edit_key(&mut t, key(KeyCode::Char('u'), KeyModifiers::CONTROL), None, 5);
+        assert_eq!(t.lines(), &["hello "]);
+    }
+
+    #[test]
+    fn plain_typing_and_ctrl_letters_outside_the_table() {
+        let mut t = ta(&[""]);
+        textarea_edit_key(&mut t, key(KeyCode::Char('x'), KeyModifiers::NONE), None, 5);
+        // Emacs defaults are off: Ctrl+N is not "next line", Ctrl+H not backspace.
+        textarea_edit_key(&mut t, key(KeyCode::Char('h'), KeyModifiers::CONTROL), None, 5);
+        assert_eq!(t.lines(), &["x"]);
+    }
+}
+
+#[cfg(test)]
+mod editor_buffer_tests {
+    use super::{configure_editor_textarea, delete_whole_line, editor_textarea, EDITOR_UNDO_DEPTH};
+    use tui_textarea::{CursorMove, TextArea};
+
+    fn ta(lines: &[&str]) -> TextArea<'static> {
+        TextArea::new(lines.iter().map(|s| s.to_string()).collect())
+    }
+
+    #[test]
+    fn delete_whole_line_removes_a_middle_line_and_its_newline() {
+        let mut t = ta(&["alpha", "beta", "gamma"]);
+        t.move_cursor(CursorMove::Jump(1, 2));
+        assert!(delete_whole_line(&mut t));
+        assert_eq!(t.lines(), &["alpha", "gamma"]);
+        assert_eq!(t.cursor(), (1, 0));
+    }
+
+    #[test]
+    fn delete_whole_line_on_an_empty_line_keeps_the_next_line_intact() {
+        let mut t = ta(&["alpha", "", "gamma"]);
+        t.move_cursor(CursorMove::Jump(1, 0));
+        assert!(delete_whole_line(&mut t));
+        assert_eq!(t.lines(), &["alpha", "gamma"]);
+    }
+
+    #[test]
+    fn delete_whole_line_on_the_last_line_clears_it() {
+        let mut t = ta(&["alpha", "beta"]);
+        t.move_cursor(CursorMove::Jump(1, 3));
+        assert!(delete_whole_line(&mut t));
+        assert_eq!(t.lines(), &["alpha", ""]);
+        // A lone empty last line: nothing to do, nothing reported.
+        assert!(!delete_whole_line(&mut t));
+        assert_eq!(t.lines(), &["alpha", ""]);
+    }
+
+    #[test]
+    fn delete_whole_line_preserves_the_yank_buffer() {
+        let mut t = ta(&["alpha", "beta"]);
+        t.set_yank_text("kept");
+        delete_whole_line(&mut t);
+        assert_eq!(t.yank_text(), "kept");
+    }
+
+    #[test]
+    fn editor_textarea_honours_tab_width_and_deepens_undo() {
+        let t = editor_textarea(vec!["".into()], 2);
+        assert_eq!(t.tab_length(), 2);
+        assert_eq!(t.max_histories(), EDITOR_UNDO_DEPTH);
+        let mut t = ta(&[""]);
+        configure_editor_textarea(&mut t, 0);
+        assert_eq!(t.tab_length(), 1, "tab_width 0 is clamped, never a dead Tab key");
+        configure_editor_textarea(&mut t, 99);
+        assert_eq!(t.tab_length(), 16);
+    }
+
+    #[test]
+    fn tab_key_inserts_tab_width_spaces() {
+        let mut t = editor_textarea(vec!["".into()], 2);
+        let input: tui_textarea::Input = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Tab,
+            crossterm::event::KeyModifiers::NONE,
+        )
+        .into();
+        t.input_without_shortcuts(input);
+        assert_eq!(t.lines()[0], "  ");
+    }
+
+    #[test]
+    fn undo_covers_a_typed_sentence() {
+        let mut t = editor_textarea(vec!["".into()], 2);
+        let sentence = "The quick brown fox jumps over the lazy dog and keeps on running far away.";
+        for c in sentence.chars() {
+            t.insert_char(c);
+        }
+        for _ in 0..sentence.chars().count() {
+            t.undo();
+        }
+        assert_eq!(t.lines()[0], "");
+    }
 }

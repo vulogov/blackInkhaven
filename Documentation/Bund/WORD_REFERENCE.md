@@ -155,7 +155,7 @@ Read and mutate the project tree, tags, snapshots, and DB. Reads are
 |------|----------|-------|-------------|
 | `ink.editor.cursor` | editor_read | `( -- list[row col] \| NODATA )` | current cursor position |
 | `ink.editor.text` | editor_read | `( -- string \| NODATA )` | full editor buffer text |
-| `ink.editor.find` | editor_read | `( needle -- list[row col] \| NODATA )` | first match position of needle |
+| `ink.editor.find` | editor_read | `( needle -- list[row col] \| NODATA )` | first match position of needle (0-based row and *char* column) |
 | `ink.editor.goto` | editor_write | `( row col -- )` | move the cursor/view to row,col |
 | `ink.editor.set_cursor` | editor_write | `( row col -- )` | set the cursor to 1-based row,col |
 | `ink.editor.insert` | editor_write | `( text -- )` | insert text at the cursor |

@@ -52,7 +52,11 @@ pub(crate) struct VoiceListEntry {
 #[derive(Debug, Clone)]
 pub(crate) struct TtsVoicePickerState {
     pub entries: Vec<VoiceListEntry>,
-    pub filter: String,
+    /// 3.19 — a `TextInput` so the filter has the shared text-box chords.
+    pub filter: super::input::TextInput,
+    /// True while the `/` filter box has focus: keys edit the filter,
+    /// Enter / Esc leave it. Picker letters (`d`) fire only outside it.
+    pub filter_focused: bool,
     /// Index into `filtered_indices()`.  Clamped on
     /// filter change.
     pub cursor: usize,
@@ -102,7 +106,8 @@ impl TtsVoicePickerState {
         entries.sort_by(default_order);
         Self {
             entries,
-            filter: String::new(),
+            filter: super::input::TextInput::new(),
+            filter_focused: false,
             cursor: 0,
             catalog_stale: catalog.stale,
             catalog_failed: None,
@@ -121,7 +126,8 @@ impl TtsVoicePickerState {
         entries.sort_by(default_order);
         Self {
             entries,
-            filter: String::new(),
+            filter: super::input::TextInput::new(),
+            filter_focused: false,
             cursor: 0,
             catalog_stale: false,
             catalog_failed: Some(reason),
@@ -135,7 +141,7 @@ impl TtsVoicePickerState {
         if self.filter.is_empty() {
             return (0..self.entries.len()).collect();
         }
-        let needle = self.filter.to_lowercase();
+        let needle = self.filter.as_str().to_lowercase();
         self.entries
             .iter()
             .enumerate()
@@ -179,14 +185,25 @@ impl TtsVoicePickerState {
         }
     }
 
+    #[cfg(test)]
     pub fn push_filter_char(&mut self, c: char) {
-        self.filter.push(c);
+        self.filter.insert_char(c);
         self.cursor = 0;
     }
 
     pub fn pop_filter_char(&mut self) {
-        self.filter.pop();
+        self.filter.backspace();
         self.cursor = 0;
+    }
+
+    /// Route one key through the shared one-line text-box chord set; the
+    /// cursor re-anchors to the top whenever the needle changed.
+    pub fn filter_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        let changed = super::app::handle_text_input_key(&mut self.filter, key);
+        if changed {
+            self.cursor = 0;
+        }
+        changed
     }
 
     #[allow(dead_code)]

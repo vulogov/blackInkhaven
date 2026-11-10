@@ -1069,7 +1069,7 @@ pub(super) enum Modal {
         language: String,
         /// `(headword, gloss)` pairs.
         entries: Vec<(String, String)>,
-        query: String,
+        query: TextInput,
         cursor: usize,
         /// The `:lang:` trigger span to replace: `(row, start_col, end_col)`.
         trigger: (usize, usize, usize),
@@ -1094,7 +1094,7 @@ pub(super) enum Modal {
         cursor: usize,
         scroll: usize,
         /// Annotation / title substring filter (case-insensitive).
-        filter: String,
+        filter: TextInput,
         /// Whether the `/` filter input has focus.
         filter_focused: bool,
     },
@@ -1125,6 +1125,9 @@ pub(super) enum Modal {
         /// newest entry resets this to None and clears the
         /// input — same as the AI prompt history pattern).
         command_history_cursor: Option<usize>,
+        /// 3.19 — the command being typed when `↑` first recalled history;
+        /// `↓` past the newest entry restores it (see `input::recall_older`).
+        command_draft: Option<String>,
         /// Selection mode: false = normal shell, true =
         /// "history selection mode" where `↑↓` walks turns,
         /// `c` copies, `i` inserts the selected output into
@@ -1185,6 +1188,10 @@ pub(super) enum Modal {
         /// the centered restart-required overlay.  Any key
         /// dismisses the overlay (keeping the modal open).
         restart_required: bool,
+        /// 3.19 — set by the first `Esc` on a dirty buffer; a second `Esc`
+        /// (with no other key in between) discards the edits. Any other key
+        /// clears it.
+        discard_armed: bool,
         /// Vertical scroll into the editor lines (in rows).
         /// tui-textarea handles cursor + selection state
         /// internally; we own scroll because the editor's
@@ -1390,6 +1397,9 @@ pub(super) enum Modal {
     FootnoteEditor {
         textarea: tui_textarea::TextArea<'static>,
         paragraph_id: Uuid,
+        /// 3.19 — first `Esc` on a non-empty body arms the discard; the
+        /// second cancels. Any other key clears it.
+        discard_armed: bool,
     },
     /// 1.2.14+ Phase Q.4 — `Ctrl+V Shift+G`
     /// project goal modal.  Materialises the
@@ -1428,6 +1438,9 @@ pub(super) enum Modal {
     CommentEditor {
         /// Multi-line buffer for the comment body.
         textarea: tui_textarea::TextArea<'static>,
+        /// 3.19 — first `Esc` on a non-empty comment arms the discard; the
+        /// second cancels. Any other key clears it.
+        discard_armed: bool,
         /// Character span the comment anchors to in
         /// the underlying paragraph body.
         anchor_start: usize,

@@ -113,11 +113,13 @@ These chords work from any focus except where noted. Chords marked
 | `F7`                 | **Grammar check** the currently-open paragraph. Resolver precedence for the prompt template: (1) a paragraph titled / slugged `grammar-check` in the **Prompts** system book, (2) an entry of the same name in `prompts.hjson`, (3) a built-in fallback that runs a grammar/punctuation review against the configured `language` (HJSON top-level) and explicitly preserves any Typst markup. Result streams into the AI pane and focus moves there so you can watch the review in real time. | no |
 | `F9`                 | **Cycle the AI scope** through `None → Selection → Paragraph → Subchapter → Chapter → Book → Facts → Socrates → Editor → Graph → None`. The next prompt sent from the AI prompt bar prepends the matching context (selection text / open paragraph / enclosing branch contents) then **auto-resets to `None`** — except the **sticky** conversation scopes (`Facts`, `Socrates`, `Editor`, `Graph`), which persist across follow-ups until you cycle away. `Book` and `Graph` are retrieval-grounded (relevant passages are retrieved and cited rather than the whole book sent); `Graph` additionally folds in the knowledge-graph relations touching each passage (see `Documentation/GRAPH.md`). Mode is shown in the AI prompt title (`AI prompt · scope: Paragraph`) and the status bar. Works from every pane. | no |
 | `F10`                | **Toggle inference mode** between `Local` and `Full`. `Local` instructs the model to use only the supplied context (and prior chat turns); `Full` lets it augment with general knowledge. Both modes are shown in the AI pane title (`AI — gemini · done · infer=Full · scope=Paragraph`). Help inference (F1 / `Help! …`) is **pinned to Local** regardless of this toggle so the help-manual answer never invents features. Works from every pane. | no |
+| `F12`                | (editor) **AI critique** of the open paragraph — "what's weak" in edit mode, "evaluate changes" in split-edit mode. Prompt resolution: Prompts book > `prompts.hjson` > embedded default. |
+| `Ctrl+F12`           | (editor, 1.2.6) **Explain the diagnostic** at the cursor — sends it with its context lines to the AI pane with the explain-or-fix prompt (was bare `F11`, which macOS grabs). |
 | `Ctrl+B C` (AI pane) | Clear the AI chat history + currently displayed inference. (F9's old behaviour; F9 now drives the scope cycle.) **Pane-scoped**: this is the AI-pane meaning — the same `Ctrl+B C` is Character-lexicon lookup in the Editor and Add-chapter in the Tree (see §1.1). | no |
 | `Ctrl+B ]`           | (1.2.5) **Tag the open paragraph** — open the floating tag picker scoped to the editor buffer. Inside the picker: `↑↓` select, `Space` multi-selects, `T` applies selected tags (or the cursor tag if none selected), `A` adds a new tag (prompt), `D` deletes a tag project-wide (y/n confirm), `Enter` applies, `Esc` closes. | no |
 | `Ctrl+B }`           | (1.2.5) **Search by tag** — open the floating tag picker in read-only mode. `Enter` on a tag lists every paragraph that carries it with a typeable filter input; `Enter` on a paragraph row opens it in the editor. `A` / `D` still work (tag management is project-wide). | no |
-| `Ctrl+B 0`           | (1.2.8) **Edit project HJSON** — open `<project>/inkhaven.hjson` in a full-screen modal editor with HJSON syntax highlighting. `Ctrl+S` saves; when the saved bytes differ from the loaded bytes, a *Restart required* overlay pops up (config applies on next launch). **`Ctrl+R` (1.2.12+) fires an LLM review of the current buffer** — same "reviewer LLM, not executor" pattern the prompts-editor TUI uses; response streams into `App.inference` and is visible in the AI pane after closing the modal. `Esc` closes (status-line warning fires if there are unsaved edits). The editor mirrors the main paragraph editor's chord set: arrows / Home / End / PgUp / PgDn / Shift+arrows for selection / Ctrl+Home,End top/bottom / Ctrl+Left,Right word jumps / Ctrl+Backspace delete-word / Ctrl+U undo / Ctrl+Y redo / Ctrl+K cut / Ctrl+C copy / Ctrl+P paste / Ctrl+A select-all / Ctrl+D delete-line / Ctrl+E delete-to-EOL / Ctrl+W delete-to-BOL. | `bund.edit_project_hjson` |
-| `Ctrl+B Shift+0`     | (1.2.15) **Project doctor panel** — same scan + repair flow as `inkhaven doctor --scan` + `--autofix`, but as a TUI modal.  Synchronous project scan runs on open; modal table lists every finding with class + severity + path + one-line detail.  Inside: `↑↓` navigate, `r` repair the highlighted finding, `R` repair every finding, `Esc` closes.  Repairs are logged to `<project>/.inkhaven/doctor.log` for audit.  Paired mnemonically with `Ctrl+B 0` (HJSON config editor): the digit-0 row is the "system inspection" cluster. | `view.doctor_panel` |
+| `Ctrl+B 0`           | (1.2.8) **Edit project HJSON** — open `<project>/inkhaven.hjson` in a full-screen modal editor with HJSON syntax highlighting. `Ctrl+S` saves; when the saved bytes differ from the loaded bytes, a *Restart required* overlay pops up (config applies on next launch). **`Ctrl+R` (1.2.12+) fires an LLM review of the current buffer** — same "reviewer LLM, not executor" pattern the prompts-editor TUI uses; response streams into `App.inference` and is visible in the AI pane after closing the modal. `Esc` closes; with unsaved edits the first `Esc` warns and a second `Esc` discards them (3.19 — one `Esc` used to drop them). The editor shares the main paragraph editor's chord set (§4.5; `Ctrl+K` / `Ctrl+C` / `Ctrl+P` go through the system clipboard): arrows / Home / End / PgUp / PgDn / Shift+arrows for selection / Ctrl+Home,End top/bottom / Ctrl+Left,Right word jumps / Ctrl+Backspace delete-word / Ctrl+U undo / Ctrl+Y redo / Ctrl+K cut / Ctrl+C copy / Ctrl+P paste / Ctrl+A select-all / Ctrl+D delete-line / Ctrl+E delete-to-EOL / Ctrl+W delete-to-BOL. | `bund.edit_project_hjson` |
+| `Ctrl+B Shift+0` (`Ctrl+B )`)     | (1.2.15) **Project doctor panel** — same scan + repair flow as `inkhaven doctor --scan` + `--autofix`, but as a TUI modal.  Synchronous project scan runs on open; modal table lists every finding with class + severity + path + one-line detail.  Inside: `↑↓` navigate, `r` repair the highlighted finding, `R` repair every finding, `Esc` closes.  Repairs are logged to `<project>/.inkhaven/doctor.log` for audit.  Paired mnemonically with `Ctrl+B 0` (HJSON config editor): the digit-0 row is the "system inspection" cluster. | `view.doctor_panel` |
 | `Ctrl+B W`           | **World overview** (WORLD-4) — a read-only, scrollable summary of the project's world simulation: the `world.hjson` definition (name / seed / star / planet / moons), the compiled astronomy layer (year length, divergence flag, tilt, seasons, lunar synodic periods, dominant tide, calendar consistency), and whether it has been materialized into the World system book. In the overview: `↑↓` scroll, **`C`** compiles every layer + seeds the proposal queue — in the background since 3.16 (progress on the status line; `C` again cancels between layers), **`P`** opens the proposal queue (`↑↓` navigate, `Enter` accept → commits a Place, `r` reject, `Esc` back), `Esc` closes. Full operations also on the CLI (`inkhaven realworld …`). | `world.open_overview` |
 | `Ctrl+B Shift+W`     | **Distraction-free / focus mode** — hides Tree, AI, Search, and AI-prompt panes; the editor occupies the full window. Forces focus to the editor on enter. Re-press to restore the four-pane layout. Mutually exclusive with `Ctrl+B K` AI-fullscreen. *(Moved from `Ctrl+B W` in WORLD-4 to free that prefix for the World chord family.)* Internally called "typewriter mode" in legacy strings + the HJSON serde key (`global.toggle_typewriter`) — the binding key stays for backward compatibility, but the user-facing name is now "focus mode". | `global.toggle_typewriter` |
 | `Ctrl+B e`           | **Toggle typewriter sound** — flip the Enter / focus-out click SFX on or off. Choice is persisted to `inkhaven.hjson`. | `global.toggle_sound` |
@@ -126,7 +128,7 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+B Shift+F`     | (1.2.9) **Toggle style warnings** — flip the inline filter-word overlay on / off without leaving the editor. When on, the editor underlines intensifier crutches and hedges (`just`, `really`, `very`, `просто`, `очень`, …) in amber so the writer can question + rewrite. Built-in word lists ship for English, Russian, French, German, Spanish; the active list is keyed by the project's top-level `language` field. Extra words via `editor.style_warnings.filter_words.extra_words` in HJSON. Master switch is `editor.style_warnings.enabled`; this chord is a session-local override. | `editor.toggle_style_warnings` |
 | `Ctrl+B Shift+K` (editor) | (1.2.20) **Toggle echo overlay** — the live, in-editor companion to the `echo-repetition` doctor scan. When on, every occurrence in the *open* paragraph of a word echoing across nearby paragraphs of the chapter is underlined in its own colour (`theme.style_warning_echo_fg`, default a muted purple distinct from the repeated-phrase magenta), so you catch a reused distinctive word as you write rather than at scan time. Cross-paragraph: it reads the chapter's paragraphs (the open one live, including unsaved edits) and uses the shared `editor.echo_window` / `echo_min_repeats` / `echo_max_global` tunables. Multilingual via the project's Snowball stemmer (ё-folded for Russian). Master switch is `editor.echo_overlay`; this chord is a session-local override. | `editor.toggle_echo_overlay` |
 | `Ctrl+B Shift+R` (editor) | (1.2.9) **Save paragraph as audio** — write the open paragraph to an AIFF file via macOS `say -o <path>`. Opens a path picker pre-filled with `<project>/audio/<paragraph-slug>.aiff` — edit the path then Enter to write, Esc cancels. Uses the same voice + speed as `Ctrl+B S`. Output format follows the file extension (`.aiff` / `.wav` / `.m4a` all work on macOS 13+). macOS-only. | `editor.tts_save_as_audio` |
-| `Ctrl+B Shift+V`     | (1.2.17) **Piper TTS voice picker** — browse the Hugging Face piper-voices catalog + every voice already downloaded into the project's `.inkhaven/voices/` directory.  Catalog entries sorted by language code asc → quality tier desc → key asc.  Type characters to filter (matches voice key, language code, or English language name; case-insensitive).  ↑↓ / PgUp / PgDn / Home / End navigate; Enter on an `⬇ available` row downloads the voice (blocking, ~5–30 s on a fast connection) + sets the runtime `tts.voice`; Enter on a `✓ downloaded` row just sets the runtime voice; `d` removes a downloaded voice + updates the LRU index (skipped while a filter is active so it doesn't collide with type-to-filter); Esc closes.  Mirrored by the headless `inkhaven tts voice list / download / remove` CLI.  Picker is engine-agnostic — works even when the active backend is macOS `say`, so users can stage Piper voices before flipping `tts.engine`. | `tts.voice_picker` |
+| `Ctrl+B Shift+V`     | (1.2.17) **Piper TTS voice picker** — browse the Hugging Face piper-voices catalog + every voice already downloaded into the project's `.inkhaven/voices/` directory.  Catalog entries sorted by language code asc → quality tier desc → key asc.  `/` opens the filter box (matches voice key, language code, or English language name; case-insensitive; the shared text-box chords apply; Enter/Esc leaves the box, a second Esc closes the picker).  ↑↓ / PgUp / PgDn / Home / End navigate; Enter on an `⬇ available` row downloads the voice (blocking, ~5–30 s on a fast connection) + sets the runtime `tts.voice`; Enter on a `✓ downloaded` row just sets the runtime voice; `d` removes a downloaded voice + updates the LRU index (outside the filter box, so a filter may start with `d`); Esc closes.  Mirrored by the headless `inkhaven tts voice list / download / remove` CLI.  Picker is engine-agnostic — works even when the active backend is macOS `say`, so users can stage Piper voices before flipping `tts.engine`. | `tts.voice_picker` |
 | `Ctrl+B Shift+E` (editor) | (1.2.18) **Reader-pace preview** — a teleprompter that advances a highlight word-by-word through the open paragraph at `editor.reading_wpm` (default 200), so you experience your prose at a reader's speed instead of editing-glance speed — surfaces pacing problems (a run-on that drags, a too-abrupt beat) invisible when you skim.  Already-read words dim, current word reverse-highlighted, upcoming words normal; footer shows position + time-left.  `Space` pause/resume (elapsed time carries across cycles), `←` / `→` step the highlight back/forward one word, `r` restart from the top, `Esc` close.  Reads clean prose (the same markup-stripping pass the audiobook export uses).  E for Experience. | `view.reader_pace` |
 | `Ctrl+B Shift+G`     | (1.2.9) **Writing-streak heatmap** — GitHub-style 13×7 grid of the last 91 days of project-wide word deltas. Each cell colored by daily word count bucket (0 → dim, 1-249 → faint green, 250-499 → medium, 500-999 → bright, 1000+ → max). Footer shows current streak + longest streak in window + 91-day total + active-day average. Today's cell highlighted with a dark background. Any key closes. | `view.open_writing_streak_heatmap` |
 | `Ctrl+B <` (editor)  | (1.2.9) **Previous scene break** — jump cursor to the previous scene-break line in the open paragraph. Scene breaks: `* * *`, `***`, `---`, `___`, `###`, `~~~`, or a lone `§`. Originally requested as `Ctrl+B Shift+{`; reassigned to `<` (vim-style) because `Shift+}` collides with the 1.2.5 `Ctrl+B }` = TagSearch chord. | `editor.scene_break_prev` |
@@ -167,10 +169,13 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+Z v` (editor) | (3.7) **Vertical block-select mode** — anchor a rectangular selection at the cursor, then extend it with **plain arrow keys** (no modifier). `c` / `Enter` copy the block to the clipboard and exit; `Esc` (or any other key) cancels. The terminal-independent replacement for `Alt`+arrows block selection — plain arrows always arrive, and it dodges the `Alt+Left`/`Alt+Right` back-forward collision. Mnemonic: **v** for **V**ertical (`v` is free under `Ctrl+Z`). See §3.4. | `editor.block_select` |
 | `Ctrl+Z g` (editor) | (3.7) **Go to line** — prompt for a line number and jump the cursor there, centred in the viewport (clamped to the buffer). Handy for chasing a Typst compile-error / diagnostic line (the gutter marks diagnostic lines with a red ●). Enter jumps, Esc cancels. Mnemonic: **g** for Goto. | `editor.goto_line` |
 | `Ctrl+Z w` (editor) | (3.7) **Toggle soft-wrap** — flip word-wrap display for the open buffer at runtime (session-only; the persisted default is `editor.wrap`). Switches between reading wrapped prose and editing unwrapped code/tables without editing config + restarting. Mnemonic: **w** for Wrap. | `editor.toggle_wrap` |
-| `Ctrl+Z t` (editor) | (3.7) **Strip trailing whitespace** — remove trailing spaces/tabs from every line as ONE undoable edit (`Ctrl+U` reverts). Cleans the noisy diffs `Ctrl+V ?` reports. Mnemonic: **t** for Trim. | `editor.strip_trailing_ws` |
+| `Ctrl+Z t` (editor) | (3.7) **Strip trailing whitespace** — remove trailing spaces/tabs from every line (`Ctrl+U` twice reverts it — the trim is recorded as a cut plus an insert). Cleans the noisy diffs `Ctrl+V ?` reports. Mnemonic: **t** for Trim. | `editor.strip_trailing_ws` |
 | `Ctrl+Z m` (editor) | (3.7) **Jump to matching bracket** — move the cursor to the `()`, `[]`, or `{}` pairing the bracket at or just before the cursor, across lines and respecting nesting. Balances `#figure(...)`, `#footnote[...]`, `#table(...)`. Mnemonic: **m** for Match. (3.8) Whenever the cursor sits on a bracket, it and its partner are **underlined** automatically — no keypress needed. | `editor.match_bracket` |
-| `Ctrl+Z c` (editor) | (1.2.14) **Add inline comment** — anchor an editorial comment to the current selection's character range (or the word at the cursor); pops a multi-line body input; writes a sidecar `<paragraph>.comments.json` beside the `.typ` (travels with the prose in git, diffs cleanly). Commented spans render underlined + italic; the editor footer surfaces `comment by <author> · <age>`. Char-offset anchors for UTF-8 safety. **Moved here from `Ctrl+V c`** (which the 1.6.19+ LOCI citation check now owns and used to shadow this). Mnemonic: **c** for Comment (`c` / `Shift+C` are free under `Ctrl+Z`). | `view.add_comment` |
+| `Ctrl+Z c` (editor) | (1.2.14) **Add inline comment** — anchor an editorial comment to the current selection's character range (or the word at the cursor); pops a multi-line body input (the editor's chords, §4.5; `Ctrl+S` commits, `Esc` cancels — twice when the body is non-empty); writes a sidecar `<paragraph>.comments.json` beside the `.typ` (travels with the prose in git, diffs cleanly). Commented spans render underlined + italic; the editor footer surfaces `comment by <author> · <age>`. Char-offset anchors for UTF-8 safety. **Moved here from `Ctrl+V c`** (which the 1.6.19+ LOCI citation check now owns and used to shadow this). Mnemonic: **c** for Comment (`c` / `Shift+C` are free under `Ctrl+Z`). | `view.add_comment` |
 | `Ctrl+Z Shift+C` | (1.2.14) **Comments panel** — project-wide panel over every `.comments.json` sidecar (breadcrumb / author / age / snippet / `(N/M in ¶)`). Panel chords: ↑↓ navigate, Enter jump to the comment span, `r` resolve, `R` toggle resolved-filter, `d` delete, `/` filter, `a` AI digest, `Esc` close. **Moved here from `Ctrl+V Shift+C`** (now the sourcing check). | `view.comments_panel` |
+| `Ctrl+Z o` | (1.2.8) **Shell pane** — open / close the embedded nushell pane (floating fullscreen; engine state and turn buffer survive close + reopen; no-op when `shell.enabled` is false). |
+| `Ctrl+Z Shift+O` | (1.2.8) **Fresh shell** — drop the cached engine + turn buffer and open a new shell. |
+| `Ctrl+Z h` | (1.2.8) **Shell history selection** — inside the shell pane, toggle selection mode: `↑↓` walk turns, `c` copies the output, `i` inserts it wrapped in the typst-box template. |
 | `Ctrl+V Shift+N` | (1.4.16) **Character arc** (CHAR-1) — open the tracked arc for the nearest character (one named in the open paragraph, else the first tracked one): the author-declared arc (start / midpoint / end), the chapter-by-chapter observable state chain (✦ marks a change) with each chapter's deterministic agency score, the arc-completeness checks, and any Planning-Board coverage gaps. Read-only over the cached `char.duckdb`; `↑↓` scroll, `Esc` closes. Populate it with the `Ctrl+B Shift+C` review pass (agency + stalls + planning, zero-AI) or `inkhaven character refresh` / `check` (the LLM passes). Mnemonic: **N** for the arc (the bend); plain `n` is next-diagnostic. The arc *findings* ride the `Ctrl+B Shift+C` review pass into the Output `character` category. | `character.open_arc` |
 | `Ctrl+V Shift+O` | (3.1, BONDS-1) **Relationship dashboard** — the relationship-continuity findings: are the bonds you declare between characters earned on the page? Grouped by kind — `unwritten_bond` (a declared pair barely shares a scene), `unearned_shift` (a bond changes state — ally → enemy — with no shared scene to turn it: the relationship plot-hole), `dropped_bond` (an established bond goes dormant then resurfaces). `↑↓` scroll, **Enter** jumps to the offending paragraph, `Esc` closes. Declare bonds with `rel:<kind>:<A>:<B>` tags; co-presence is derived free (scene POV + prose mentions + timeline event participants). Deterministic + ≈$0; the CLI equivalent is `inkhaven bonds` (`--json` / `--deep` for the opt-in `implied_cooling` LLM pass). KEN's sibling (KEN is `Ctrl+B Shift+Z`). Mnemonic: **O** for b**O**nds, beside the Inner Editor's `o`. See [`BONDS.md`](BONDS.md). | `global.open_bonds` |
 | `Ctrl+V Shift+M` | (1.4.19) **Mythology heatmap** (MYTH-1) — refresh the declared symbol / motif / archetype inventory from the Mythology system book, recompute the per-chapter symbol-density scan, explicit motif occurrences, and the deterministic findings (archetype vacant / absent, motif absent from the final act), render the heatmap (symbol-density bars, motif-presence dots, archetype-presence bars across chapter buckets) into the **Thoughts** pane, and jump to the nearest declared symbol (one named in the open paragraph, else the first). Zero-AI; the LLM consistency / completeness / role checks stay explicit on `inkhaven myth check`. Reads declarations only — never interprets, never edits prose. Mnemonic: **M** for Myth (plain `m` is list-bookmarks). The deterministic myth *findings* also ride the `Ctrl+B Shift+C` review pass into the Output `myth` category. | `myth.open_heatmap` |
@@ -243,6 +248,9 @@ cancels with a status hint telling you which pane's table it consulted.
 | `$`        | (1.3.34) **AI cost dashboard** — a scrollable panel of today's LLM call tallies for each capped subsystem (world slow track, Inner Socrates slow track + any analytical-thread sub-budgets) against their daily caps. Read-only. CLI equivalent: `inkhaven cost`. |
 | `*`        | (3.5, H-1) **Reader hub** — one door to the whole reader family: a menu of every reader dashboard (Knowledge, Bonds, Continuity, Read-through, Cast, Character arc, Myth, Chronicle, Story bible), each with its live finding-count (for the deterministic readers; own-store readers show `·`). `↑↓` scroll, **Enter** opens the selected reader's dashboard, `Esc` closes. Solves the scattered-chords problem. Mnemonic: `*` = all readers. CLI equivalent: `inkhaven read` (the *state of the manuscript* overview). |
 | `J`        | (INNER_SOCRATES-1) **Inner Socrates overview** — active persona, recent questions, the intent ledger. Sub-keys: `F` fast-check ¶ · `E` engage (slow/LLM) · **`T` Inner Theologian** (1.4.18; INNER-THEOLOGIAN-1) · **`P` Inner Poet** (POEM-3) · **`Y` Inner Stylist** (2.1; CHORUS-1) · `S` persona · `L` ledger · `A` ambient · `C` conversation. **`J→Y`** opens the **Inner Stylist** overview — the voice-at-scale coach: **`F`** synthesises the CHORUS pillars (character distinctiveness / drift, POV/head-hop, tense, register) into Praise / Note / Concern observations in the Output `stylist` category, **`E`** engages the AI coach into the Thoughts pane (grounded coaching, never a rewrite), **`R`** opens the voice-report dashboard (scrollable). It also rides the `Ctrl+B Shift+C` review pass. Suppressions persist in `<project>/inner_stylist.db`; the CLI surface is `inkhaven chorus voices / scan / report / stylist` (`--coach` for grounded LLM coaching). See [`CHORUS.md`](CHORUS.md). **`J→P`** opens the **Inner Poet** for the open verse paragraph (`para:verse-*`), with its own sub-keys: `F` fast-scan metre + rhyme against the declared form → Output (Praise / Note / Concern) · `E` engage the LLM slow track (an observation, never a rewrite) · **`D` declare a form** (a picker that writes a language-localised `poem:` sidecar) · **`T` two-column translation view** (source ∥ translation + the Form/Sound trilemma) · **`A` ambient** (auto fast-scan each verse paragraph as you open it; free, no cost cap). Findings + suppressions persist in `<project>/inner_poet.db`; while a verse paragraph is open the status bar shows a live syllable count (`♩ 8 syl · l2/4`), and the Outline shows completion chips (`8/14`, `14/14 ✓`). The CLI surface is `inkhaven poetry forms / syllabify / metre / rhyme / scan / status / trilemma`. **`J→T`** runs a slow-track theological session over the open paragraph: a tradition-neutral reader poses moral/theological questions through eleven tradition lenses (Catholic / Protestant / Orthodox / Gnostic / LDS / Islam / Judaism / Hinduism / Buddhism / Confucianism / secular), in the book's language, naming which lens raises which question — **it asks, never judges**. Questions land in the Output `theologian` category (`⚖`). The deterministic fast-track signals (moral invisibility / consequence gap / sacred levity) ride the `Ctrl+B Shift+C` review pass; the CLI surface is `inkhaven theologian scan / session / suppress`. |
+| `Shift+B`  | (1.2.6) **Backup now** — run a project backup immediately (ignores the exit-hook recency cooldown). |
+| `U` / `u`  | (1.2.7) **Undo last delete** — restore the most recently deleted paragraph from the kill ring (content, tags, links, event data; the restored paragraph gets a new uuid). `Ctrl+V Shift+U` opens the whole ring. (3.19) Reachable from the Tree pane too — the tree's reorder keys are the bare `u` / `j` and `Ctrl+B ↑` / `↓`. |
+| `1` … `7`  | **Status filter** — narrow the tree under the cursor to paragraphs with one status: `1` Ready · `2` Final · `3` Third · `4` Second · `5` First · `6` Napkin · `7` none. `Esc` in the tree clears it. |
 
 The Tree pane's plain-letter shortcuts (`B`, `C`, `V`, `A`, `S`, `+`, `P`,
 `D`, `-`) still work directly without the meta prefix when Tree has focus —
@@ -288,11 +296,16 @@ full workflows.
 | `c`                    | any (needs open paragraph) | (1.6.19, LOCI) **Lint the loci** — check the open paragraph's `@key[locus]` citations against their sources' declared reference schemes (deterministic; headless via `inkhaven index-locorum`). *The 1.2.14 add-comment feature moved to `Ctrl+Z c` — this LOCI check took over `Ctrl+V c`.* |
 | `Shift+C`              | any                      | (NF-CITE) **Sourcing pass** — flag sentences in the open paragraph that make a checkable factual claim but carry no `@key` citation (cite / claim coverage). *The 1.2.14 comments panel moved to `Ctrl+Z Shift+C`.* |
 | `d`                    | Editor (needs open paragraph) | (1.2.14) **AI continuation drafting** — asks the configured LLM to continue the open paragraph in the author's voice. Envelope: previous N paragraphs as voice anchors (`editor.continuation_anchor_count`, default 3) + the open paragraph with `[[CURSOR_HERE]]` marker. Response wrapped in `<<<DRAFT>>> / <<<END>>>` markers; the AI pane's `I` apply lifts only the draft block and inserts it at the cursor. Pairs with snippet expansion (e.g. `\tdo` + `Ctrl+V d` for AI-generated TODOs). |
-| `f`                    | Editor (needs open paragraph) | (1.2.14) **Insert inline footnote** — pops a multi-line text input for the footnote body; on commit inserts `#footnote[<body>]` at the cursor (Typst, the default) or `[^id]` plus a trailing `[^id]: <body>` line (markdown, when `editor.footnote_style = "markdown"`). For academic / reference writing; the Typst markup is honoured by the assembled-book renderer. |
+| `f`                    | Editor (needs open paragraph) | (1.2.14) **Insert inline footnote** — pops a multi-line text input for the footnote body (the editor's chords, §4.5; `Ctrl+S` commits, `Esc` cancels — twice when the body is non-empty); on commit inserts `#footnote[<body>]` at the cursor (Typst, the default) or `[^id]` plus a trailing `[^id]: <body>` line (markdown, when `editor.footnote_style = "markdown"`). For academic / reference writing; the Typst markup is honoured by the assembled-book renderer. |
 | `Shift+G`              | any                      | (1.2.14) **Project word-count goal modal** — reads `project.word_count_goal` + `project.target_date` from HJSON, projects the finish date from the last-30-day word delta (`progress_cache.sparkline`), renders a progress bar + verdict (`Ahead` ✓ / `On track` · / `Behind` ✗ / `Complete`). When unconfigured, the modal explains how to add the keys. Pairs with the writing-progress modal (`Ctrl+V g` — current pace) but goal-oriented rather than retrospective. |
 | `Shift+J`              | any                      | (1.2.16) **Manuscript intelligence dashboard** — synthesis pane that unifies every metric inkhaven collects since 1.2.5: word count (today / total / streak / active minutes), structure (books / chapters / paragraphs + chapter-word-count CV + pacing verdict), threads (active / dormant), comments (open / resolved this week / lifetime).  `↑↓` scrolls; `e` exports the snapshot to `<project>/journal-<UTC>.md`; `Esc` closes.  J for Journal.  Cycle headline. |
 | `y`                    | Editor (needs open paragraph) | (1.2.14) **Style-transfer rewrite** — picker over previously-edited paragraphs (sorted by recency); selection becomes the style reference. Envelope asks the LLM to rewrite the open paragraph in the reference's voice (match sentence length / register / narrative distance / rhythm; preserve meaning + entities + facts). Response wrapped in `<<<REWRITE>>> / <<<END>>>` markers; the AI pane's `I` apply lifts only the rewrite block and replaces the paragraph body. |
 | `O` / `o`              | any                      | (INNER_EDITOR-1) **Inner Editor overview** — the craft-reader family's home (O = Observe; `Ctrl+B E` was taken by ToggleSound). Inside: `E` engage the open paragraph, `C` converse, `A` toggle ambient auto-engage, `F` filter the Output pane to inner-editor findings, `Esc` closes. |
+| `H` / `h`              | any (needs open paragraph) | (1.2.8) **Hidden-character report** — status-bar summary of the open paragraph's tabs / trailing-whitespace lines / CR characters. |
+| `E` / `e`              | any                      | (1.2.6) **Event picker** — every timeline event sorted by start; Enter jumps to the event paragraph (`timeline.enabled`). |
+| `Shift+E`              | any                      | (1.2.6) **New event** — open the timeline view and prompt for a new event title. |
+| `Shift+I`              | any (needs open event ¶) | (1.2.6) **Edit event metadata** — start / end / track of the open event paragraph. |
+| `Shift+W`              | any                      | (1.2.5) **Book story view** — the current user book's structure + links as a floating PNG; `w` is the paragraph-centred mini view. See the Story view section below. |
 | `Esc`                  | any                      | Cancel the chord without acting.                                       |
 
 While in similar-paragraph mode, `Tab` inside the editor toggles
@@ -303,9 +316,11 @@ of cycling to the missing AI pane).
 
 ## 2. Tree pane
 
-Focused on launch. Shows the project hierarchy with depth indentation, kind
-glyphs (`📖` book, `▸` chapter, `▹` subchapter, `¶` paragraph), and a dim
-`Nw` word-count suffix for paragraphs. (3.8) Branch rows (Book / Chapter /
+Focused on launch. Shows the project hierarchy with depth indentation and
+kind glyphs: `▾` / `▸` for an expanded / folded branch (book, chapter,
+subchapter), `¶` paragraph, `◆` event, `❴` HJSON, `⟡` Jinja template, `▣`
+image, `λ` script, `►` the paragraph open in the editor. Long titles wrap
+with a hanging indent. (3.8) Branch rows (Book / Chapter /
 Subchapter) show a dim **aggregate descendant word count** (e.g. `12.3k`) plus
 a roll-up progress pip when the subtree carries target-word goals; bookmarked
 paragraphs (`Ctrl+V B`) show a **`⚑` flag** glyph. A dimmed **key-legend
@@ -323,7 +338,7 @@ footer** sits on the pane's bottom line.
 | `PageUp`             | Move cursor 10 rows up (configurable: `page_up`).           |
 | `PageDown`           | Move cursor 10 rows down (configurable: `page_down`).       |
 | `{` / `}`            | (3.8) **Jump by kind** — move the cursor to the previous / next major structural row (**Book or Chapter**), skipping past long paragraph runs. Stops at the first/last with a status hint; no wrap. |
-| `/`                  | (3.8) **Filter the tree** — type to narrow the tree live to nodes whose **title or slug** matches (case-insensitive, Unicode-aware) plus their ancestors, folding ignored. `Enter` keeps the filter (cursor on the first match); `Backspace` edits; `↑`/`↓` move within matches while typing; `Esc` clears. The active needle shows in the pane title. |
+| `/`                  | (3.8) **Filter the tree** — type to narrow the tree live to nodes whose **title or slug** matches (case-insensitive, Unicode-aware) plus their ancestors, folding ignored. `Enter` keeps the filter (cursor on the first match); the needle is a normal text box (3.19 — the shared chord set of §4.5: `←`/`→`, `Home`/`End`, `Ctrl+W`/`Ctrl+K` kills, word jumps); `↑`/`↓` move within matches while typing; `Esc` clears. Leaving the pane (`Tab`, a mouse click) keeps the needle as if `Enter` had been pressed. The active needle shows in the pane title with its cursor. |
 | `Enter`              | Open the cursor's node. Paragraphs load into the editor and shift focus there; if a different paragraph was open with unsaved edits, it's autosaved first. Branches print a status hint and stay in Tree. |
 | `F2`                 | Open the **Rename** modal pre-filled with the current node's title. Slug + filesystem entry stay; only the displayed title changes (re-embeds for search). |
 | `F3`                 | Open the **file picker** dialog. Enter on a file creates a new paragraph (inserted after the current cursor) with that file's content. Enter on a directory **recursively imports** the tree — subdirectories become branches one level deeper (Book→Chapter→Subchapter), files become paragraphs. If the directory tree exceeds the hierarchy depth, the deeper files are flattened into the deepest legal branch (with `unbounded_subchapters: false`). See §12. |
@@ -369,7 +384,7 @@ confirmation.
 | `T` / `t` | (1.2.4) **Cycle node type** (`paragraph(typst) → paragraph(hjson) → paragraph(jinja) → script`; STRUCT-1 added the **jinja** rung). No marks: cursor row only (folders skipped). With marks: every marked leaf. |
 | `E` / `e` | (1.4.10) **New Jinja template** — open the Add modal for a `.jinja` paragraph (rendered to Typst at assembly). Seeds a manuscript template under a user book, or a reusable `{% include %}` fragment under the **Snippets** book; rejected elsewhere. (`t`/`T` *converts* an existing paragraph; `e` *creates* a fresh seeded one.) See [JINJA_TEMPLATES.md](JINJA_TEMPLATES.md). |
 | `I` / `i` | (1.4.11) **New structural paragraph** — open a picker of structural subtypes (code listing · admonition note/warning/tip/caution · math · procedure · table) and create a `.typ` paragraph tagged `para:*` with the matching Typst boilerplate seeded. Structural paragraphs get a type-specific tree glyph (`⌨ ⚠ ∫ ≡ ⊞`), are skipped by the prose companions, and are excluded from prose word counts (except procedure). Add/remove the tag later via `Ctrl+B ]`. See [STRUCTURAL_PARAGRAPHS.md](STRUCTURAL_PARAGRAPHS.md). |
-| `O` / `o` | (1.2.4) **Cycle status** one rung up the ladder (`napkin → first → … → ready → napkin`). No marks: cursor row. With marks: every marked paragraph. |
+| `O` / `o` | (1.2.4) **Cycle status** one rung up the ladder (`napkin → first → … → ready → napkin`). No marks: cursor row (3.19 — it used to target the paragraph open in the editor whenever one was loaded). With marks: every marked paragraph. |
 | `G` / `g` | (1.2.5) **Tag the marked set** — open the floating tag picker scoped to every marked paragraph (or just the cursor row when no marks). Same modal as `Ctrl+B ]`; T applies the selected tag set across every target at once. |
 | `y`       | (1.4.13, OUTLINE-1) **Copy** the cursor paragraph onto the cross-pane clipboard (shared with the Outline pane). |
 | `m`       | (1.4.13, OUTLINE-1) **Move** (cut) the cursor paragraph onto the clipboard. |
@@ -428,7 +443,7 @@ trigger (idle/quit/switch) won't catch the same change twice.
 | `↑` / `↓`            | One line up / down.                                         |
 | `Home`               | **(3.7) Smart Home** — first press jumps to the first non-blank column; a second press (already there) jumps to column 0. `Shift+Home` still extends selection to line start. |
 | `End`                | End of current line.                                        |
-| `PageUp` / `PageDown`| One viewport up / down (tui-textarea internal).             |
+| `PageUp` / `PageDown`| One viewport up / down (the editor's visible height); `Shift` extends the selection. |
 | `Ctrl+←`             | Previous word boundary.                                     |
 | `Ctrl+→`             | Next word boundary.                                         |
 | `Ctrl+Home`          | Top of document.                                            |
@@ -467,6 +482,9 @@ each operation lives on a distinct key with no overlap.
 
 The line-targeted delete shortcuts (§3.11) all preserve the yank buffer so
 they don't clobber clipboard state.
+
+Undo history holds the last 1000 edits of the open paragraph (one keystroke
+is one edit; 3.19 — it was tui-textarea's default of 50).
 
 If `arboard::Clipboard::new()` fails at startup (typical on headless or some
 Wayland setups), copy/cut/paste silently fall back to tui-textarea's
@@ -515,8 +533,8 @@ clipboard. Each saves and restores the yank buffer around the operation, so
 | Key       | Action                                                                 |
 | --------- | ---------------------------------------------------------------------- |
 | `Ctrl+D`  | **Delete current line** — removes the entire line + its trailing newline; cursor lands on the line that takes its place. On the very last line, the content is cleared and an empty line remains (no newline to delete). |
-| `Ctrl+E`  | **Delete to end of line** — removes from the cursor to the line end.   |
-| `Ctrl+W`  | **Delete to start of line** — removes from the cursor back to column 0. |
+| `Ctrl+E`  | **Delete to end of line** — removes from the cursor to the line end; at the very end of a line it joins the next line onto this one (kill-line). |
+| `Ctrl+W`  | **Delete to start of line** — removes from the cursor back to column 0; at column 0 it joins the line onto the previous one. |
 
 *(`Ctrl+Z` is the **Bund-meta prefix** in 1.2+ — runs scripting actions
 like `Ctrl+Z R` run-buffer, `Ctrl+Z N` new-script, `Ctrl+Z E` eval,
@@ -668,7 +686,7 @@ keystroke away. Pane title shows provider, streaming status, and a
 | `Esc`     | inference in flight             | (3.9) **Cancel** the in-flight inference — stops the stream and **keeps the chat history** (vs `Ctrl+B c`, which wipes the whole conversation). Works from the AI prompt too. A `Esc cancel` cue shows in the title while streaming. |
 | `Esc`     | otherwise                       | Bounce focus back to the **AI prompt** bar (mirror of the AI-prompt → AI Esc). |
 | `↑`/`↓` (or `k`/`j`), `PgUp`/`PgDn` | inference present (non-Book scope) | (3.9) **Scroll** the single response. It follows the streaming tail by default (`⟳follow` in the title); scrolling up detaches (`↑scrolled`). Mouse wheel too. |
-| `Home` / `End` | inference present (non-Book scope) | (3.9) Jump to the **top** / **bottom**. `End` re-arms follow-the-tail. |
+| `Home` / `End` | inference present (non-Book scope) | (3.9) Jump to the **top** / **bottom**. `End` re-arms follow-the-tail. (3.19) Scrolling stops at the rendered extent, so `↓` / `PgDn` move again right after `Home`. |
 | `z` | chat has a completed turn | (3.9) **Regenerate** — re-send the last prompt under the current scope. |
 | `e` | chat has a completed turn | (3.9) **Edit last** — pull the last prompt back into the compose box to tweak and resend. |
 | `[` / `]` | Book-scope answer with retrieval | (3.9) **Navigable citations** — jump to the previous / next cited paragraph (in citation order; falls back to the direct hits). A `[ ] cited ¶` cue shows in the title. |
@@ -683,7 +701,9 @@ keystroke away. Pane title shows provider, streaming status, and a
 
 Action keys fire only when `inference.status == Done` and the response is
 non-empty. While streaming or on error, single-character keys do nothing
-(except `q` to quit and `Esc` to bounce).
+(except `q` to quit and `Esc` to bounce). (3.19) The letters are plain keys:
+a chord such as `Ctrl+R` or `Alt+C` that no global binding claims is ignored
+here rather than applied.
 
 **Chat history.** Each non-Help inference appends a `(User, Assistant)` pair
 to the in-memory chat history; the next prompt replays the whole history to
@@ -705,9 +725,10 @@ long reflective output, e.g. the Inner Theologian slow track (`Ctrl+B J→T`) �
 and (3.14; CANON-UI-1) the **Canon** pane, which follows the *open paragraph*
 and lists the canon decisions it sources, each with how many decisions rest on
 it and what it rests on (see below). In
-the Thoughts pane: `↑↓`/`j`/`k` scroll, `PageUp`/`PageDown`, `g`/`G` top/bottom,
-(3.9) **`y` copy** the whole transcript to the clipboard, `c` clear, `Esc` to
-the editor. Plain **`Tab`** now cycles Tree → Editor → *the
+the Thoughts pane: `↑↓`/`j`/`k` scroll, `PageUp`/`PageDown`, `g`/`G` top/bottom
+(3.19 — clamped to the text, so `↑` moves again right after `G`),
+(3.9) **`y` copy** the whole transcript to the clipboard, `c` clear (plain
+keys only — `Ctrl+C` does nothing here), `Esc` to the editor. Plain **`Tab`** now cycles Tree → Editor → *the
 currently-shown right pane* (no longer forced to AI). The active right pane is
 remembered across restarts. **`Ctrl+Z f`** fullscreens the current right pane
 (Output / Thoughts / Canon; the AI pane uses `Ctrl+B K`). When content arrives for a
@@ -759,7 +780,7 @@ the top and it turns back on.
 | `d`       | Dismiss the selected message (the cursor stays on the row that shifts up).       |
 | `p`       | Pin / unpin (pinned messages sort to the top).                                  |
 | `Enter`   | Primary action — kind-specific (accept proposal, insert translation, jump to event, …); (3.8) **for any other finding that records a source paragraph, opens that paragraph** in the editor. |
-| `/`       | (PANE-2) Open the free-text search line — type to filter live by message text / kind; `Enter` keeps, `Esc` clears. |
+| `/`       | (PANE-2) Open the free-text search line — type to filter live by message text / kind; `Enter` keeps, `Esc` clears. (3.19) The line is a normal text box: the shared chord set of §4.5 applies, and the cursor shows. |
 | `r` / `e` | (translations) remember / edit+remember.                                        |
 | `i` / `m` / `x` | (Socratic) record-as-intent / make-note / mark-addressed.                 |
 
@@ -772,6 +793,42 @@ the top and it turns back on.
 | `S` | Cycle the **minimum severity**: off → Info → Warning → Contradiction → off (hides lower-severity *and* transient progress ticks). |
 | `t` | Toggle **this paragraph only** — show just the messages tied to the open paragraph. |
 | `c` | Clear all filters.                                                                  |
+
+---
+
+## 4.5 Text inputs — one chord set (3.19)
+
+Every single-line text field — the Search bar, the AI prompt, the shell pane
+prompt, the F1 help query, and every modal input and picker filter (rename,
+add, find / replace, go-to-line, tags, timeline prompts, save-as paths, the
+snapshot / concordance / comments / threads filters, …) — shares one key
+table. A field may add its own command keys on top (`Enter`, `Tab`, `Esc`,
+the shell's `Ctrl+L` / `Ctrl+D`), but editing is always:
+
+| Key                                           | Action                                         |
+| --------------------------------------------- | ---------------------------------------------- |
+| any printable char (no Ctrl/Alt)              | Insert at the cursor.                          |
+| `Backspace` / `Delete`                        | Delete the char before / at the cursor.        |
+| `←` / `→`                                     | Move one char.                                 |
+| `Home` / `End`, `Ctrl+A` / `Ctrl+E`           | Start / end of the line.                       |
+| `Ctrl+←` / `Ctrl+→`, `Alt+B` / `Alt+F`        | Word back / forward.                           |
+| `Ctrl+U` / `Ctrl+K`                           | Kill to the start / to the end of the line.    |
+| `Ctrl+W`, `Alt+Backspace`, `Ctrl+Backspace`   | Kill the word before the cursor.               |
+
+Fields with a history ring (Search, AI prompt, shell, help query) walk it
+with `↑` / `↓`; the text you were typing is kept as a draft and comes back
+when `↓` passes the newest entry (before 3.19 it was cleared). Every field
+scrolls so the cursor stays visible when the text is wider than the box
+(`…` marks text clipped on the left).
+
+Multi-line text boxes — the paragraph editor, the HJSON config editor
+(`Ctrl+B 0`) and the comment editor (`Ctrl+Z c`) — share the editor's chord
+set (§3): arrows / Shift-select / `Home` / `End` / `PgUp` / `PgDn`, `Ctrl+U`
+undo, `Ctrl+Y` redo, `Ctrl+K` / `Ctrl+C` / `Ctrl+P` cut / copy / paste through
+the system clipboard, `Ctrl+A` select all, `Ctrl+D` / `Ctrl+E` / `Ctrl+W` line
+deletes, `Ctrl+Home` / `Ctrl+End`, `Ctrl+←` / `Ctrl+→`, `Ctrl+Backspace`. Where
+such a box can hold unsaved text (HJSON editor, comment editor) the first
+`Esc` warns and a second `Esc` discards.
 
 ---
 
@@ -788,8 +845,9 @@ character at the buffer's character position.
 | `←` / `→`            | Move cursor one char left / right.                          |
 | `Home`               | Cursor to start.                                            |
 | `End`                | Cursor to end.                                              |
+| shared chords        | `Ctrl+A`/`Ctrl+E`, `Ctrl+U`/`Ctrl+K`/`Ctrl+W`, `Ctrl+←`/`Ctrl+→`, `Alt+B`/`Alt+F`, `Alt+Backspace` — see §4.5. |
 | `↑`                  | (overlay open) Move result cursor up. (3.9, overlay closed) **Recall the previous query** from history. |
-| `↓`                  | (overlay open) Move result cursor down. (3.9, overlay closed) Recall the next query (past the newest → clears the input). |
+| `↓`                  | (overlay open) Move result cursor down. (3.9, overlay closed) Recall the next query (past the newest → the draft you were typing comes back). |
 | `PgUp`/`PgDn`, `Home`/`End` | (3.9, overlay open) Page the result cursor (±5) / jump to first / last. The overlay scrolls the selection into view. |
 | `Enter`              | If results overlay is open: open the highlighted result. Otherwise: run `Store::search_text(query, 50)` (3.9 — was 10) and show results. |
 | `Esc`                | If results overlay is open, close it (one press); else cycle focus to the **Editor** pane (third leg of the Editor → Tree → Search → Editor rotation). |
@@ -816,8 +874,9 @@ action and the `/`-triggered Prompt picker overlay.
 | `←` / `→`            | Move cursor one char left / right.                          |
 | `Home`               | Cursor to start.                                            |
 | `End`                | Cursor to end.                                              |
+| shared chords        | `Ctrl+A`/`Ctrl+E`, `Ctrl+U`/`Ctrl+K`/`Ctrl+W`, `Ctrl+←`/`Ctrl+→`, `Alt+B`/`Alt+F`, `Alt+Backspace` — see §4.5. |
 | `↑`                  | (picker open) Move selection up. (3.9) Otherwise, in the multi-line compose box, move up a line — falling through to prompt-history recall at the first line. |
-| `↓`                  | (picker open) Move selection down. (3.9) Otherwise move down a line, falling through to history recall at the last line. |
+| `↓`                  | (picker open) Move selection down. (3.9) Otherwise move down a line, falling through to history recall at the last line; past the newest entry the prompt you were composing comes back (3.19). |
 | `Shift+Enter` / `Alt+Enter` | (3.9) Insert a **newline** in the multi-line compose box (kitty-class terminals distinguish these; a paste keeps its newlines everywhere). The box grows to fit and collapses back to one line when empty. |
 | `Tab`                | (picker open) Expand selected prompt template into the buffer with `{{selection}}` / `{{context}}` substituted. |
 | `Enter`              | If picker open: same as Tab — expand selected template. Otherwise: spawn a streaming inference (plain Enter always sends — `Shift+Enter` is newline). Focus **stays** on the AI prompt bar. The buffer is sent verbatim, except: a leading `/name` is resolved against the prompt library, and a leading `Help!` (case-sensitive) routes the rest of the line through the F1 Help-RAG flow. |
@@ -879,7 +938,7 @@ Routed to the AI prompt bar (§6) — the picker has no separate focus.
 
 | Key                  | Action                                                      |
 | -------------------- | ----------------------------------------------------------- |
-| `↑` / `↓`            | Move selection.                                             |
+| `↑` / `↓`            | Move selection. (3.19) The list scrolls the selection into view; a long list used to clip at the box bottom. |
 | `Enter` or `Tab`     | Expand the selected prompt's template into the buffer.      |
 | `Esc`                | Close the picker without expanding.                         |
 | Backspace / Delete   | Modify the filter; picker re-filters live.                  |

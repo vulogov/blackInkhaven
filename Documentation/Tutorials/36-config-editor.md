@@ -52,7 +52,7 @@ so muscle memory carries over:
 | `Ctrl+E`             | delete to end of line                |
 | `Ctrl+W`             | delete to start of line              |
 | `Ctrl+S`             | save                                 |
-| `Esc`                | close (warns on unsaved edits)       |
+| `Esc`                | close (with unsaved edits: warn, then a second `Esc` discards) |
 
 Plain typing, `Tab`, `Enter`, `Backspace`, `Delete` work
 as you'd expect.
@@ -129,17 +129,16 @@ values.
 ## Closing without saving
 
 `Esc` closes the modal.  When the buffer has unsaved
-edits the status line warns:
+edits the first `Esc` only warns:
 
 ```
-hjson: closed with unsaved edits — re-open with Ctrl+B 0 to recover from disk
+hjson: unsaved edits — Esc again to discard, Ctrl+S to save
 ```
 
-The on-disk file is untouched.  Reopening with
-`Ctrl+B 0` re-reads from disk, so the unsaved buffer
-contents are gone — but you can also use your shell's
-undo (the file's previous version is whatever you last
-saved).
+A second `Esc` (with no other key in between) closes and
+discards the edits; any other key cancels the warning.
+The on-disk file is untouched either way — reopening
+with `Ctrl+B 0` re-reads whatever you last saved.
 
 ## When to use the in-TUI editor
 

@@ -13,7 +13,7 @@
 use chrono::NaiveDate;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Modifier, Style};
-use tui_textarea::{Input, Key, TextArea};
+use tui_textarea::TextArea;
 use uuid::Uuid;
 
 use super::super::inference::{Inference, InferenceStatus};
@@ -160,8 +160,9 @@ impl App {
         self.modal = Modal::FootnoteEditor {
             textarea,
             paragraph_id: doc.id,
+            discard_armed: false,
         };
-        self.status = "footnote · Ctrl+S commit · Esc cancel".into();
+        self.status = "footnote · Ctrl+S commit · Esc cancel (twice when non-empty)".into();
     }
 
     pub(super) fn footnote_editor_handle_key(
@@ -169,28 +170,35 @@ impl App {
         key: KeyEvent,
     ) -> bool {
         let action = {
-            let Modal::FootnoteEditor { textarea, .. } = &mut self.modal else {
+            let Modal::FootnoteEditor { textarea, discard_armed, .. } = &mut self.modal else {
                 return false;
             };
             match (key.code, key.modifiers) {
+                // Esc cancels an empty footnote at once; on a non-empty one
+                // the first Esc arms the discard and a second Esc cancels
+                // (3.19 — the same two-step as the comment and HJSON editors;
+                // Ctrl+C is copy now, as in every other text box).
                 (KeyCode::Esc, _) => {
-                    if textarea.lines().iter().all(|l| l.is_empty()) {
+                    if textarea.lines().iter().all(|l| l.is_empty()) || *discard_armed {
                         FootnoteAction::Cancel
                     } else {
-                        FootnoteAction::None
+                        *discard_armed = true;
+                        FootnoteAction::ArmDiscard
                     }
                 }
                 (KeyCode::Char('s'), m) if m.contains(KeyModifiers::CONTROL) => {
                     FootnoteAction::Commit
                 }
-                (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => {
-                    FootnoteAction::Cancel
-                }
                 _ => {
-                    let input = Input::from(key);
-                    if input.key != Key::Null {
-                        textarea.input(input);
-                    }
+                    *discard_armed = false;
+                    // The shared multi-line text-box chord set (the paragraph
+                    // editor's bindings, not tui-textarea's emacs defaults).
+                    super::editor_impl::textarea_edit_key(
+                        textarea,
+                        key,
+                        self.clipboard.as_mut(),
+                        10,
+                    );
                     FootnoteAction::None
                 }
             }
@@ -205,6 +213,11 @@ impl App {
                 self.commit_footnote();
                 true
             }
+            FootnoteAction::ArmDiscard => {
+                self.status =
+                    "footnote: unsaved text — Esc again to discard, Ctrl+S to commit".into();
+                true
+            }
             FootnoteAction::None => true,
         }
     }
@@ -214,7 +227,7 @@ impl App {
             &mut self.modal,
             Modal::None,
         ) {
-            Modal::FootnoteEditor { textarea, paragraph_id } => {
+            Modal::FootnoteEditor { textarea, paragraph_id, .. } => {
                 let body = textarea.lines().join("\n");
                 (paragraph_id, body)
             }
@@ -481,7 +494,7 @@ impl App {
                     return true;
                 }
                 KeyCode::Backspace => {
-                    filter.backspace();
+                    super::handle_text_input_key(filter, key);
                     let f = filter.as_str().to_lowercase();
                     let f = f.trim().to_string();
                     let new_visible: Vec<usize> = entries
@@ -496,8 +509,15 @@ impl App {
                     }
                     return true;
                 }
-                KeyCode::Char(c) => {
-                    filter.insert_char(c);
+                KeyCode::Char(_)
+                | KeyCode::Delete
+                | KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Home
+                | KeyCode::End => {
+                    if !super::handle_text_input_key(filter, key) {
+                        return true;
+                    }
                     let f = filter.as_str().to_lowercase();
                     let f = f.trim().to_string();
                     let new_visible: Vec<usize> = entries
@@ -630,6 +650,7 @@ impl App {
 enum FootnoteAction {
     Cancel,
     Commit,
+    ArmDiscard,
     None,
 }
 

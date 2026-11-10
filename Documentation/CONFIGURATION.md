@@ -224,7 +224,7 @@ editor: {
 | Field | Type | Default | Description |
 | ----- | ---- | ------- | ----------- |
 | `theme` | string | `default` | Reserved; the visual theme is configured under top-level `theme`. |
-| `tab_width` | int | `2` | Currently informational — tui-textarea inserts a literal `\t`. |
+| `tab_width` | int | `2` | Soft-tab width (3.19): `Tab` inserts spaces up to the next multiple of this many columns, and `Enter` inside a bracket pair indents the new line by it. Clamped to 1–16. |
 | `wrap` | bool | `true` | Soft word-wrap inside the editor. `false` → horizontal scroll on long lines. |
 | `autosave_seconds` | int | `5` | Seconds of editor inactivity after which a dirty paragraph is auto-saved. `0` disables idle autosave (Ctrl+S, paragraph-switch and quit-time autosaves still fire). Suspended while a grammar-correction highlight is active. |
 | `auto_close_pairs` | bool | `true` | Insert the matching close-bracket / quote when you type `(`, `[`, `{`, `"` or `'`. Enter inside a pair expands to a 3-line indented block; Backspace at the inside of a freshly-typed pair removes both halves. `false` inserts nothing. |

@@ -246,7 +246,7 @@ impl super::super::App {
 
     pub(in crate::tui::app) fn draw_search_bar(&self, f: &mut ratatui::Frame, area: Rect) {
         let text = if self.focus == Focus::SearchBar {
-            self.search_input.render_with_cursor('│')
+            self.search_input.render_with_cursor_fit('│', area.width.saturating_sub(2) as usize)
         } else if self.search_input.is_empty() {
             String::from("(press Ctrl+/ to search)")
         } else {
@@ -293,13 +293,21 @@ impl super::super::App {
         if self.focus == Focus::AiPrompt {
             title.push_str(" · ⏎ send · ⇧⏎ newline");
         }
+        // 3.19 — scroll the box so the cursor is always on screen: a long line
+        // scrolls horizontally, a prompt taller than the box vertically.
+        let (cursor_line, _) = self.ai_input.cursor_line_col();
+        let inner_w = area.width.saturating_sub(2).max(1) as usize;
+        let inner_h = area.height.saturating_sub(2).max(1) as usize;
+        let scroll_x = (self.ai_input.cursor_display_col() + 1).saturating_sub(inner_w);
+        let scroll_y = (cursor_line + 1).saturating_sub(inner_h);
         let p = Paragraph::new(text)
             .style(style)
-            .block(self.pane_block(&title, Focus::AiPrompt));
+            .block(self.pane_block(&title, Focus::AiPrompt))
+            .scroll((scroll_y as u16, scroll_x as u16));
         f.render_widget(p, area);
     }
 
-    pub(in crate::tui::app) fn draw_tree(&self, f: &mut ratatui::Frame, area: Rect) {
+    pub(in crate::tui::app) fn draw_tree(&mut self, f: &mut ratatui::Frame, area: Rect) {
         let tree_title: String = match self.link_pick_for {
             Some((_, LinkPickDirection::Outgoing)) => {
                 " Tree · select paragraph to link · Esc cancels ".into()
@@ -309,10 +317,10 @@ impl super::super::App {
                     .into()
             }
             None if self.tree_filter_editing => {
-                format!(" Tree · /{}▏", self.tree_filter)
+                format!(" Tree · /{}", self.tree_filter.render_with_cursor('▏'))
             }
             None if !self.tree_filter.is_empty() => {
-                format!(" Tree · /{} ({}) ", self.tree_filter, self.rows.len())
+                format!(" Tree · /{} ({}) ", self.tree_filter.as_str(), self.rows.len())
             }
             None => "Tree".into(),
         };
@@ -321,6 +329,7 @@ impl super::super::App {
         f.render_widget(block, area);
 
         if self.rows.is_empty() {
+            self.tree_line_rows.clear();
             let hint = Paragraph::new("(empty project — `inkhaven add book \"…\"` from the CLI)")
                 .style(Style::default().add_modifier(Modifier::DIM));
             f.render_widget(hint, full_inner);
@@ -387,6 +396,9 @@ impl super::super::App {
             }
             scroll = head;
         }
+        // 3.19 — remember the offset the frame actually used; mouse clicks
+        // and the line map below are relative to it.
+        self.tree_scroll = scroll;
         // `take(...)` was a logical-row cap when the tree didn't
         // wrap. With wrap on, render every row from `scroll`
         // onward and let ratatui clip at the pane bottom — that
@@ -399,9 +411,13 @@ impl super::super::App {
         // every row from `scroll` onward is fine — a wrapped row
         // straddling the bottom still shows its first lines.
         let mut lines: Vec<Line> = Vec::new();
+        let mut line_rows: Vec<usize> = Vec::with_capacity(height);
         for row_idx in scroll..self.rows.len() {
             for line in self.tree_row_lines(row_idx, width) {
                 lines.push(line);
+                if line_rows.len() < height {
+                    line_rows.push(row_idx);
+                }
             }
             // Cheap upper-bound check so we don't build Lines
             // for rows that are clearly off-screen.
@@ -414,6 +430,7 @@ impl super::super::App {
         // double-indent. No `.wrap(...)` here.
         let p = Paragraph::new(lines);
         f.render_widget(p, inner);
+        self.tree_line_rows = line_rows;
     }
 
     pub(in crate::tui::app) fn draw_editor(&mut self, f: &mut ratatui::Frame, area: Rect) {
@@ -1829,6 +1846,7 @@ impl super::super::App {
             })
             .sum();
         let max_scroll = wrapped_total.saturating_sub(body_rect.height as usize);
+        self.thoughts_scroll_max.set(max_scroll);
         let scroll = self.thoughts_scroll.min(max_scroll);
         let para = Paragraph::new(lines)
             .wrap(Wrap { trim: false })
@@ -2309,10 +2327,12 @@ impl super::super::App {
             // PANE-2 — while the query line is focused, the footer becomes a live
             // search input; otherwise it shows the navigation + filter cues.
             let hint = if self.output_query_focused {
-                let q = self.output_filter.text_query.as_deref().unwrap_or("");
                 Paragraph::new(Line::from(vec![
                     Span::styled("  search /", Style::default().fg(Color::Cyan)),
-                    Span::styled(format!("{q}▏"), Style::default().fg(Color::White)),
+                    Span::styled(
+                        self.output_query_input.render_with_cursor('▏'),
+                        Style::default().fg(Color::White),
+                    ),
                     Span::styled("   ⏎ keep · Esc clear", Style::default().fg(Color::DarkGray)),
                 ]))
             } else {
@@ -2660,6 +2680,7 @@ impl super::super::App {
                             .sum();
                         let max_scroll =
                             wrapped_total.saturating_sub(body_rect.height as usize);
+                        self.ai_response_scroll_max.set(max_scroll);
                         let offset =
                             max_scroll.saturating_sub(self.ai_response_scroll.min(max_scroll));
                         Paragraph::new(lines)
@@ -2763,6 +2784,7 @@ impl super::super::App {
         let body_h = inner.height as usize;
         let total = lines.len();
         let auto_scroll = total.saturating_sub(body_h);
+        self.chat_history_scroll_max.set(auto_scroll);
         let scroll_offset = auto_scroll.saturating_sub(self.chat_history_scroll);
         let p = Paragraph::new(lines)
             .wrap(Wrap { trim: false })
@@ -3019,6 +3041,7 @@ impl super::super::App {
         // user's PageUp delta still drives.
         let total = lines.len();
         let auto_scroll = total.saturating_sub(body_h);
+        self.chat_history_scroll_max.set(auto_scroll);
         // Centring precedence: a live search trumps selection (the
         // user is presumably hunting for a phrase); otherwise the
         // chat-selection focal point; otherwise the user's manual
@@ -3048,10 +3071,14 @@ impl super::super::App {
             y,
             width,
             height,
-        };
+        }
+        .intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let mut lines: Vec<Line> = Vec::new();
+        // 3.19 — the line the selected candidate's name sits on, so the list
+        // can scroll it into view (it used to clip at the box bottom).
+        let mut sel_line: Option<usize> = None;
         if matches.is_empty() {
             lines.push(Line::from(Span::styled(
                 "(no matching prompts)",
@@ -3125,6 +3152,9 @@ impl super::super::App {
                 let lang_chip_style = Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::DIM);
+                if selected {
+                    sel_line = Some(lines.len());
+                }
                 lines.push(Line::from(vec![
                     Span::styled(chip_text.to_string(), chip_style),
                     Span::styled(lang_chip, lang_chip_style),
@@ -3137,8 +3167,15 @@ impl super::super::App {
             }
         }
 
+        // Keep the selected name + description rows on screen. No wrap: a
+        // row is a line, so the offset arithmetic stays exact (long
+        // descriptions clip at the right edge).
+        let inner_rows = rect.height.saturating_sub(2) as usize;
+        let offset = sel_line
+            .map(|l| (l + 2).saturating_sub(inner_rows))
+            .unwrap_or(0);
         f.render_widget(
-            Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Paragraph::new(lines).scroll((offset.min(u16::MAX as usize) as u16, 0)).block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title(" Prompts ")
@@ -3260,12 +3297,15 @@ impl super::super::App {
         let height = (body_rows + 2).min(area.height.saturating_sub(2)).max(5);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + 1;
+        // 3.19 — clipped to the frame: the 40-column floor overran a narrower
+        // terminal and `Clear` panicked.
         let rect = Rect {
             x,
             y,
             width,
             height,
-        };
+        }
+        .intersection(area);
 
         f.render_widget(ratatui::widgets::Clear, rect);
 

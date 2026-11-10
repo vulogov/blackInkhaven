@@ -27,34 +27,36 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.18.0 — Quieter, Faster, One Surface
+## Latest release · 3.19.0 — Every Key Answers
 
-3.18.0 is a consolidation release for the **constructed-language suite**: ten
-items under one track (`LANG-IMPROVE-1`) take the cost out of every language
-command, deliver two results the engine used to withhold, and make the
-hundred-odd `inkhaven language` subcommands one surface. No new store, no new
-dependency, warning-free in everything touched:
+3.19.0 is a verification release for the **TUI**: seven passes, each a
+headless probe that drives one surface of the running editor with every key
+at nine terminal sizes, then a fix pass over what it found. Forty-odd defects
+are fixed and the probes stay in the tree as ignored tests. No new dependency,
+no new store, warning-free in everything touched:
 
-- **Quieter and faster** — one policy summary line instead of 91 `WARN`s, no
-  Bund VM for a project without scripts; one batched, cached `LanguageModel`
-  per language (30× `ink.lang.translate`: 1110 ms → 425 ms); dictionary import
-  as one batch with one index flush (256 rows: 38.8 s → 16.9 s).
-- **Multi-segment rules fire** — `a i > e / _ #`, `t > t s / _ i` in allophony,
-  sandhi, diachronics, ablaut and variety sound changes; `language doctor`
-  warns when a joined token is ambiguous.
-- **The alphabet orders the dictionary** — buckets, entries, the dictionary
-  book and every export follow `Meta/overview.alphabet`; `language
-  sort-dictionary` repairs an older tree.
-- **One surface** — `-o/--output` on every file-writing command (`--out`,
-  `--svg` kept as hidden aliases), `--count` validated by clap, one wording
-  for the family's messages, `--json` on seventeen more commands with shapes
-  that match the Bund words, and a generated **Command index** in `CONLANG.md`
-  guarded by a docs drift test.
+- **Clicks land where the mouse is** — in the editor with soft-wrap on and in
+  the tree when rows wrap or the pane is scrolled.
+- **One chord set for every text input** — forty fields (search bar, AI
+  prompt, shell, every picker filter, the tree and Output `/` queries) share
+  one table (`KEYBINDING.md` §4.5), one history recall with a kept draft, and
+  a cursor that is always on screen; the HJSON, comment and footnote editors
+  use the paragraph editor's chords and ask twice before discarding text.
+- **Modals fit the terminal** — fitted rects and a 32×8 floor instead of
+  panics; `Esc` reaches the seven modals that own it; chorded letters never
+  confirm a delete or fire a pane action; long lists window around the cursor.
+- **No dead ends** — `Home` / `G` / `PgUp` clamp to the rendered extent in the
+  AI, Thoughts and chat views; the prompt picker scrolls; the results overlay
+  is clipped.
+- **Every chord answers** — `Ctrl+B U` and `Ctrl+B J` work from the tree (two
+  legacy aliases shadowed them), twenty bound chords gain their missing
+  reference rows, and a probe now checks the binding table against
+  `KEYBINDING.md` both ways.
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.18.0.md`](Documentation/RELEASE_NOTES/3.18.0.md).
-Five behaviour changes are listed there under *Upgrade notes* (joined-target
-rules now apply, dictionary order, `ink.lang.list` rows, confirmations on
-stderr, the `font-build` default location); existing projects open unchanged.
+Read the full notes: [`Documentation/RELEASE_NOTES/3.19.0.md`](Documentation/RELEASE_NOTES/3.19.0.md).
+Five behaviour changes are listed there under *Upgrade notes* (`Ctrl+B U`/`J`
+in the tree, tree `o`, two-step `Esc` in the text editors, `editor.tab_width`,
+chorded letters); existing projects open unchanged.
 
 **Stable baseline · 3.0.0.** 3.0.0 remains the stable, maintained edition — the
 intelligence suite that watches, reads, and remembers itself (SEMNET → GRAPHMIND →

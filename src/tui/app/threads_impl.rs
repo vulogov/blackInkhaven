@@ -230,13 +230,19 @@ impl App {
                     return true;
                 }
                 KeyCode::Backspace => {
-                    filter.backspace();
+                    super::handle_text_input_key(filter, key);
                     self.threads_picker_refilter();
                     return true;
                 }
-                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    filter.insert_char(c);
-                    self.threads_picker_refilter();
+                KeyCode::Char(_)
+                | KeyCode::Delete
+                | KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Home
+                | KeyCode::End => {
+                    if super::handle_text_input_key(filter, key) {
+                        self.threads_picker_refilter();
+                    }
                     return true;
                 }
                 _ => return true,
@@ -302,7 +308,7 @@ impl App {
     /// Snapshot the current picker state into the
     /// new sub-modal's `return_to`; compute the
     /// chapter list + per-cell paragraph grid.
-    fn open_thread_weave_view(&mut self) {
+    pub(super) fn open_thread_weave_view(&mut self) {
         let threads: Vec<ThreadsPickerEntry> = match &self.modal {
             Modal::ThreadsPicker { entries, .. } => entries.clone(),
             _ => return,
