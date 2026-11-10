@@ -9,6 +9,8 @@ mod book_rag;
 mod graph_rag;
 mod config;
 mod config_tui;
+#[cfg(test)]
+mod probe_kit;
 mod dayclock;
 mod epub_import;
 mod conlang;

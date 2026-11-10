@@ -35470,7 +35470,7 @@ fn format_eval_output(out: &crate::scripting::EvalOutput, context: Option<&str>)
 /// Returns whether the buffer text changed (callers refilter / drop stale
 /// results / end a history walk on `true`). Keys outside the table are left
 /// alone, so a caller may bind its own chords before falling through here.
-pub(super) fn handle_text_input_key(input: &mut TextInput, key: KeyEvent) -> bool {
+pub(crate) fn handle_text_input_key(input: &mut TextInput, key: KeyEvent) -> bool {
     use KeyCode::*;
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);

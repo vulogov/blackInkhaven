@@ -147,7 +147,7 @@ land on a different stem entirely.
 
   ```
   inkhaven export-concordance --output stems.csv
-  inkhaven export-concordance --format json --output stems.json
+  inkhaven export-concordance json --output stems.json
   ```
 
   CSV is one row per stem with

@@ -34,7 +34,7 @@ pub fn run(project: &Path, cmd: SourcesCommand) -> Result<()> {
         SourcesCommand::Import { file, book_name } => {
             import(project, &file, book_name.as_deref())
         }
-        SourcesCommand::Export { format, book_name, out } => {
+        SourcesCommand::Export { format, book_name, output: out } => {
             export(project, &format, book_name.as_deref(), out.as_deref())
         }
     }

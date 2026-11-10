@@ -184,7 +184,7 @@ suggestions list` shows the patterns; `suggestions promote <category> [--chapter
 <id>]` turns one into an entry that then suppresses it.
 
 Carry series-level intentions to the next book with the **`.isl` bundle**:
-`inner-socrates bundle export [--scope-level series] [--out …]` and `bundle import
+`inner-socrates bundle export [--scope-level series] [--output …]` and `bundle import
 <path>`.
 
 ## The Slow track — cost & coherence
@@ -210,7 +210,7 @@ inkhaven inner-socrates timeline [--max-cost <n>] [--force]
 inkhaven inner-socrates ledger
 inkhaven inner-socrates persona list | show <id> | activate <id>
 inkhaven inner-socrates suggestions list | promote <category> [--chapter <id>] | dismiss <category>
-inkhaven inner-socrates bundle export [--scope-level series|project|all] [--out <path>]
+inkhaven inner-socrates bundle export [--scope-level series|project|all] [--output <path>]
 inkhaven inner-socrates bundle import <path> [--conflict skip|override]
 ```
 

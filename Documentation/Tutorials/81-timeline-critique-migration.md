@@ -17,9 +17,9 @@ critique shipped:
 
 | Legacy item | Now done by | Command |
 |---|---|---|
-| Travel-time conflicts | world fact-checker `travel_time` | `inkhaven realworld fact-check --timeline-aware` |
+| Travel-time conflicts | world fact-checker `travel_time` | `inkhaven fact-check --timeline-aware on` |
 | Co-location conflicts | world fact-checker `co_location` | `inkhaven realworld co-location` |
-| Paragraph-date mismatches | world fact-checker `date_coherence` | `inkhaven realworld fact-check --timeline-aware` |
+| Paragraph-date mismatches | world fact-checker `date_coherence` | `inkhaven fact-check --timeline-aware on` |
 | Pacing (gaps / rushes) | INNER_SOCRATES `temporal_density` | `inkhaven inner-socrates check` |
 
 The fifth and sixth — **orphan events** and **fuzzy-precision

@@ -21,7 +21,7 @@ is the input; nothing about your manuscript changes.
 
 ```sh
 # 1. build the reading PDF as usual
-inkhaven export pdf --book my-novel            # → my-novel.pdf
+inkhaven export pdf --book-name my-novel       # → my-novel.pdf
 
 # 2. check it is print-ready
 inkhaven pdf preflight my-novel.pdf
@@ -31,7 +31,7 @@ inkhaven pdf impose my-novel.pdf --config default   # → my-novel-imposed.pdf
 
 # 4. generate a cover with a computed spine
 inkhaven pdf cover --pages 220 --title "My Novel" --author "A. Writer" \
-    --isbn 9780306406157 --out my-novel-cover.pdf
+    --isbn 9780306406157 --output my-novel-cover.pdf
 ```
 
 Print `my-novel-imposed.pdf` double-sided, fold each signature, sew or
@@ -108,7 +108,7 @@ inkhaven pdf cover --pages 220 \
     --back "A novel about …" \
     --image front-art.png \
     --isbn 9780306406157 \
-    --out my-novel-cover.pdf
+    --output my-novel-cover.pdf
 ```
 
 Trim size, bleed, and the interior / cover paper stocks come from the
@@ -135,7 +135,7 @@ The `--isbn` flag renders a real **EAN-13 barcode** (validated check
 digit) on the back panel. You can also produce a standalone barcode:
 
 ```sh
-inkhaven pdf barcode 9780306406157 --out barcode.pdf
+inkhaven pdf barcode 9780306406157 --output barcode.pdf
 ```
 
 As a book-take, `cover_pdf` in `output.extra_formats` generates

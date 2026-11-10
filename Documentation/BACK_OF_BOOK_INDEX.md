@@ -44,7 +44,7 @@ its canonical is skipped.
 
 ## Output formats
 
-`--format` selects the renderer (default `md`); `--out FILE` writes to a file
+`--format` selects the renderer (default `md`); `--output FILE` writes to a file
 instead of stdout.
 
 | `--format` | Renders |

@@ -93,7 +93,7 @@ beat's `.typ` file under `books/planning/` — inkhaven reloads it.)
 straight from the slugs `plan check` just printed:
 
 ```sh
-inkhaven plan map Midpoint --chapter the-reveal --threads the-inheritance
+inkhaven plan map Midpoint the-reveal --threads the-inheritance
 inkhaven plan unmap "All Is Lost"     # clears mapped_chapter back to null
 ```
 

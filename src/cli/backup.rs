@@ -1,7 +1,7 @@
-//! `inkhaven backup [--out <dir>]` — zip the project into a dated
+//! `inkhaven backup [-o/--output <dir>]` — zip the project into a dated
 //! archive. Mirrors what the TUI does on its auto-backup-on-exit hook,
 //! but standalone so users can take ad-hoc snapshots before risky
-//! operations. When `--out` is omitted the default lands at
+//! operations. When `--output` is omitted the default lands at
 //! `<parent-of-project>/inkhaven-backups/<project-basename>/`.
 
 use std::path::{Path, PathBuf};
@@ -23,7 +23,7 @@ pub fn run(project: &Path, out: Option<&Path>) -> Result<()> {
 
     let abs_project = std::fs::canonicalize(&layout.root).map_err(crate::error::Error::Io)?;
     // `out` may be relative — resolve against the cwd, not the project
-    // root, so `inkhaven --project /foo backup --out .` lands in the
+    // root, so `inkhaven --project /foo backup --output .` lands in the
     // user's actual cwd. Resolve the project's own canonical path so we
     // can decide whether `out` lives inside it (and must be skip-listed).
     // When omitted, fall back to the sibling-of-project default — same

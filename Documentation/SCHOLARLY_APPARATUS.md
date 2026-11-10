@@ -30,14 +30,14 @@ citation and belongs in the bibliography, not here.
 
 ```
 inkhaven index-locorum [--book-name <NAME>] [--format md|typst|json]
-                       [-o|--out <FILE>] [--strict]
+                       [-o|--output <FILE>] [--strict]
 ```
 
 | Flag | Effect |
 | ---- | ------ |
 | `--book-name <NAME>` | Limit to one user book (default: every user book). |
 | `--format <FMT>` | `md` (default), `typst`, or `json`. |
-| `-o`, `--out <FILE>` | Write to a file instead of stdout (and print a source/locus count). |
+| `-o`, `--output <FILE>` | Write to a file instead of stdout (and print a source/locus count). |
 | `--strict` | Exit non-zero if any locus is malformed — a CI gate. |
 
 **What it does.** It reads the *raw* prose (so the `[…]` supplement survives),
@@ -76,14 +76,14 @@ carries at the back — for theology, philosophy, and classics.
 
 ```
 inkhaven index-verborum [--book-name <NAME>] [--format md|typst|json]
-                        [-o|--out <FILE>]
+                        [-o|--output <FILE>]
 ```
 
 | Flag | Effect |
 | ---- | ------ |
 | `--book-name <NAME>` | Limit to one user book (default: every user book). |
 | `--format <FMT>` | `md` (default), `typst`, or `json`. |
-| `-o`, `--out <FILE>` | Write to a file instead of stdout (and print a term count). |
+| `-o`, `--output <FILE>` | Write to a file instead of stdout (and print a term count). |
 
 **What it does.** It takes the *lexicon* terms from the Glossary book — an entry
 counts as a lexicon term only if it carries an `original_forms` field or `senses`

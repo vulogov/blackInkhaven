@@ -104,16 +104,19 @@ improvements").
 | Ctrl+W                 | Delete previous word            |
 | Ctrl+U / Ctrl+Y        | Undo / redo                     |
 | **`Ctrl+B G`**         | **Get** AI response into editor at cursor (focus jumps to editor) |
-| Type to insert         |                                 |
+| Type to insert         | `?` included (3.20 — it used to open help; use `Ctrl+H`) |
 
 ### AI prompt input pane
 
 | Chord       | Action                                |
 |-------------|---------------------------------------|
-| Type        | Append to buffer                       |
+| Type        | Insert at the cursor                   |
 | Backspace/Del | Delete                              |
 | Left/Right + Home/End + Ctrl+A/Ctrl+E | Cursor movement |
-| `Up/Down`   | History walk (in-session, deduped)      |
+| Ctrl+←/→ · Alt+B/F | Word moves (3.20, shared chord set) |
+| Ctrl+U / Ctrl+W | Kill to start / kill word (3.20)    |
+| `Up/Down`   | History walk (in-session, deduped); past the newest entry the draft you were typing comes back (3.20) |
+| `PgUp/PgDn` | Scroll the AI response pane (3.20)      |
 | `Enter`     | Send — analyse focused template        |
 | `Ctrl+L`    | Clear input                            |
 | `Ctrl+K`    | Clear input + clear history            |
@@ -124,7 +127,8 @@ improvements").
 |-------------|---------------------------------------|
 | `Ctrl+S`    | Save library (confirm modal lists ✚/✱/✗ buckets) |
 | `Ctrl+R`    | Rollback picker — list `.prompts-backups/` |
-| `Ctrl+H` / `?` | Focus-aware help pane               |
+| `Ctrl+H` (`?` in the list) | Focus-aware help pane; `↑↓` / `PgUp` / `PgDn` scroll it, any other key closes |
+| `Ctrl+B ↑/↓` · `PgUp/PgDn` · `Home/End` | Scroll the AI response pane (3.20) |
 | `Tab` / `Shift+Tab` | Cycle pane focus              |
 | `Esc` / `Ctrl+Q` | Quit (confirm if unsaved)        |
 
