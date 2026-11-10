@@ -140,9 +140,9 @@ where the title made it but the body was lost.
   projects (rare) keep their first Draft folder; additional
   ones are skipped. File an issue if your workflow needs
   multi-Draft.
-- **No round-trip.** This is import only — there's no
-  `inkhaven export --as scrivener`. Once it's in inkhaven,
-  inkhaven is the source of truth.
+- **No round-trip.** This is import only — there is no
+  Scrivener export. Once it's in inkhaven, inkhaven is the
+  source of truth.
 - **No external deps.** quick-xml + rtf-parser-tt are pure
   Rust and statically linked. The whole importer adds ~200
   KB to the binary.

@@ -27,7 +27,7 @@ short troubleshooting checklist.
 ## Backup: `inkhaven backup`
 
 ```bash
-inkhaven --project ~/Books/my-novel backup --out ~/Backups
+inkhaven --project ~/Books/my-novel backup --output ~/Backups
 ```
 
 What this does:
@@ -37,7 +37,7 @@ What this does:
   and any directory you have configured as the backup output target
   (avoids zipping zips of zips of …).
 - Streams the rest into a deflate-compressed zip named
-  `blackinkhaven_YYYYDDMM_HHMMSS.zip` inside `--out`.
+  `blackinkhaven_YYYYDDMM_HHMMSS.zip` inside `--output`.
 - Updates `.inkhaven-backup.json` in the project root with the
   current timestamp so the on-exit auto-backup hook knows the last
   successful run.
@@ -72,7 +72,7 @@ identical embeddings.
 
 - Run `inkhaven backup` before a destructive operation (`rm books/foo`,
   switching `embeddings.model`, a major reorganisation).
-- Pipe `backup --out` to a directory under version control (git-lfs is
+- Pipe `backup --output` to a directory under version control (git-lfs is
   comfortable with the binary blobs) for offsite history.
 - The filename format is `YYYYDDMM_HHMMSS` (not ISO order) — this
   matches the spec but does not sort chronologically across months
@@ -102,7 +102,7 @@ If you want to restore in place over the same directory, do it
 manually:
 
 ```bash
-inkhaven --project ~/Books/my-novel backup --out /tmp        # safety net
+inkhaven --project ~/Books/my-novel backup --output /tmp        # safety net
 rm -rf ~/Books/my-novel
 inkhaven restore /tmp/blackinkhaven_<date>.zip --to ~/Books/my-novel
 ```
@@ -391,7 +391,7 @@ recovered, hierarchy regenerated.
 
 ```bash
 # On the source machine
-inkhaven --project ~/Books/my-novel backup --out /tmp
+inkhaven --project ~/Books/my-novel backup --output /tmp
 
 # Copy /tmp/blackinkhaven_<date>.zip to the new machine
 
@@ -405,7 +405,7 @@ machine downloads the model again unless you pre-seeded the cache.
 ### Branching: derive a new project from an existing one
 
 ```bash
-inkhaven --project ~/Books/my-novel backup --out /tmp
+inkhaven --project ~/Books/my-novel backup --output /tmp
 inkhaven restore /tmp/blackinkhaven_<date>.zip --to ~/Books/my-novel-fork
 ```
 

@@ -4,7 +4,7 @@
 //! `crate::pdf` library.  Imposition / cover / barcode / preflight arrive
 //! with their phases (P1/P2).  Output is always written through
 //! `PdfDoc::save` (atomic `io_atomic`); a mutating op never overwrites
-//! its input unless `--out` points there — by default it writes a
+//! its input unless `--output` points there — by default it writes a
 //! `<stem>-<op>.pdf` sibling.
 
 use std::path::{Path, PathBuf};
@@ -22,18 +22,18 @@ pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
         PdfCommand::Impose {
             input,
             config,
-            out,
+            output: out,
             dry_run,
         } => impose(&input, &config, project, out, dry_run),
         PdfCommand::Booklet {
             input,
-            out,
+            output: out,
             sheet,
             creep,
             no_marks,
             dry_run,
         } => booklet(&input, out, sheet.as_deref(), creep, no_marks, dry_run),
-        PdfCommand::Extract { input, pages, out } => {
+        PdfCommand::Extract { input, pages, output: out } => {
             let doc = load(&input)?;
             let spec = PageSpec::parse(&pages).map_err(pdferr)?;
             let mut result = ops::extract(&doc, &spec).map_err(pdferr)?;
@@ -46,7 +46,7 @@ pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
             );
             Ok(())
         }
-        PdfCommand::Delete { input, pages, out } => {
+        PdfCommand::Delete { input, pages, output: out } => {
             let mut doc = load(&input)?;
             let spec = PageSpec::parse(&pages).map_err(pdferr)?;
             ops::delete(&mut doc, &spec).map_err(pdferr)?;
@@ -63,7 +63,7 @@ pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
             input,
             pages,
             degrees,
-            out,
+            output: out,
         } => {
             let mut doc = load(&input)?;
             let spec = PageSpec::parse(&pages).map_err(pdferr)?;
@@ -74,7 +74,7 @@ pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
             println!("pdf rotate: {degrees}° → {}", path.display());
             Ok(())
         }
-        PdfCommand::Reorder { input, mapping, out } => {
+        PdfCommand::Reorder { input, mapping, output: out } => {
             let mut doc = load(&input)?;
             // 1-based page numbers from the user → 0-based for the op.
             let map: Vec<usize> = mapping
@@ -104,9 +104,9 @@ pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
             input,
             every,
             at,
-            out_dir,
+            output_dir: out_dir,
         } => split(&input, every, at, out_dir),
-        PdfCommand::Merge { inputs, out } => {
+        PdfCommand::Merge { inputs, output: out } => {
             if inputs.len() < 2 {
                 return Err(Error::Store("pdf merge: need at least two inputs".into()));
             }
@@ -128,9 +128,9 @@ pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
             author,
             subject,
             keywords,
-            out,
+            output: out,
         } => metadata(&input, strip, title, author, subject, keywords, out),
-        PdfCommand::Outline { input, set, out } => match set {
+        PdfCommand::Outline { input, set, output: out } => match set {
             Some(toc) => outline_set(&input, &toc, out),
             None => outline_list(&input),
         },
@@ -141,13 +141,13 @@ pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
         } => preflight_cmd(&input, &profile, dpi, project),
         PdfCommand::Barcode {
             isbn,
-            out,
+            output: out,
             height_mm,
             module_mm,
             no_text,
         } => barcode_cmd(&isbn, &out, height_mm, module_mm, no_text),
         PdfCommand::Cover {
-            out,
+            output: out,
             pages,
             title,
             author,
@@ -172,7 +172,7 @@ pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
             height_mm,
             project,
         }),
-        PdfCommand::Grayscale { input, out } => {
+        PdfCommand::Grayscale { input, output: out } => {
             let mut doc = load(&input)?;
             let imgs = pdf::transform::to_grayscale(&mut doc).map_err(pdferr)?;
             let path = out_or_default(&input, out, "gray");
@@ -180,7 +180,7 @@ pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
             println!("pdf grayscale: {imgs} image(s) converted → {}", path.display());
             Ok(())
         }
-        PdfCommand::Optimize { input, out } => {
+        PdfCommand::Optimize { input, output: out } => {
             let mut doc = load(&input)?;
             let r = pdf::transform::optimize(&mut doc).map_err(pdferr)?;
             let path = out_or_default(&input, out, "opt");
@@ -203,7 +203,7 @@ pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
             size,
             position,
             pages,
-            out,
+            output: out,
         } => watermark_cmd(WatermarkArgs {
             input,
             text,
@@ -215,7 +215,7 @@ pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
             pages,
             out,
         }),
-        PdfCommand::Sample { input, count, out } => {
+        PdfCommand::Sample { input, count, output: out } => {
             let src = load(&input)?;
             let mut sampled = ops::sample(&src, count).map_err(pdferr)?;
             let path = out_or_default(&input, out, "sample");

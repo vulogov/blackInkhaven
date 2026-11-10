@@ -31,7 +31,7 @@ embeddings, identical filenames.
 ## Manual backup
 
 ```bash
-$ inkhaven --project ~/Books/my-novel backup --out ~/Backups
+$ inkhaven --project ~/Books/my-novel backup --output ~/Backups
 ```
 
 Output:
@@ -54,7 +54,7 @@ Run this:
 - Manually whenever you've reached a milestone (chapter complete,
   draft to a beta reader).
 
-The output directory is created if missing. `--out` may be relative
+The output directory is created if missing. `--output` may be relative
 (resolved against the current shell directory, not the project root)
 or absolute.
 
@@ -146,7 +146,7 @@ Inkhaven does not overwrite an existing project on restore (it's a
 safety feature). To restore over an existing directory:
 
 ```bash
-$ inkhaven --project ~/Books/my-novel backup --out /tmp/safety
+$ inkhaven --project ~/Books/my-novel backup --output /tmp/safety
 $ rm -rf ~/Books/my-novel
 $ inkhaven restore /path/to/desired-backup.zip --to ~/Books/my-novel
 ```
@@ -234,7 +234,7 @@ embedding models cleanly.
 
 ```bash
 # Source machine:
-$ inkhaven --project ~/Books/my-novel backup --out /tmp
+$ inkhaven --project ~/Books/my-novel backup --output /tmp
 
 # Copy /tmp/blackinkhaven_<date>.zip to the new machine
 
@@ -248,7 +248,7 @@ First-launch on the new machine downloads the embedding model
 ### Branching the project
 
 ```bash
-$ inkhaven --project ~/Books/my-novel backup --out /tmp
+$ inkhaven --project ~/Books/my-novel backup --output /tmp
 $ inkhaven restore /tmp/blackinkhaven_<date>.zip --to ~/Books/my-novel-experimental
 ```
 
@@ -315,7 +315,7 @@ captures the prose history, backups capture full project snapshots
 
 ## What you have learned
 
-- `inkhaven backup --out <dir>` zips the project; restore with
+- `inkhaven backup --output <dir>` zips the project; restore with
   `inkhaven restore <archive> --to <dir>`.
 - Configure auto-backup via `backup.out_dir` and `backup.max_age` in
   `inkhaven.hjson`. The TUI fires it on exit when the last backup

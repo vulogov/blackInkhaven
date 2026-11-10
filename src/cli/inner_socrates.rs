@@ -33,7 +33,7 @@ fn bundle(project: &Path, cmd: crate::cli::BundleCommand) -> Result<()> {
     let store = InnerSocratesStore::open_for_project(project)
         .map_err(|e| Error::Store(format!("inner-socrates store: {e}")))?;
     match cmd {
-        BundleCommand::Export { scope_level, out } => {
+        BundleCommand::Export { scope_level, output: out } => {
             let scope = match scope_level.as_str() {
                 "project" => isl::ExportScope::Project,
                 "all" => isl::ExportScope::All,

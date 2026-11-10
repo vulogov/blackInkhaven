@@ -38,6 +38,8 @@ pub mod event;
 pub mod event_critique;
 pub mod comments;
 pub mod language;
+#[cfg(test)]
+mod surface;
 pub mod language_index;
 pub mod inner_socrates;
 pub mod inner_editor;
@@ -421,8 +423,8 @@ pub enum Command {
         #[arg(long, default_value = "md")]
         format: String,
         /// Write to this file instead of stdout.
-        #[arg(short, long)]
-        out: Option<PathBuf>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
     },
 
     /// LOCI — generate an Index Locorum: every `@key[locus]` cited across the
@@ -436,8 +438,8 @@ pub enum Command {
         #[arg(long, default_value = "md")]
         format: String,
         /// Write to this file instead of stdout.
-        #[arg(short, long)]
-        out: Option<PathBuf>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
         /// Exit non-zero if any locus is malformed (fails its source's reference
         /// scheme) — fits a continuous-integration step.
         #[arg(long)]
@@ -455,8 +457,8 @@ pub enum Command {
         #[arg(long, default_value = "md")]
         format: String,
         /// Write to this file instead of stdout.
-        #[arg(short, long)]
-        out: Option<PathBuf>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
     },
 
     /// ARG-1 — extract each chapter's central claims and their support (an argument
@@ -477,7 +479,9 @@ pub enum Command {
     /// Run a one-shot AI inference from the command line.
     Ai {
         prompt: String,
-        #[arg(short, long)]
+        /// Provider to use instead of `llm.default` (3.20 — no `-p`: that is
+        /// the global project flag).
+        #[arg(long)]
         provider: Option<String>,
     },
 
@@ -522,8 +526,8 @@ pub enum Command {
         #[arg(long, default_value = "Documentation")]
         documents_directory: PathBuf,
         /// Output artifact path.
-        #[arg(long, default_value = "help-corpus.json")]
-        out: PathBuf,
+        #[arg(short = 'o', long, alias = "out", default_value = "help-corpus.json", value_name = "PATH")]
+        output: PathBuf,
     },
 
     /// Import a Scrivener (.scriv) project into the current
@@ -570,8 +574,8 @@ pub enum Command {
         /// Omit to use the project-relative default
         /// (`<parent-of-project>/inkhaven-backups/<project-basename>/`)
         /// — same location the TUI's exit hook writes to.
-        #[arg(long)]
-        out: Option<PathBuf>,
+        #[arg(short = 'o', long, alias = "out", value_name = "DIR")]
+        output: Option<PathBuf>,
     },
 
     /// Restore a backup archive into a fresh directory.
@@ -1133,7 +1137,7 @@ pub enum Command {
         #[arg(long)]
         list_threads: bool,
         /// Export a named thread's history and exit. Honours `--format md|json`
-        /// and `--out <path>` (default stdout).
+        /// and `--output <path>` (default stdout).
         #[arg(long, value_name = "NAME")]
         export_thread: Option<String>,
         /// Output format for `--list-threads` (table|json) / `--export-thread`
@@ -1141,8 +1145,8 @@ pub enum Command {
         #[arg(long)]
         format: Option<String>,
         /// Destination file for `--export-thread` (default: stdout).
-        #[arg(long)]
-        out: Option<String>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<String>,
         /// 1.5.1 RESRCH-2 — ingest a document (md / txt / pdf) as a research
         /// source and exit (non-interactive). A `.bib` file imports its
         /// citations into the Sources book.
@@ -1154,20 +1158,20 @@ pub enum Command {
         sync: Option<String>,
         /// 1.5.6 RESRCH-2 (R2-F) — research a question list headlessly (one
         /// question per line; `#` comments ignored) and write a Markdown report
-        /// (`--out`, default stdout).
+        /// (`--output`, default stdout).
         #[arg(long, value_name = "FILE")]
         batch: Option<String>,
         /// RESRCH-6 — autonomous deep research: decompose a topic into
         /// sub-questions, gather evidence, and emit the findings as Facts into the
         /// Facts book (each with `model` provenance, untrusted for review). Gated
         /// by `research.agentic.enabled` (on by default). Writes a report to
-        /// `--out` (default stdout).
+        /// `--output` (default stdout).
         #[arg(long, value_name = "TOPIC")]
         agentic: Option<String>,
         /// RESRCH-6 (snowball) — follow a seed paper's citations on OpenAlex
         /// (backward references + forward citers) and report the neighborhood,
         /// each with its OpenAlex id for selective ingest. Seed = a title, DOI,
-        /// or topic. Writes to `--out` (default stdout).
+        /// or topic. Writes to `--output` (default stdout).
         #[arg(long, value_name = "SEED")]
         snowball: Option<String>,
         /// R2-F — with `--batch`, insert facts that clear `--confidence`
@@ -1178,7 +1182,7 @@ pub enum Command {
         #[arg(long, value_name = "0..1")]
         confidence: Option<f64>,
         /// 1.5.8 RESRCH-5 (R5-D) — emit the Sources Research chapter as BibTeX
-        /// (`--out` file, else stdout) and exit.
+        /// (`--output` file, else stdout) and exit.
         #[arg(long)]
         bibliography: bool,
         /// 1.5.9 RESRCH-GUTENBERG — ingest a public-domain Project Gutenberg book
@@ -2809,7 +2813,7 @@ pub enum SourcesCommand {
         book_name: Option<String>,
     },
     /// Export the Sources book's entries to `bibtex` or `csl-json` (for Zotero /
-    /// other citation managers). Writes to `--out`, else stdout.
+    /// other citation managers). Writes to `--output`, else stdout.
     Export {
         /// `bibtex` (default) or `csl-json`.
         #[arg(long, default_value = "bibtex")]
@@ -2818,8 +2822,8 @@ pub enum SourcesCommand {
         #[arg(long)]
         book_name: Option<String>,
         /// Write to this file instead of stdout.
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<std::path::PathBuf>,
     },
 }
 
@@ -2954,7 +2958,7 @@ pub enum SubmissionsCommand {
     Remove { id: String },
 }
 
-/// Mutating ops write a `<stem>-<op>.pdf` sibling unless `--out` is
+/// Mutating ops write a `<stem>-<op>.pdf` sibling unless `--output` is
 /// given; writes are atomic.  Imposition / cover / barcode / preflight
 /// arrive in later phases.
 #[derive(Debug, Subcommand)]
@@ -2972,8 +2976,8 @@ pub enum PdfCommand {
         /// Imposition profile name.
         #[arg(long, default_value = "default")]
         config: String,
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<std::path::PathBuf>,
         /// Preview the plan (signatures / sheets / creep / first-sheet
         /// schematic) without imposing.
         #[arg(long)]
@@ -2985,8 +2989,8 @@ pub enum PdfCommand {
     /// when you just want a foldable booklet of whatever you have.
     Booklet {
         input: std::path::PathBuf,
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<std::path::PathBuf>,
         /// Center each spread on a named sheet preset (A4, A3, LETTER,
         /// TABLOID, …) instead of auto-fitting to 2× the page size.
         #[arg(long)]
@@ -3008,16 +3012,16 @@ pub enum PdfCommand {
         input: std::path::PathBuf,
         #[arg(long)]
         pages: String,
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<std::path::PathBuf>,
     },
     /// Delete the given pages.
     Delete {
         input: std::path::PathBuf,
         #[arg(long)]
         pages: String,
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<std::path::PathBuf>,
     },
     /// Rotate the given pages by 90 / 180 / 270 degrees (added to any
     /// existing rotation).
@@ -3027,8 +3031,8 @@ pub enum PdfCommand {
         pages: String,
         #[arg(long)]
         degrees: i64,
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<std::path::PathBuf>,
     },
     /// Reorder pages by a comma-separated 1-based permutation
     /// (e.g. `--mapping 3,1,2`).
@@ -3036,8 +3040,8 @@ pub enum PdfCommand {
         input: std::path::PathBuf,
         #[arg(long)]
         mapping: String,
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<std::path::PathBuf>,
     },
     /// Split into pieces by `--every <n>` pages or `--at <p,p,…>`
     /// (split before those 1-based pages).
@@ -3047,14 +3051,14 @@ pub enum PdfCommand {
         every: Option<usize>,
         #[arg(long)]
         at: Option<String>,
-        #[arg(long)]
-        out_dir: Option<std::path::PathBuf>,
+        #[arg(long, alias = "out-dir", value_name = "DIR")]
+        output_dir: Option<std::path::PathBuf>,
     },
-    /// Concatenate two or more PDFs into `--out`.
+    /// Concatenate two or more PDFs into `--output`.
     Merge {
         inputs: Vec<std::path::PathBuf>,
-        #[arg(long)]
-        out: std::path::PathBuf,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: std::path::PathBuf,
     },
     /// Read (no flags), set (`--title`/`--author`/`--subject`/
     /// `--keywords`), or `--strip` the document metadata.
@@ -3071,8 +3075,8 @@ pub enum PdfCommand {
         /// Comma-separated keywords.
         #[arg(long)]
         keywords: Option<String>,
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<std::path::PathBuf>,
     },
     /// List the document outline (bookmarks), or inject one from a TOC file
     /// with `--set` (indented `Title :: page` lines; indentation nests).
@@ -3083,8 +3087,8 @@ pub enum PdfCommand {
         #[arg(long, value_name = "TOC")]
         set: Option<std::path::PathBuf>,
         /// Where to write the injected PDF (default: `<stem>-outline.pdf`).
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<std::path::PathBuf>,
     },
     /// Check a PDF is print-ready (RFC §8.6): effective image DPI, font
     /// embedding, page-size consistency, blank/colour pages.  Profile
@@ -3101,8 +3105,8 @@ pub enum PdfCommand {
     Barcode {
         /// 12- or 13-digit ISBN (hyphens/spaces ignored).
         isbn: String,
-        #[arg(long)]
-        out: std::path::PathBuf,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: std::path::PathBuf,
         /// Bar height in mm (EAN-13 nominal ≈ 22.85).
         #[arg(long)]
         height_mm: Option<f32>,
@@ -3118,8 +3122,8 @@ pub enum PdfCommand {
     /// from the `cover:` config; the spine width is computed from
     /// `--pages` + stocks (or forced with `--spine-mm`).
     Cover {
-        #[arg(long)]
-        out: std::path::PathBuf,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: std::path::PathBuf,
         /// Interior page count (drives the computed spine width).
         #[arg(long)]
         pages: usize,
@@ -3156,15 +3160,15 @@ pub enum PdfCommand {
     /// CMYK JPEGs / exotic colour spaces are left as-is.
     Grayscale {
         input: std::path::PathBuf,
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<std::path::PathBuf>,
     },
     /// Losslessly slim a PDF: prune orphan objects + Flate-compress every
     /// uncompressed stream.
     Optimize {
         input: std::path::PathBuf,
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<std::path::PathBuf>,
     },
     /// Stamp text and/or an image onto a page range (RFC §8.7).
     Watermark {
@@ -3191,8 +3195,8 @@ pub enum PdfCommand {
         /// Limit to a page range (e.g. `1` or `2-4,7`); default all.
         #[arg(long)]
         pages: Option<String>,
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<std::path::PathBuf>,
     },
     /// Quick-proof subset: keep `--count` evenly-spaced pages (first +
     /// last always included).
@@ -3200,8 +3204,8 @@ pub enum PdfCommand {
         input: std::path::PathBuf,
         #[arg(long, default_value_t = 8)]
         count: usize,
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<std::path::PathBuf>,
     },
 }
 
@@ -3249,7 +3253,7 @@ pub enum TtsCommand {
         voice: Option<String>,
         /// Synthesise to a file instead of
         /// playing.  Suppresses the playback step.
-        #[arg(long, value_name = "PATH")]
+        #[arg(short = 'o', long, value_name = "PATH")]
         output: Option<PathBuf>,
     },
 }
@@ -6041,7 +6045,7 @@ pub enum RealworldCommand {
     /// regions, landmarks, waters, settlements, economy, magic).
     Gazetteer {
         /// Write to a file instead of stdout (e.g. a manuscript appendix source).
-        #[arg(long)]
+        #[arg(short = 'o', long, value_name = "PATH")]
         output: Option<String>,
     },
     /// WORLD-8 — derive the world's founding chronology + epochs from the
@@ -6325,8 +6329,8 @@ pub enum BundleCommand {
         #[arg(long, value_parser = ["series", "project", "all"], default_value = "series")]
         scope_level: String,
         /// Output path (default: `<project>/intent-ledger.isl`).
-        #[arg(long)]
-        out: Option<String>,
+        #[arg(short = 'o', long, alias = "out", value_name = "PATH")]
+        output: Option<String>,
     },
     /// Import intent-ledger entries from an `.isl` bundle.
     Import {
@@ -6899,15 +6903,15 @@ impl Cli {
                 )
                 .map_err(Into::into)
             }
-            Command::Index { book_name, format, out } => {
+            Command::Index { book_name, format, output: out } => {
                 book_index::run(&project, book_name.as_deref(), &format, out.as_deref())
                     .map_err(Into::into)
             }
-            Command::IndexLocorum { book_name, format, out, strict } => {
+            Command::IndexLocorum { book_name, format, output: out, strict } => {
                 index_locorum::run(&project, book_name.as_deref(), &format, out.as_deref(), strict)
                     .map_err(Into::into)
             }
-            Command::IndexVerborum { book_name, format, out } => {
+            Command::IndexVerborum { book_name, format, output: out } => {
                 index_verborum::run(&project, book_name.as_deref(), &format, out.as_deref())
                     .map_err(Into::into)
             }
@@ -6931,7 +6935,7 @@ impl Cli {
             }
             Command::PackageHelpCorpus {
                 documents_directory,
-                out,
+                output: out,
             } => help_corpus::package(
                 &documents_directory,
                 &out,
@@ -6957,7 +6961,7 @@ impl Cli {
                 dry_run,
             } => import_epub::run(&project, &epub_path, book_name.as_deref(), dry_run)
                 .map_err(Into::into),
-            Command::Backup { out } => backup::run(&project, out.as_deref()).map_err(Into::into),
+            Command::Backup { output: out } => backup::run(&project, out.as_deref()).map_err(Into::into),
             Command::Restore { archive, to } => {
                 restore::run(&archive, &to).map_err(Into::into)
             }
@@ -7160,7 +7164,7 @@ impl Cli {
                 list_threads,
                 export_thread,
                 format,
-                out,
+                output: out,
                 import,
                 sync,
                 batch,

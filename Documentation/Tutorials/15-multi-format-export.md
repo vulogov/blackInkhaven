@@ -167,7 +167,7 @@ the LaTeX — we don't second-guess, the file is what it is.
 
 ### EPUB writer
 
-**CLI `inkhaven export --format epub` uses the rich builder** (`src/epub.rs`, the
+**CLI `inkhaven export epub` uses the rich builder** (`src/epub.rs`, the
 same as `inkhaven epub`) as of 3.4.0: a `nav` entry per chapter, embedded
 `NodeKind::Image` figures, EPUB3 footnote popups, and a cover (drop a `cover.png`
 next to `inkhaven.hjson`). Because it re-reads the book from the store, the

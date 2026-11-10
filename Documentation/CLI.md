@@ -1,8 +1,13 @@
 # CLI conventions
 
-Rules every new `inkhaven` command follows. Existing commands outside the
-`language` family are not renamed to match; where an older spelling is still
-accepted, it is a hidden alias.
+Rules every `inkhaven` command follows. Where an older spelling is still
+accepted, it is a hidden alias: scripts keep working, `--help` shows one form.
+Since 3.20 the whole surface is checked by tests (`src/cli/surface.rs`):
+the command tree builds under clap's debug assertions (so two flags can never
+claim one short letter — `ai --provider` lost its `-p`, which is the global
+project flag), every output-path flag is spelled `-o/--output`, and every
+`inkhaven …` command line in the README, the guides, the Bund reference and
+the tutorials names a command and flags that exist (`docs_cli_surface`).
 
 ## Output paths: `-o, --output <PATH>`
 
@@ -17,11 +22,20 @@ The whole `inkhaven language` family follows this since 3.18 (LANG-IMPROVE-1
 LI-6): `export`, `sketch`, `scaffold`, `dictionary`, `grammar-book`,
 `tutorial`, `ecology`, `font-build`, `font-compose`, `spatial-typst`,
 `glyph-draft` and `export-translation` all take `-o/--output`, with `--out`
-(and `--svg` on `ecology`) kept as hidden aliases so existing scripts keep
-working. A unit test pins that inventory. The book-export family (`export`,
-`manuscript`, `docx`, `epub`, `audiobook`) already uses `-o/--output`;
-tooling commands that take `--out` (`pdf *`, `backup`,
-`package-help-corpus`) are unchanged.
+(and `--svg` on `ecology`) kept as hidden aliases. The book-export family
+(`export`, `manuscript`, `docx`, `epub`, `audiobook`) always used
+`-o/--output`.
+
+Since 3.20 (CLI-1) the rest of the surface follows too, each with `--out`
+kept as a hidden alias: `index`, `index-locorum`, `index-verborum`,
+`backup` (`-o/--output <DIR>`), `package-help-corpus`,
+`research --export-thread` / `--bibliography`, `sources export`,
+`inner-socrates bundle export`, and every `pdf` operation that writes a file
+(`impose`, `booklet`, `extract`, `delete`, `rotate`, `reorder`, `merge`,
+`metadata`, `outline`, `barcode`, `cover`, `grayscale`, `optimize`,
+`watermark`, `sample`); `pdf split` writes a directory and takes
+`--output-dir` (`--out-dir` stays as an alias). A unit test pins that no
+visible flag is spelled `--out` any more.
 
 ## Machine output: `--json`
 

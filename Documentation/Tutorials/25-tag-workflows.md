@@ -173,7 +173,7 @@ case preserved, duplicates dropped. Scope: paragraphs only
 picker is paragraph-focused so we don't surprise the user).
 
 ```bash
-inkhaven import-scrivener --source ~/Documents/Aerin.scriv
+inkhaven import-scrivener ~/Documents/Aerin.scriv
 # … converting 412 documents … importing 41 unique keywords …
 ```
 

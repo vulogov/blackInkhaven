@@ -229,7 +229,7 @@ hardened surface. Every release's notes live under
   embedded vectors.
 - Snapshots: `F5` captures the buffer; `F6` opens the snapshot history
   picker.
-- `inkhaven backup --out <dir>` zips the entire project.
+- `inkhaven backup --output <dir>` zips the entire project.
 - `inkhaven restore <archive> --to <dir>` puts it back.
 - Auto-backup on TUI exit when the last backup is older than
   `backup.max_age` (humantime: `7d`, `12h`, `30m`, …) — splash screen with

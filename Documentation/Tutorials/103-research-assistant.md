@@ -23,7 +23,7 @@ This tutorial walks the whole tool top to bottom.
 inkhaven research                       # opens the thread picker, or your one/default thread
 inkhaven research --thread rome         # open (or create) a named, resumable session
 inkhaven research --list-threads        # name · last-active · turns · cost   (--format json)
-inkhaven research --export-thread rome  # the session as Markdown   (--format json, --out FILE)
+inkhaven research --export-thread rome  # the session as Markdown   (--format json, --output FILE)
 ```
 
 No `--project` is needed inside a project directory. The screen needs **≥ 80 columns** (it shows a
@@ -478,7 +478,7 @@ The corpus is finally a source you can *compose from*, not just add to.
   facts. (R5-C.)
 - **`/bibliography`** emits the **Sources book's Research chapter** — every citation auto-filed by
   `/openalex`/`/arxiv` and `/import <.bib>` — as **BibTeX** (`y` to copy). Headless:
-  **`inkhaven research --bibliography [--out refs.bib]`** writes it to a file. The citations you accrued
+  **`inkhaven research --bibliography [--output refs.bib]`** writes it to a file. The citations you accrued
   become a real manuscript bibliography. (R5-D.)
 
 ## 6.97. Keeping the corpus healthy — `/upgrade` & `/stale` (1.5.8)
@@ -535,7 +535,7 @@ fact/note insertions, pinned nodes, and RAG mode all persist and **resume** exac
 - **Launch rules:** 0 threads → a `default` thread; 1 → opened directly; 2+ → a **picker** (`Enter`
   open, `n` new, `d` delete, `Esc` quit).
 - **`inkhaven research --list-threads`** prints every thread (name · last-active · turns · cost), and
-  **`--export-thread <name>`** writes its full history as Markdown or JSON (`--out FILE`, default
+  **`--export-thread <name>`** writes its full history as Markdown or JSON (`--output FILE`, default
   stdout) — a clean record of how a fact came to be.
 
 ## 9½. UI niceties (1.5.6)
@@ -570,7 +570,7 @@ fact/note insertions, pinned nodes, and RAG mode all persist and **resume** exac
 **`inkhaven research --batch questions.txt`** researches a **question list** non-interactively (one
 question per line; `#` comments ignored). For each question it grounds an answer on your Facts corpus,
 distils one candidate fact, and scores the model's confidence — then writes a **Markdown report**
-(`--out FILE`, default stdout). By default it only *proposes* (the interactive rule — confirm every
+(`--output FILE`, default stdout). By default it only *proposes* (the interactive rule — confirm every
 insertion — still holds). Add **`--auto-confirm`** (and optionally **`--confidence 0.8`**, default 0.7)
 to **insert** the facts that clear the bar, each with `model` provenance. Good for seeding a corpus from a
 research outline — the relaxation happens *only* behind the explicit flag + threshold.
