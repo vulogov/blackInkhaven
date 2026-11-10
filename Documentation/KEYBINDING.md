@@ -111,7 +111,7 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+B X`           | **ConLang hub** (LANG-1) — a read-only overview of the project's invented-language sub-books (Language system book): the declared languages with their dictionary / grammar / phonology counts. `↑↓` scroll, `Esc` closes. Errors with a hint when there's no Language book. | `view.open_conlang_hub` |
 | `F1`                 | Open the **Help-manual** query pane (RAG over the Help book). Type a question, Enter to ask. The default LLM provider streams a grounded answer into the AI pane; the model is constrained to use only the Help excerpts (no external knowledge). Same flow as typing `Help! <question>` into the AI prompt bar. Help answers are **one-shot** and do not enter the AI chat history. | no |
 | `F7`                 | **Grammar check** the currently-open paragraph. Resolver precedence for the prompt template: (1) a paragraph titled / slugged `grammar-check` in the **Prompts** system book, (2) an entry of the same name in `prompts.hjson`, (3) a built-in fallback that runs a grammar/punctuation review against the configured `language` (HJSON top-level) and explicitly preserves any Typst markup. Result streams into the AI pane and focus moves there so you can watch the review in real time. | no |
-| `F9`                 | **Cycle the AI scope** through `None → Selection → Paragraph → Subchapter → Chapter → Book → Facts → Socrates → Editor → Graph → None`. The next prompt sent from the AI prompt bar prepends the matching context (selection text / open paragraph / enclosing branch contents) then **auto-resets to `None`** — except the **sticky** conversation scopes (`Facts`, `Socrates`, `Editor`, `Graph`), which persist across follow-ups until you cycle away. `Book` and `Graph` are retrieval-grounded (relevant passages are retrieved and cited rather than the whole book sent); `Graph` additionally folds in the knowledge-graph relations touching each passage (see `Documentation/GRAPH.md`). Mode is shown in the AI prompt title (`AI prompt · scope: Paragraph`) and the status bar. Works from every pane. | no |
+| `F9`                 | **Cycle the AI scope** through `None → Selection → Paragraph → Subchapter → Chapter → Book → Facts → Socrates → Editor → Graph → None`. The next prompt sent from the AI prompt bar prepends the matching context (selection text / open paragraph / enclosing branch contents) then **auto-resets to `None`** — except the **sticky** conversation scopes (`Book`, `Facts`, `Socrates`, `Editor`, `Graph`), which persist across follow-ups until you cycle away (3.21 — `Book` joins them: its retrieval is cached for the conversation and the pane shows the transcript only while the scope is `Book`). `Book` and `Graph` are retrieval-grounded (relevant passages are retrieved and cited rather than the whole book sent); `Graph` additionally folds in the knowledge-graph relations touching each passage (see `Documentation/GRAPH.md`). Mode is shown in the AI prompt title (`AI prompt · scope: Paragraph`) and the status bar. Works from every pane. | no |
 | `F10`                | **Toggle inference mode** between `Local` and `Full`. `Local` instructs the model to use only the supplied context (and prior chat turns); `Full` lets it augment with general knowledge. Both modes are shown in the AI pane title (`AI — gemini · done · infer=Full · scope=Paragraph`). Help inference (F1 / `Help! …`) is **pinned to Local** regardless of this toggle so the help-manual answer never invents features. Works from every pane. | no |
 | `F12`                | (editor) **AI critique** of the open paragraph — "what's weak" in edit mode, "evaluate changes" in split-edit mode. Prompt resolution: Prompts book > `prompts.hjson` > embedded default. |
 | `Ctrl+F12`           | (editor, 1.2.6) **Explain the diagnostic** at the cursor — sends it with its context lines to the AI pane with the explain-or-fix prompt (was bare `F11`, which macOS grabs). |
@@ -683,8 +683,9 @@ keystroke away. Pane title shows provider, streaming status, and a
 
 | Key       | Condition                       | Action                                              |
 | --------- | ------------------------------- | --------------------------------------------------- |
-| `Esc`     | inference in flight             | (3.9) **Cancel** the in-flight inference — stops the stream and **keeps the chat history** (vs `Ctrl+B c`, which wipes the whole conversation). Works from the AI prompt too. A `Esc cancel` cue shows in the title while streaming. |
-| `Esc`     | otherwise                       | Bounce focus back to the **AI prompt** bar (mirror of the AI-prompt → AI Esc). |
+| `Esc`     | inference in flight             | (3.9) **Cancel** the in-flight inference — stops the stream and **keeps the chat history** (vs `Ctrl+B c`, which wipes the whole conversation). Works from the AI prompt too. A `Esc cancel` cue shows in the title while streaming. (3.21) Cancelling also disarms the flow that was waiting on the stream (a rewrite's diff review, a fact-check's findings), so the next ordinary reply is just a reply. |
+| `Esc`     | inference failed                | (3.21) Clear the error and bounce to the **AI prompt** bar. |
+| `Esc`     | otherwise                       | Bounce focus back to the **AI prompt** bar (mirror of the AI-prompt → AI Esc). (3.21) A finished reply stays on screen with its apply keys — it used to be wiped by this Esc. |
 | `↑`/`↓` (or `k`/`j`), `PgUp`/`PgDn` | inference present (non-Book scope) | (3.9) **Scroll** the single response. It follows the streaming tail by default (`⟳follow` in the title); scrolling up detaches (`↑scrolled`). Mouse wheel too. |
 | `Home` / `End` | inference present (non-Book scope) | (3.9) Jump to the **top** / **bottom**. `End` re-arms follow-the-tail. (3.19) Scrolling stops at the rendered extent, so `↓` / `PgDn` move again right after `Home`. |
 | `z` | chat has a completed turn | (3.9) **Regenerate** — re-send the last prompt under the current scope. |
@@ -693,7 +694,7 @@ keystroke away. Pane title shows provider, streaming status, and a
 | `*` | any | (3.14, CANON-UI-1) **Toggle canon grounding** for Book scope — when on (default `canon.ground_ai`), the next Book-scope retrieval also packs the canon decisions behind the retrieved passages into the prompt; a `◈ N canon` cue shows in the title and the decisions list under the `p` transparency section. Off grounds on prose only. |
 | `r` / `R` | inference done, doc open        | Replace editor selection (or entire doc if no selection) with the AI text. Marks dirty, refocuses Editor. |
 | `i` / `I` | inference done, doc open        | Insert AI text at cursor. Marks dirty.              |
-| `t` / `T` | inference done, doc open        | Prepend AI text to top of paragraph (with blank line separator). |
+| `t` / `T` | inference done, doc open        | Prepend AI text to the top of the paragraph's body (with blank line separator). (3.21) The `= Title` heading line stays first; the reply used to land above it. |
 | `g` / `G` | inference done, doc open        | **Grammar-check apply**: lifts only the corrected paragraph from the response (between `<<<CORRECTED>>>` / `<<<END>>>` markers, or last fenced code, or after a "Corrected …" heading) and overwrites the editor buffer wholesale (constructs a fresh `TextArea` so nothing of the old buffer survives). Skips the markdown→Typst conversion because the grammar prompt preserves Typst markup verbatim. Changed characters render in `theme.grammar_change_fg` (default red) and the highlight **survives saves** — dismiss it explicitly with `Ctrl+B` then `C`, or by switching paragraphs. Refuses with a status message if no extraction pattern matches. |
 | `b` / `B` | inference done, doc open        | Append AI text to bottom of paragraph.              |
 | `c` / `C` | inference done                  | Copy AI text to system clipboard only (no editor change). |
@@ -879,7 +880,7 @@ action and the `/`-triggered Prompt picker overlay.
 | `↓`                  | (picker open) Move selection down. (3.9) Otherwise move down a line, falling through to history recall at the last line; past the newest entry the prompt you were composing comes back (3.19). |
 | `Shift+Enter` / `Alt+Enter` | (3.9) Insert a **newline** in the multi-line compose box (kitty-class terminals distinguish these; a paste keeps its newlines everywhere). The box grows to fit and collapses back to one line when empty. |
 | `Tab`                | (picker open) Expand selected prompt template into the buffer with `{{selection}}` / `{{context}}` substituted. |
-| `Enter`              | If picker open: same as Tab — expand selected template. Otherwise: spawn a streaming inference (plain Enter always sends — `Shift+Enter` is newline). Focus **stays** on the AI prompt bar. The buffer is sent verbatim, except: a leading `/name` is resolved against the prompt library, and a leading `Help!` (case-sensitive) routes the rest of the line through the F1 Help-RAG flow. |
+| `Enter`              | If picker open: same as Tab — expand selected template ((3.21) with no matching row — a `/name extra words` line — Enter sends the line directly). Otherwise: spawn a streaming inference (plain Enter always sends — `Shift+Enter` is newline). Focus **stays** on the AI prompt bar. The buffer is sent verbatim, except: a leading `/name` is resolved against the prompt library, and a leading `Help!` (case-sensitive) routes the rest of the line through the F1 Help-RAG flow. |
 | `Esc`                | If picker open, close it; (3.9) else if an inference is in flight, **cancel** it (stops the stream, keeps the chat history); else bounce focus to the **AI pane** so you can read or scroll the answer. Pressing `Esc` again from the AI pane brings you straight back here. |
 | `Ctrl+1`             | Focus the **Editor** pane (global shortcut, works from this input too). |
 | `Ctrl+T`             | Focus the **Tree** pane (global shortcut, works from this input too). |
@@ -940,7 +941,7 @@ Routed to the AI prompt bar (§6) — the picker has no separate focus.
 | -------------------- | ----------------------------------------------------------- |
 | `↑` / `↓`            | Move selection. (3.19) The list scrolls the selection into view; a long list used to clip at the box bottom. |
 | `Enter` or `Tab`     | Expand the selected prompt's template into the buffer.      |
-| `Esc`                | Close the picker without expanding.                         |
+| `Esc`                | Close the picker without expanding; the typed text stays, so `Enter` then sends it as a direct `/name`. (3.21 — the picker used to reopen on the same keystroke.) |
 | Backspace / Delete   | Modify the filter; picker re-filters live.                  |
 
 The leading `= Title` Typst heading is stripped from book-prompt bodies on
@@ -950,6 +951,10 @@ expanded body still fire for both sources.
 
 A direct `/name` typed into the AI prompt bar and submitted with `Enter`
 (no picker open) is also resolved against both sources, system-first.
+(3.21) `/name extra words` works too: the first word names the prompt and
+the rest is appended to the rendered template as this send's instruction.
+Such a line matches no picker row, so `Enter` sends it directly — no `Esc`
+needed to close the picker first.
 
 ---
 

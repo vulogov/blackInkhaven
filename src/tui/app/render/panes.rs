@@ -2432,15 +2432,9 @@ impl super::super::App {
         // visible at a glance).
         let mut spans: Vec<Span<'static>> = Vec::new();
         spans.push(Span::raw(" AI".to_string()));
-        // 1.2.8+ — bound LLM chip. Always visible; in-flight provider
-        // appears below as a separate fragment when inference != None.
-        spans.push(Span::raw(" · llm="));
-        spans.push(Span::styled(
-            self.cfg.llm.default.clone(),
-            Style::default()
-                .fg(self.theme.ai_infer_fg)
-                .add_modifier(Modifier::BOLD),
-        ));
+        // 3.21 — the inference state comes first: in a narrow pane the title
+        // truncates from the right, and `streaming` / `done` / `error` is
+        // what the author needs to see; the llm chip follows it.
         if let Some(inf) = &self.inference {
             // 3.10 — an animated braille spinner while the request is in flight,
             // so there's immediate, live feedback between pressing Enter and the
@@ -2490,6 +2484,15 @@ impl super::super::App {
                 ));
             }
         }
+        // 1.2.8+ — bound LLM chip. Always visible; the in-flight provider
+        // appears above as a separate fragment when it differs.
+        spans.push(Span::raw(" · llm="));
+        spans.push(Span::styled(
+            self.cfg.llm.default.clone(),
+            Style::default()
+                .fg(self.theme.ai_infer_fg)
+                .add_modifier(Modifier::BOLD),
+        ));
         if self.ai_mode != AiMode::None {
             spans.push(Span::raw(" · scope="));
             spans.push(Span::styled(
@@ -2781,14 +2784,16 @@ impl super::super::App {
 
         // Bottom-pinned scroll: newest turn sits at the bottom; PageUp
         // (`chat_history_scroll`) lifts the window toward older turns.
+        // 3.21 — counted in wrapped rows (the widget wraps), not source lines:
+        // in a narrow pane the newest turn used to sit below the fold.
         let body_h = inner.height as usize;
-        let total = lines.len();
+        let total = wrapped_row_starts(&lines, inner.width).1;
         let auto_scroll = total.saturating_sub(body_h);
         self.chat_history_scroll_max.set(auto_scroll);
         let scroll_offset = auto_scroll.saturating_sub(self.chat_history_scroll);
         let p = Paragraph::new(lines)
             .wrap(Wrap { trim: false })
-            .scroll((scroll_offset as u16, 0));
+            .scroll((scroll_offset.min(u16::MAX as usize) as u16, 0));
         f.render_widget(p, inner);
     }
 
@@ -3039,7 +3044,11 @@ impl super::super::App {
         // Scroll: search-centred mode wins over manual / auto when
         // active. Otherwise the existing auto-bottom-pin minus the
         // user's PageUp delta still drives.
-        let total = lines.len();
+        // 3.21 — all of it in wrapped rows (the widget wraps): a line index
+        // maps to the row it starts on, and the pin counts rows, so the
+        // newest turn is visible in a narrow pane and a centred match is
+        // centred where it is drawn.
+        let (row_starts, total) = wrapped_row_starts(&lines, inner.width);
         let auto_scroll = total.saturating_sub(body_h);
         self.chat_history_scroll_max.set(auto_scroll);
         // Centring precedence: a live search trumps selection (the
@@ -3048,16 +3057,34 @@ impl super::super::App {
         // PageUp delta over the auto-pin.
         let centre_line = centred_match.or(centred_selection);
         let scroll_offset = if let Some(line_idx) = centre_line {
-            line_idx.saturating_sub(body_h / 2).min(auto_scroll.max(0))
+            let row = row_starts.get(line_idx).copied().unwrap_or(0);
+            row.saturating_sub(body_h / 2).min(auto_scroll)
         } else {
             auto_scroll.saturating_sub(self.chat_history_scroll)
         };
         let p = Paragraph::new(lines)
             .wrap(Wrap { trim: false })
-            .scroll((scroll_offset as u16, 0));
+            .scroll((scroll_offset.min(u16::MAX as usize) as u16, 0));
         f.render_widget(p, inner);
     }
 
+}
+
+/// The row each line starts on once wrapped to `width` (the same greedy
+/// word-wrap ratatui draws), plus the total row count.
+fn wrapped_row_starts(lines: &[Line<'_>], width: u16) -> (Vec<usize>, usize) {
+    let w = width.max(1) as usize;
+    let mut starts = Vec::with_capacity(lines.len());
+    let mut total = 0usize;
+    for l in lines {
+        starts.push(total);
+        let text: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+        total += super::super::super::text_utils::wrap_words_or_chars(&text, w).len().max(1);
+    }
+    (starts, total)
+}
+
+impl super::super::App {
     pub(in crate::tui::app) fn draw_prompt_picker(&self, f: &mut ratatui::Frame, area: Rect) {
         let width = (area.width * 6 / 10).max(40).min(area.width.saturating_sub(4));
         let matches = self.prompt_picker_matches();
