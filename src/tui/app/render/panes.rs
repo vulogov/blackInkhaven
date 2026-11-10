@@ -3071,10 +3071,14 @@ impl super::super::App {
             y,
             width,
             height,
-        };
+        }
+        .intersection(area);
         f.render_widget(ratatui::widgets::Clear, rect);
 
         let mut lines: Vec<Line> = Vec::new();
+        // 3.19 — the line the selected candidate's name sits on, so the list
+        // can scroll it into view (it used to clip at the box bottom).
+        let mut sel_line: Option<usize> = None;
         if matches.is_empty() {
             lines.push(Line::from(Span::styled(
                 "(no matching prompts)",
@@ -3148,6 +3152,9 @@ impl super::super::App {
                 let lang_chip_style = Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::DIM);
+                if selected {
+                    sel_line = Some(lines.len());
+                }
                 lines.push(Line::from(vec![
                     Span::styled(chip_text.to_string(), chip_style),
                     Span::styled(lang_chip, lang_chip_style),
@@ -3160,8 +3167,15 @@ impl super::super::App {
             }
         }
 
+        // Keep the selected name + description rows on screen. No wrap: a
+        // row is a line, so the offset arithmetic stays exact (long
+        // descriptions clip at the right edge).
+        let inner_rows = rect.height.saturating_sub(2) as usize;
+        let offset = sel_line
+            .map(|l| (l + 2).saturating_sub(inner_rows))
+            .unwrap_or(0);
         f.render_widget(
-            Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Paragraph::new(lines).scroll((offset.min(u16::MAX as usize) as u16, 0)).block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title(" Prompts ")
@@ -3283,12 +3297,15 @@ impl super::super::App {
         let height = (body_rows + 2).min(area.height.saturating_sub(2)).max(5);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + 1;
+        // 3.19 — clipped to the frame: the 40-column floor overran a narrower
+        // terminal and `Clear` panicked.
         let rect = Rect {
             x,
             y,
             width,
             height,
-        };
+        }
+        .intersection(area);
 
         f.render_widget(ratatui::widgets::Clear, rect);
 

@@ -117,8 +117,8 @@ is what you type, not what the table key is.
 | `tree.add_paragraph` | `Ctrl+B P` | Open Add modal for a new Paragraph |
 | `tree.delete_node` | `Ctrl+B D` | Open Delete confirmation modal for the cursor row |
 | `tree.morph_type` | `Ctrl+B M` | Cycle the cursor leaf's type: Paragraph(typst) → Paragraph(hjson) → Script(bund) |
-| `tree.reorder_up` | `Ctrl+B U` *or* `Ctrl+B ↑` | Move cursor row up among its siblings |
-| `tree.reorder_down` | `Ctrl+B J` *or* `Ctrl+B ↓` | Move cursor row down among its siblings |
+| `tree.reorder_up` | `Ctrl+B ↑` (3.19 — `Ctrl+B U` is undo-last-delete everywhere; the bare tree key `u` reorders) | Move cursor row up among its siblings |
+| `tree.reorder_down` | `Ctrl+B ↓` (3.19 — `Ctrl+B J` is the Inner Socrates overview everywhere; the bare tree key `j` reorders) | Move cursor row down among its siblings |
 
 ### Editor pane
 

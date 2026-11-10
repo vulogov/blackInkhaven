@@ -18,7 +18,9 @@
 //! ```text
 //! cargo test --bin inkhaven -- --ignored --nocapture pane_probe
 //! ```
-use super::modal_probe::{battery, ctrl, k, km, open_para, panic_text, probe_app, render, send, SIZES};
+use super::modal_probe::{battery, ctrl, k, km, open_para, panic_text, probe_app, render, send, write_body, SIZES};
+use ratatui::backend::TestBackend;
+use ratatui::Terminal;
 use super::*;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -44,7 +46,7 @@ fn install_hook() {
 
 /// Run a probe body, write + print its report whatever happens, and re-raise
 /// a body panic with its message.
-fn run_probe(name: &str, body: impl FnOnce(&mut Vec<String>)) {
+pub(super) fn run_probe(name: &str, body: impl FnOnce(&mut Vec<String>)) {
     install_hook();
     let mut out: Vec<String> = Vec::new();
     let r = catch_unwind(AssertUnwindSafe(|| body(&mut out)));
@@ -355,6 +357,136 @@ fn tree_pane_probe() {
     assert!(panics.is_empty(), "{} panicking / erroring probe steps:\n{}", panics.len(), panics.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n"));
     let breaks: Vec<&String> = out.iter().filter(|l| l.contains("] after ") && (l.contains("cursor") || l.contains("differ") || l.contains("not in the hierarchy"))).collect();
     assert!(breaks.is_empty(), "tree invariants broke:\n{}", breaks.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n"));
+    });
+}
+
+/// Render one frame and return it as text rows.
+fn screen_text(app: &mut App, w: u16, h: u16) -> Vec<String> {
+    let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+    term.draw(|f| app.draw(f)).unwrap();
+    let buf = term.backend().buffer().clone();
+    (0..h).map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect::<String>()).collect()
+}
+
+#[test]
+#[ignore = "probe: opens a real Store; run with --ignored --nocapture"]
+fn overlay_probe() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    run_probe("overlay", |out| {
+        let (tmp, mut app, pid) = probe_app();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        // Thirty book prompts so the picker has to scroll.
+        {
+            let prompts = app.hierarchy.iter().find(|n| n.kind == NodeKind::Book && n.title == "Prompts").cloned().expect("Prompts book");
+            for i in 0..30 {
+                let h = Hierarchy::load(&app.store).unwrap();
+                let mut n = app
+                    .store
+                    .create_node(&app.cfg, &h, NodeKind::Paragraph, &format!("Prompt {i:02}"), Some(&prompts), None, InsertPosition::End)
+                    .unwrap();
+                write_body(&app.store, tmp.path(), &mut n, format!("= Prompt {i:02}\n\nRewrite {{{{selection}}}} as variant {i}.\n").as_bytes());
+            }
+            app.reload_hierarchy();
+        }
+        open_para(&mut app, pid);
+
+        // ── search bar + results overlay ─────────────────────────────────
+        app.focus = Focus::SearchBar;
+        app.modal = Modal::None;
+        type_str(&mut app, "harbor");
+        let _ = app.handle_key(k(KeyCode::Enter));
+        out.push(format!("[SEARCH] `harbor` → overlay={} · {} result(s) · {}", app.show_results_overlay, app.results.len(), app.status));
+        assert!(app.show_results_overlay, "Enter runs the search and opens the overlay");
+        assert!(!app.results.is_empty(), "the fixture prose mentions the harbor");
+        for (w, h) in SIZES {
+            app.show_results_overlay = true;
+            app.focus = Focus::SearchBar;
+            if let Err(e) = render(&mut app, w, h) {
+                out.push(format!("[SEARCH overlay] render {w}x{h}: {e}"));
+            }
+        }
+        let n = app.results.len();
+        let _ = app.handle_key(k(KeyCode::End));
+        assert_eq!(app.results_cursor, n - 1, "End selects the last result");
+        let _ = app.handle_key(k(KeyCode::Down));
+        assert_eq!(app.results_cursor, n - 1, "Down stops at the last result");
+        let _ = app.handle_key(k(KeyCode::Home));
+        assert_eq!(app.results_cursor, 0);
+        let _ = app.handle_key(k(KeyCode::Char('x')));
+        assert!(!app.show_results_overlay, "typing closes the overlay");
+        let _ = app.handle_key(k(KeyCode::Backspace));
+        let _ = app.handle_key(k(KeyCode::Enter));
+        assert!(app.show_results_overlay);
+        let _ = app.handle_key(k(KeyCode::Esc));
+        assert!(!app.show_results_overlay && app.focus == Focus::SearchBar, "Esc closes the overlay and keeps the bar focused");
+        let _ = app.handle_key(k(KeyCode::Enter));
+        let _ = app.handle_key(k(KeyCode::Enter));
+        out.push(format!("[SEARCH] Enter on the first result → focus {:?} · opened {:?} · overlay {}", app.focus, app.opened.as_ref().map(|d| d.title.clone()), app.show_results_overlay));
+        assert!(!app.show_results_overlay, "opening a result closes the overlay");
+        app.show_results_overlay = true;
+        app.focus = Focus::SearchBar;
+        out.extend(battery_on_pane(&mut app, Focus::SearchBar, "SEARCH battery", &|_| None));
+        app.show_results_overlay = false;
+        app.search_input.clear();
+
+        // ── prompt picker ────────────────────────────────────────────────
+        app.focus = Focus::AiPrompt;
+        app.ai_input.clear();
+        app.show_prompt_picker = false;
+        type_str(&mut app, "/");
+        let total = app.prompt_picker_matches().len();
+        out.push(format!("[PROMPTS] `/` → picker={} · {total} candidates", app.show_prompt_picker));
+        assert!(app.show_prompt_picker && total >= 30, "the picker lists the book prompts");
+        for (w, h) in SIZES {
+            if let Err(e) = render(&mut app, w, h) {
+                out.push(format!("[PROMPTS] render {w}x{h}: {e}"));
+            }
+        }
+        for _ in 0..(total - 1) {
+            let _ = app.handle_key(k(KeyCode::Down));
+        }
+        assert_eq!(app.prompt_picker_cursor, total - 1, "Down walks to the last candidate");
+        let last = app.prompt_picker_matches().last().map(|p| p.description.clone()).unwrap_or_default();
+        let screen = screen_text(&mut app, 80, 24);
+        let visible = screen.iter().any(|row| row.contains(&last));
+        out.push(format!("[PROMPTS] last candidate {last:?} visible at 80x24: {visible}"));
+        assert!(visible, "the selected prompt must be scrolled into view");
+        let _ = app.handle_key(k(KeyCode::Up));
+        type_str(&mut app, "prompt 1");
+        let narrowed = app.prompt_picker_matches().len();
+        out.push(format!("[PROMPTS] `/prompt 1` → {narrowed} candidates · cursor {}", app.prompt_picker_cursor));
+        assert!(narrowed < total && app.prompt_picker_cursor < narrowed, "the filter narrows and clamps the cursor");
+        let _ = app.handle_key(k(KeyCode::Tab));
+        out.push(format!("[PROMPTS] Tab → picker={} · prompt {:?}", app.show_prompt_picker, app.ai_input.as_str().lines().next()));
+        assert!(!app.show_prompt_picker && !app.ai_input.as_str().starts_with('/'), "Tab expands the template");
+        app.ai_input.clear();
+        type_str(&mut app, "/");
+        out.extend(battery_on_pane(&mut app, Focus::AiPrompt, "PROMPTS battery", &|_| None));
+        app.ai_input.clear();
+        app.show_prompt_picker = false;
+
+        // ── file picker ──────────────────────────────────────────────────
+        app.focus = Focus::Editor;
+        app.modal = Modal::None;
+        app.open_file_picker(super::super::file_picker::PickerContext::EditorLoad);
+        assert!(matches!(app.modal, Modal::FilePicker(_)));
+        for key in [k(KeyCode::Right), k(KeyCode::Down), k(KeyCode::End), k(KeyCode::Left), k(KeyCode::Home), k(KeyCode::PageDown), k(KeyCode::PageUp)] {
+            let _ = app.handle_key(key);
+            for (w, h) in [(80, 24), (20, 6), (8, 3)] {
+                if let Err(e) = render(&mut app, w, h) {
+                    out.push(format!("[FILES] render {w}x{h}: {e}"));
+                }
+            }
+        }
+        let _ = app.handle_key(k(KeyCode::Enter)); // a directory under EditorLoad is rejected
+        out.push(format!("[FILES] Enter on the first entry → modal open={} · {}", !matches!(app.modal, Modal::None), app.status));
+        let _ = app.handle_key(k(KeyCode::Esc));
+        assert!(matches!(app.modal, Modal::None), "Esc closes the file picker");
+
+        drop(tmp);
+        let panics: Vec<&String> = out.iter().filter(|l| l.contains("PANIC") || l.contains("Err ") || l.contains("QUIT")).collect();
+        assert!(panics.is_empty(), "{} panicking / erroring probe steps:\n{}", panics.len(), panics.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n"));
     });
 }
 

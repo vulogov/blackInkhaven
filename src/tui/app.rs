@@ -2716,6 +2716,8 @@ mod tree_impl;
 mod modal_probe;
 #[cfg(test)]
 mod pane_probe;
+#[cfg(test)]
+mod chord_probe;
 
 /// The next rung in the leaf-type morph cycle (`t`/`T` in the Tree pane, and
 /// `Ctrl+B M`). Single source of truth for both the single-node and bulk paths

@@ -244,7 +244,7 @@ fn select_span(a: &mut App) {
 /// Write a paragraph body to its `.typ` on disk AND into the store: the
 /// editor reads the file, and a reopen of the store syncs from disk, so a
 /// store-only write would come back as the bare heading template.
-fn write_body(store: &Store, root: &std::path::Path, node: &mut Node, body: &[u8]) {
+pub(super) fn write_body(store: &Store, root: &std::path::Path, node: &mut Node, body: &[u8]) {
     if let Some(rel) = &node.file {
         std::fs::write(root.join(rel), body).unwrap();
     }
