@@ -26,7 +26,22 @@ pub fn run(project: &Path, prune: bool, adopt: bool) -> Result<()> {
     // old on-disk index), reindex must re-embed every document even though the
     // .typ files on disk are byte-for-byte unchanged. Change-detection alone
     // would report "unchanged" and rebuild nothing, leaving search empty.
-    let force_vectors = store.vector_index_appears_stale();
+    let mut force_vectors = store.vector_index_appears_stale();
+
+    // 3.21 — a changed embedding model produces vectors of another width;
+    // the index refuses them (every search would otherwise rank on garbage),
+    // so drop it and re-embed everything.
+    let index_dim = store.vector_dim()?;
+    if index_dim != 0 {
+        let model_dim = store.embed_batch(&["dimension probe"])?.first().map(Vec::len).unwrap_or(0);
+        if model_dim != 0 && model_dim != index_dim {
+            eprintln!(
+                "reindex: the embedding model now produces {model_dim}-wide vectors but the index holds {index_dim}-wide ones — rebuilding the index from scratch"
+            );
+            store.reset_vector_index()?;
+            force_vectors = true;
+        }
+    }
 
     let mut updated = 0usize;
     let mut unchanged = 0usize;

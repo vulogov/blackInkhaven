@@ -938,6 +938,8 @@ impl super::App {
         let (tx, rx) = std::sync::mpsc::channel();
         let store = self.store.clone();
         let q = query.clone();
+        // 3.21 — scoped to the Help subtree inside the vector walk.
+        let scope = help_subtree.clone();
         std::thread::spawn(move || {
             // Isolate a library panic (ONNX embed / HNSW query) so it can't reach
             // the process-global crash hook and tear the live terminal down
@@ -946,7 +948,7 @@ impl super::App {
             // recovers via the channel's `Disconnected` arm.
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
                 crate::crash::suppress_panic_report(move || {
-                    let _ = tx.send(store.search_text(&q, 40).map_err(|e| e.to_string()));
+                    let _ = tx.send(store.search_text_within(&q, 40, &scope).map_err(|e| e.to_string()));
                 })
             }));
         });

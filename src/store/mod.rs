@@ -883,6 +883,43 @@ symbol/motif proposals you can accept straight into this book.";
             .map_err(|e| Error::Store(format!("search_document_text: {e}")))
     }
 
+    /// 3.21 — [`search_text`](Self::search_text) over the documents `keep`
+    /// accepts, filtered inside the vector walk, so a scoped search returns
+    /// its own best `limit` hits rather than the scoped survivors of a global
+    /// top-k (which starved the Facts, Book and Help searches in a large
+    /// project).
+    pub fn search_text_where(
+        &self,
+        query: &str,
+        limit: usize,
+        keep: &dyn Fn(Uuid) -> bool,
+    ) -> Result<Vec<JsonValue>> {
+        self.inner
+            .search_document_text_where(query, limit, keep)
+            .map_err(|e| Error::Store(format!("search_document_text_where: {e}")))
+    }
+
+    /// [`search_text_where`](Self::search_text_where) restricted to `ids`.
+    pub fn search_text_within(
+        &self,
+        query: &str,
+        limit: usize,
+        ids: &std::collections::HashSet<Uuid>,
+    ) -> Result<Vec<JsonValue>> {
+        self.search_text_where(query, limit, &|id| ids.contains(&id))
+    }
+
+    /// Width of the stored vectors (0 while the index is empty).
+    pub fn vector_dim(&self) -> Result<usize> {
+        self.inner.vector_dim().map_err(|e| Error::Store(e.to_string()))
+    }
+
+    /// Drop the whole vector index so `reindex` can rebuild it — the path for
+    /// a changed embedding model, whose vectors have another width.
+    pub fn reset_vector_index(&self) -> Result<()> {
+        self.inner.reset_vectors().map_err(|e| Error::Store(e.to_string()))
+    }
+
     /// Embed arbitrary texts via the store's loaded embedding engine — for
     /// on-demand semantic comparison (e.g. conlang near-synonym detection).
     pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
@@ -1718,6 +1755,10 @@ symbol/motif proposals you can accept straight into this book.";
         self.inner
             .update_metadata(new_node.id, new_node.to_json())
             .map_err(|e| Error::Store(format!("update_metadata: {e}")))?;
+        // 3.21 — the `:meta` slot embeds the path; keep it in lockstep.
+        self.inner
+            .reembed_metadata(new_node.id)
+            .map_err(|e| Error::Store(format!("reembed_metadata: {e}")))?;
         self.sync()?;
         Ok(())
     }

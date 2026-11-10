@@ -114,7 +114,9 @@ so what it shows is the raw project config, not the global-merged result.
 
 Controls how paragraph bodies are converted into vectors for semantic
 search. Inkhaven uses [fastembed](https://github.com/Anush008/fastembed-rs)
-under the hood.
+under the hood. A query is answered exactly — a cosine scan over every
+stored vector — while the index holds up to 20 000 vectors (3.21; a novel
+is a few thousand), and by the HNSW graph above that.
 
 ```hjson
 embeddings: {
@@ -138,6 +140,13 @@ Supported model names:
   multilingual recall including Russian
 - `MultilingualE5Base` — 768-dim, ~300 MB, higher quality
 - `MultilingualE5Large` — 1024-dim, ~1.1 GB, best multilingual quality
+
+The models differ in vector width, so an index built by one cannot be
+searched with another. After changing `model`, run `inkhaven reindex`: it
+notices the width mismatch, drops the old index and re-embeds every
+paragraph (3.21). Until you do, a save or a search against the old index
+is refused with that same instruction instead of ranking on mismatched
+vectors.
 - `BGEM3` — 1024-dim, multilingual, strong English performance
 - `BGESmallENV15`, `BGEBaseENV15`, `BGELargeENV15` — English-only,
   smaller binaries

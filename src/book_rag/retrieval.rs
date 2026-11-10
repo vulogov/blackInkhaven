@@ -27,8 +27,10 @@ pub fn retrieve(
 ) -> Result<Vec<RetrievedPassage>, String> {
     let scope = scope_ids(hierarchy, cfg, book_id);
     let pool = (cfg.top_k * 4 + 16).max(16);
+    // 3.21 — scoped inside the vector walk, so the book's own best hits come
+    // back even when another book outranks it globally.
     let raw = store
-        .search_text(query, pool)
+        .search_text_within(query, pool, &scope)
         .map_err(|e| format!("book search: {e}"))?;
 
     let mut hits: Vec<(Uuid, f64)> = Vec::new();

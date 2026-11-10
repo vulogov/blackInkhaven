@@ -103,6 +103,15 @@ const RECORDS_FILE: &str = "records.bin";
 /// fraction of the graph. Keeps query over-search bounded and the dump small.
 const ORPHAN_COMPACT_THRESHOLD: f64 = 0.5;
 
+/// Up to this many live vectors a query is answered **exactly**, by a linear
+/// cosine scan over the records (3.21). A novel is a few thousand vectors —
+/// a scan of 20 000 × 384 floats is a few milliseconds — and the HNSW walk
+/// had been seen to miss the true nearest neighbour (cosine 0.88 against a
+/// best returned 0.83) in a graph whose neighbour lists were saturated by the
+/// near-identical `:meta` vectors every paragraph contributes. Above this the
+/// graph is used, with a wide beam.
+const EXACT_SEARCH_MAX: usize = 20_000;
+
 /// Never over-search more than this many neighbours, however orphaned the graph
 /// — a backstop so a pathological (uncompacted) graph can't turn one query into
 /// a near-full scan.
@@ -313,6 +322,11 @@ impl VecStore {
         if self.dim == 0 {
             self.dim = vector.len();
         }
+        // 3.21 — a vector of another width means the embedding model changed
+        // under an existing index. hnsw_rs's cosine zips the two slices and
+        // silently truncates, so without this guard every later search would
+        // rank on garbage; refuse with the remedy instead.
+        self.check_dim(vector.len())?;
         if let Some(old_idx) = self.id_to_idx.remove(&id) {
             self.idx_to_id.remove(&old_idx);
         }
@@ -339,15 +353,104 @@ impl VecStore {
         }
     }
 
+    fn check_dim(&self, got: usize) -> Result<()> {
+        if self.dim != 0 && got != self.dim {
+            return Err(anyhow!(
+                "embedding dimension {got} does not match the vector index ({}): the embedding model \
+                 changed — run `inkhaven reindex` to rebuild the index",
+                self.dim
+            ));
+        }
+        Ok(())
+    }
+
+    /// Embedding width of the stored vectors (0 while the index is empty).
+    pub fn dim(&self) -> usize {
+        self.dim
+    }
+
+    /// Drop every vector and the on-disk files: the index starts empty, as if
+    /// the project had never been embedded. `reindex` uses this when the
+    /// embedding model's width no longer matches the stored vectors.
+    pub fn reset(&mut self) -> Result<()> {
+        for name in [
+            RECORDS_FILE.to_string(),
+            MAP_FILE.to_string(),
+            format!("{GRAPH_BASENAME}.hnsw.graph"),
+            format!("{GRAPH_BASENAME}.hnsw.data"),
+            format!("{GRAPH_TMP_BASENAME}.hnsw.graph"),
+            format!("{GRAPH_TMP_BASENAME}.hnsw.data"),
+        ] {
+            let p = self.dir.join(name);
+            if p.exists() {
+                fs::remove_file(&p).map_err(|e| anyhow!("remove {p:?}: {e}"))?;
+            }
+        }
+        *self = Self::empty(self.dir.clone());
+        Ok(())
+    }
+
     /// k-nearest search. Returns up to `limit` live neighbours ordered nearest
     /// first, each carrying its raw cosine distance in `score`. Over-searches in
     /// proportion to the orphan fraction so tombstone filtering still yields a
     /// full result set.
     pub fn query(&self, q: Query) -> Result<Vec<Neighbor>> {
+        self.query_where(q, None)
+    }
+
+    /// [`query`](Self::query) restricted to the ids `keep` accepts, applied
+    /// inside the graph walk (`hnsw_rs::search_filter`) so a narrow scope
+    /// still yields up to `limit` hits — post-filtering a global top-k starved
+    /// a scoped search (Facts, a book, the Help corpus) in a large project.
+    pub fn query_filtered(&self, q: Query, keep: &dyn Fn(&str) -> bool) -> Result<Vec<Neighbor>> {
+        self.query_where(q, Some(keep))
+    }
+
+    fn query_where(&self, q: Query, keep: Option<&dyn Fn(&str) -> bool>) -> Result<Vec<Neighbor>> {
         let live = self.id_to_idx.len();
         if live == 0 {
             return Ok(Vec::new());
         }
+        self.check_dim(q.vector.len())?;
+        if live <= EXACT_SEARCH_MAX {
+            return Ok(self.query_exact(&q, keep));
+        }
+        self.query_hnsw(q, keep)
+    }
+
+    /// The exact answer: every live record scored by cosine distance, nearest
+    /// first, `keep`-filtered, truncated to the limit.
+    fn query_exact(&self, q: &Query, keep: Option<&dyn Fn(&str) -> bool>) -> Vec<Neighbor> {
+        let k = q.limit.max(1);
+        let qn: f32 = q.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let mut scored: Vec<(f32, &String)> = self
+            .records
+            .iter()
+            .filter(|(id, _)| keep.is_none_or(|f| f(id)))
+            .map(|(id, v)| {
+                let dot: f32 = q.vector.iter().zip(v).map(|(a, b)| a * b).sum();
+                let vn: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+                let d = if qn == 0.0 || vn == 0.0 { 1.0 } else { 1.0 - dot / (qn * vn) };
+                (d, id)
+            })
+            .collect();
+        scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.1.cmp(b.1)));
+        scored
+            .into_iter()
+            .take(k)
+            .map(|(d, id)| Neighbor { id: id.clone(), score: d })
+            .collect()
+    }
+
+    /// The approximate answer from the HNSW graph — the path for an index
+    /// past [`EXACT_SEARCH_MAX`]; public so a test can measure its recall
+    /// against [`query`](Self::query).
+    pub fn query_hnsw(&self, q: Query, keep: Option<&dyn Fn(&str) -> bool>) -> Result<Vec<Neighbor>> {
+        let live = self.id_to_idx.len();
+        if live == 0 {
+            return Ok(Vec::new());
+        }
+        self.check_dim(q.vector.len())?;
         let k = q.limit.max(1);
 
         // Inflate the neighbour count so that, after filtering out ~(1 - live
@@ -361,9 +464,19 @@ impl VecStore {
             k
         };
         let knbn = inflated.clamp(k, MAX_OVERSEARCH).min(total);
-        let ef = knbn.max(64);
+        // A wide beam: the near-identical `:meta` vectors saturate neighbour
+        // lists, and a narrow walk was seen to miss the nearest point.
+        let ef = knbn.max(256);
 
-        let hits = self.hnsw.search(&q.vector, knbn, ef);
+        let hits = match keep {
+            None => self.hnsw.search(&q.vector, knbn, ef),
+            Some(keep) => {
+                // Tombstones and out-of-scope ids are rejected during the walk,
+                // so every returned point is live and in scope.
+                let pass = |d: &DataId| self.idx_to_id.get(d).is_some_and(|id| keep(id));
+                self.hnsw.search_filter(&q.vector, knbn, ef, Some(&pass))
+            }
+        };
         let mut out = Vec::with_capacity(k);
         for h in hits {
             if let Some(id) = self.idx_to_id.get(&h.d_id) {
@@ -521,6 +634,81 @@ mod tests {
             let hits = s.query(Query::new(vec_for(999, dim)).with_limit(1)).unwrap();
             assert_eq!(hits.first().map(|n| n.id.as_str()), Some("id42"));
         }
+    }
+
+    #[test]
+    fn a_vector_of_another_width_is_refused_with_the_remedy() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap().to_string();
+        let mut s = VecStore::open(&path).unwrap();
+        s.upsert("a".into(), vec_for(1, 32), Metadata::default()).unwrap();
+        assert_eq!(s.dim(), 32);
+        let err = s.upsert("b".into(), vec_for(2, 16), Metadata::default()).unwrap_err().to_string();
+        assert!(err.contains("16 does not match the vector index (32)") && err.contains("inkhaven reindex"), "{err}");
+        assert_eq!(s.count(), 1, "the refused vector is not stored");
+        let err = s.query(Query::new(vec_for(1, 16))).unwrap_err().to_string();
+        assert!(err.contains("does not match"), "{err}");
+        // A reset starts over: new width accepted, files gone.
+        s.save().unwrap();
+        s.reset().unwrap();
+        assert_eq!((s.count(), s.dim()), (0, 0));
+        assert!(!dir.path().join(RECORDS_FILE).exists());
+        s.upsert("b".into(), vec_for(2, 16), Metadata::default()).unwrap();
+        assert_eq!(s.dim(), 16);
+    }
+
+    /// The trap the search probe found in a real project: a dense cluster of
+    /// near-identical vectors (every paragraph's `:meta` slot) saturates the
+    /// graph's neighbour lists and the walk returns cluster members instead
+    /// of the one point that is actually nearest. The exact path must find
+    /// it; the graph's own recall is measured and printed, not asserted.
+    #[test]
+    fn a_near_duplicate_cluster_does_not_hide_the_nearest_point() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap().to_string();
+        let dim = 64;
+        let mut s = VecStore::open(&path).unwrap();
+        let base: Vec<f32> = (0..dim).map(|i| ((i * 7) % 13) as f32 / 13.0 + 0.5).collect();
+        for i in 0..400usize {
+            let v: Vec<f32> = base.iter().enumerate().map(|(j, b)| b + (((i * 31 + j * 17) % 97) as f32 - 48.0) * 0.0004).collect();
+            s.upsert(format!("dup{i}"), v, Metadata::default()).unwrap();
+        }
+        // One point in a different direction, and a query right next to it.
+        let target: Vec<f32> = (0..dim).map(|i| if i % 3 == 0 { 1.0 } else { -0.4 }).collect();
+        s.upsert("target".into(), target.clone(), Metadata::default()).unwrap();
+        let query: Vec<f32> = target.iter().enumerate().map(|(i, t)| t + if i % 5 == 0 { 0.05 } else { -0.02 }).collect();
+        let exact = s.query(Query::new(query.clone()).with_limit(3)).unwrap();
+        assert_eq!(exact.first().map(|n| n.id.as_str()), Some("target"), "{exact:?}");
+        let approx = s.query_hnsw(Query::new(query).with_limit(3), None).unwrap();
+        println!("hnsw recall on the cluster trap: top = {:?}", approx.first().map(|n| n.id.as_str()));
+    }
+
+    #[test]
+    fn a_filtered_query_fills_k_from_the_scope_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap().to_string();
+        let dim = 24;
+        let mut s = VecStore::open(&path).unwrap();
+        // 200 points; the scope is the ten ids ending in 7, which an unfiltered
+        // top-5 around an arbitrary query would rarely contain.
+        for i in 0..200usize {
+            s.upsert(format!("id{i}"), vec_for(i, dim), Metadata::default()).unwrap();
+        }
+        let in_scope = |id: &str| id.ends_with('7');
+        let hits = s.query_filtered(Query::new(vec_for(3, dim)).with_limit(5), &in_scope).unwrap();
+        assert_eq!(hits.len(), 5, "five in-scope hits exist, five must come back");
+        assert!(hits.iter().all(|h| in_scope(&h.id)), "{hits:?}");
+        let mut d: Vec<f32> = hits.iter().map(|h| h.score).collect();
+        let sorted = d.clone();
+        d.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(d, sorted, "nearest first");
+        // A tombstoned id never passes the filter either.
+        s.remove("id7").unwrap();
+        let hits = s.query_filtered(Query::new(vec_for(7, dim)).with_limit(3), &in_scope).unwrap();
+        assert!(hits.iter().all(|h| h.id != "id7"));
+        // An empty scope is an empty answer, not an error.
+        let none = s.query_filtered(Query::new(vec_for(3, dim)).with_limit(5), &|_| false).unwrap();
+        assert!(none.is_empty());
     }
 
     #[test]

@@ -337,6 +337,19 @@ impl Hierarchy {
         chain
     }
 
+    /// 3.21 — whether `id` sits inside a system book (Help, Facts, Prompts,
+    /// Notes …): the scope the manuscript searches exclude.
+    pub fn under_system_book(&self, id: Uuid) -> bool {
+        let Some(node) = self.get(id) else {
+            return false;
+        };
+        (node.kind == NodeKind::Book && node.system_tag.is_some())
+            || self
+                .ancestors(node)
+                .iter()
+                .any(|a| a.kind == NodeKind::Book && a.system_tag.is_some())
+    }
+
     /// 1.2.23 D.8 — every Chapter under a *user* (non-system) book, as
     /// `(id, title)` in hierarchy order.  The shared manuscript walk for
     /// the analysis commands (continuity / tension / facts scan), which

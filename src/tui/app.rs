@@ -2718,6 +2718,8 @@ mod modal_probe;
 mod pane_probe;
 #[cfg(test)]
 mod chord_probe;
+#[cfg(test)]
+mod search_probe;
 
 /// The next rung in the leaf-type morph cycle (`t`/`T` in the Tree pane, and
 /// `Ctrl+B M`). Single source of truth for both the single-node and bulk paths
@@ -13027,9 +13029,14 @@ impl App {
         // meta/content slots, but our own filters (current id,
         // non-paragraph kinds) still drop rows. Aim for `limit`
         // *survivors*, not `limit` raw hits.
+        // 3.21 — scoped inside the vector walk: never the current paragraph,
+        // never a system book (Help, Facts, Prompts, Notes …), so the picker
+        // lists the manuscript's own neighbours and fills its limit.
+        let hierarchy = &self.hierarchy;
+        let keep = |id: Uuid| id != exclude_id && !hierarchy.under_system_book(id);
         let raw = self
             .store
-            .search_text(query, (limit + 4).max(8))
+            .search_text_where(query, (limit + 4).max(8), &keep)
             .map_err(|e| anyhow::anyhow!("similarity search: {e}"))?;
         let mut out: Vec<SimilarPickerEntry> = Vec::new();
         for v in raw.iter() {
@@ -13096,7 +13103,10 @@ impl App {
             .collect_subtree(facts_id)
             .into_iter()
             .collect();
-        let raw = match self.store.search_text(query, (limit + 8).max(16)) {
+        // 3.21 — scoped to the Facts subtree inside the vector walk; a
+        // post-filtered global pool returned nothing once the manuscript
+        // outranked every fact.
+        let raw = match self.store.search_text_within(query, (limit + 8).max(16), &facts_ids) {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };
