@@ -27,36 +27,31 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.19.0 — Every Key Answers
+## Latest release · 3.20.0 — Every Surface Checked
 
-3.19.0 is a verification release for the **TUI**: seven passes, each a
-headless probe that drives one surface of the running editor with every key
-at nine terminal sizes, then a fix pass over what it found. Forty-odd defects
-are fixed and the probes stay in the tree as ignored tests. No new dependency,
-no new store, warning-free in everything touched:
+3.20.0 finishes the verification track 3.19.0 opened: the two standalone
+editors are probed key by key, the one modal the main-editor probe could not
+reach is closed, and the command line gets a walker over the whole clap tree
+plus a docs-drift test. No new dependency, no new store, warning-free in
+everything touched:
 
-- **Clicks land where the mouse is** — in the editor with soft-wrap on and in
-  the tree when rows wrap or the pane is scrolled.
-- **One chord set for every text input** — forty fields (search bar, AI
-  prompt, shell, every picker filter, the tree and Output `/` queries) share
-  one table (`KEYBINDING.md` §4.5), one history recall with a kept draft, and
-  a cursor that is always on screen; the HJSON, comment and footnote editors
-  use the paragraph editor's chords and ask twice before discarding text.
-- **Modals fit the terminal** — fitted rects and a 32×8 floor instead of
-  panics; `Esc` reaches the seven modals that own it; chorded letters never
-  confirm a delete or fire a pane action; long lists window around the cursor.
-- **No dead ends** — `Home` / `G` / `PgUp` clamp to the rendered extent in the
-  AI, Thoughts and chat views; the prompt picker scrolls; the results overlay
-  is clipped.
-- **Every chord answers** — `Ctrl+B U` and `Ctrl+B J` work from the tree (two
-  legacy aliases shadowed them), twenty bound chords gain their missing
-  reference rows, and a probe now checks the binding table against
-  `KEYBINDING.md` both ways.
+- **The config editor and the prompts editor answer every key** — every
+  one-line box takes the shared text-input chord set with a drawn cursor,
+  chorded letters never fire bare actions, `?` types in the prompts editor,
+  the AI response pane scrolls and clamps, the prompt history keeps your
+  draft, help panes scroll, rollback pickers window around the cursor and
+  every modal fits the terminal. Two probes run in the default suite.
+- **The modal probe reaches everything** — the thesaurus opens through its
+  real opener against a seeded WordNet lexicon; unopened modals 1 → 0.
+- **One command-line surface** — `ai --provider` lost the `-p` it shared with
+  the global project flag; twenty-four commands take `-o/--output` (`--out`
+  stays as a hidden alias); a test resolves every `inkhaven …` line in the
+  documentation against the binary and nine stale invocations are fixed.
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.19.0.md`](Documentation/RELEASE_NOTES/3.19.0.md).
-Five behaviour changes are listed there under *Upgrade notes* (`Ctrl+B U`/`J`
-in the tree, tree `o`, two-step `Esc` in the text editors, `editor.tab_width`,
-chorded letters); existing projects open unchanged.
+Read the full notes: [`Documentation/RELEASE_NOTES/3.20.0.md`](Documentation/RELEASE_NOTES/3.20.0.md).
+Four behaviour changes are listed there under *Upgrade notes* (`ai --provider`,
+`--out` → `--output`, `?` and `Ctrl+Enter` in the prompts editor); existing
+projects open unchanged.
 
 **Stable baseline · 3.0.0.** 3.0.0 remains the stable, maintained edition — the
 intelligence suite that watches, reads, and remembers itself (SEMNET → GRAPHMIND →
