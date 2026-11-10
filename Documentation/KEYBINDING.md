@@ -1782,18 +1782,27 @@ inkhaven prompts-editor -p <project-dir>
 
 Layout: prompts list (left) · prompt editor
 (centre, full tui-textarea chord set) · AI
-response (right, display-only) · AI prompt input
-(3-row bottom strip).
+response (right, display-only, scrollable) · AI
+prompt input (3-row bottom strip).
 
 ### Global chords
 
 ```
 Ctrl+S              save library (atomic + .prompts-backups/ snapshot)
 Ctrl+R              rollback picker (list, preview, restore, delete)
-Ctrl+H / ?          focus-aware help pane
+Ctrl+H              focus-aware help pane; `?` opens it from the list pane only
+                    (3.20 — in the editor and the AI prompt `?` types).
+                    ↑↓ / PgUp / PgDn scroll a long help; any other key closes.
 Tab / Shift+Tab     cycle pane focus (3 stops: list → editor → ai prompt → list)
 Esc / Ctrl+Q        quit (confirm if unsaved)
+Ctrl+B ↑ / ↓        scroll the AI response pane a line (3.20, from any pane)
+Ctrl+B PgUp / PgDn  scroll it a page
+Ctrl+B Home / End   top / bottom of the response
 ```
+
+A `Ctrl`/`Alt` letter the table above does not name
+is ignored: it never fires the bare-key list actions
+(3.20).
 
 ### Prompts list pane
 
@@ -1803,7 +1812,13 @@ Enter                            load focused prompt + jump focus to editor
 a                                add new prompt (name prompt → empty body)
 d                                delete focused prompt (confirm modal)
                                    second `d` on a staged-deleted entry revokes
+l                                cycle the language tag (— / en / ru / es / de / fr)
+?                                help
 ```
+
+The add-prompt name box takes the shared one-line
+chord set (§4.5): `←`/`→`, `Home`/`End`, word
+moves, `Ctrl+U`/`Ctrl+K` kills; the cursor is drawn.
 
 ### Editor pane
 
@@ -1825,11 +1840,17 @@ Ctrl+B G            "Get" — insert latest AI pane response at the editor
 
 ### AI prompt input pane
 
+The shared one-line chord set (§4.5) plus:
+
 ```
 type / Backspace / Delete         buffer edit
-Left / Right / Home / End         cursor movement
-Ctrl+A / Ctrl+E                   start / end of line (readline-style)
-Up / Down                         in-session history walk (deduped)
+← → / Home / End / Ctrl+A / Ctrl+E   cursor movement
+Ctrl+← / → · Alt+B / F            word moves
+Ctrl+U / Ctrl+W                   kill to start / kill word
+Up / Down                         in-session history walk (deduped); past the
+                                  newest entry the draft you were typing
+                                  comes back (3.20)
+PgUp / PgDn                       scroll the AI response pane (3.20)
 Enter                             send for analysis
 Ctrl+L                            clear input
 Ctrl+K                            clear input + clear history
@@ -1850,7 +1871,8 @@ on their use.  Pressing Enter sends:
     (or an embedded default critique if empty).
 
 Single-shot per send; multi-turn isn't planned
-for this surface.
+for this surface.  A new send scrolls the response
+pane back to the top.
 
 ### Save chips
 
@@ -1866,7 +1888,9 @@ per-prompt markers:
 
 `Ctrl+R` lists every
 `.prompts-backups/prompts_YYYYMMDD_HHMMSS.hjson`
-newest-first.  Inside the picker:
+newest-first; the list windows around the cursor
+(3.20 — a long list used to walk it off-screen).
+Inside the picker:
 
 ```
 ↑↓ / PgUp / PgDn / Home / End   navigate
@@ -1881,7 +1905,107 @@ The first Ctrl+S after a rollback writes a fresh
 backup of the pre-rollback state, so the safety
 chain stays intact.
 
+Every modal is fitted to the terminal (3.20): on a
+small window it is clipped, never painted outside
+the frame.
+
 See [`Tutorials/44-prompts-editor.md`](Tutorials/44-prompts-editor.md)
+for the full workflow walkthrough.
+
+## `inkhaven config` (1.2.10+)
+
+Standalone TUI for editing `<project>/inkhaven.hjson`
+with typed widgets, comment preservation, timestamped
+backups and a field-aware help pane.  Launched outside
+the main TUI:
+
+```
+inkhaven config -p <project-dir>
+```
+
+Layout: config tree (left) · detail pane (right).
+
+### Tree pane
+
+```
+↑↓ / PgUp / PgDn / Home / End   navigate (PgUp / PgDn page by 10)
+Enter / Space                    expand / collapse a stanza, or open the
+                                 value editor on a leaf
+e                                open the value editor on the focused leaf
+r                                reset the focused leaf to its default (staged)
+a                                add a map entry (focus a map-shaped stanza
+                                 such as `llm.providers`, or one of its entries)
+d                                delete the focused map entry (confirm modal;
+                                 a staged, unsaved entry is simply dropped)
+?                                help for the focused field
+```
+
+A `Ctrl`/`Alt` letter the tables here do not name is
+ignored — `Ctrl+D` never deletes, `Alt+E` never opens
+an editor (3.20).  The cursor always stays on a row
+when a collapse or a dropped entry shortens the tree.
+
+### Global chords
+
+```
+Ctrl+S        save (confirmation modal → atomic surgical write + .config-backups/)
+Ctrl+R        rollback picker (list, preview, restore, delete)
+Ctrl+H / ?    field-aware help: CONFIGURATION.md row + doc-comment + metadata.
+              ↑↓ / PgUp / PgDn scroll a long entry (3.20); any other key closes.
+Ctrl+I        comment inspector — the HJSON comments above the focused field
+              plus its annotation; any key closes
+Ctrl+A        annotation editor — a free-text note stored in
+              .config-annotations.hjson; Enter saves, empty clears, Esc cancels
+Esc / Ctrl+Q  quit (confirm if unsaved)
+```
+
+### Value editor widgets
+
+Every one-line box (int, float, string, colour hex,
+path, list entry, map-entry name, annotation) takes
+the shared text-input chord set (§4.5): `←`/`→`,
+`Home`/`End`, `Ctrl+A`/`Ctrl+E`, `Ctrl+←`/`→` and
+`Alt+B`/`F` word moves, `Ctrl+U`/`Ctrl+K` kills,
+`Ctrl+W` kill-word; the cursor is drawn and a long
+value windows to the box (3.20).  A character the
+box cannot hold (a letter in an int box, a non-hex
+digit in a colour) is dropped.
+
+```
+bool      Space / t / f toggle · y true · n false · Enter commits
+int       digits + sign · ↑ / ↓ ±1 · Enter commits (parse error shown)
+float     digits · . · e · sign · Enter commits (NaN / infinity refused)
+string    free text · Enter commits
+colour    hex digits + # · h toggles the HSL sliders (Tab / ↑↓ pick a slider,
+          ← → step, Shift+← → step 10, Home / End ends) · Enter commits
+path      free text · F3 opens the file picker (↑↓ PgUp PgDn Home End, → expand,
+          ← collapse / step out, Enter selects into the box, Esc / F3 back) ·
+          Enter commits
+enum      ↑↓ / Home / End pick · Enter commits
+list      ↑↓ / Home / End · a add · d delete · e edit (inline box: Enter saves,
+          Esc back to browse) · Ctrl+S or Ctrl+Enter commits the list
+Esc       cancels any editor
+```
+
+### Modals
+
+```
+Save?            y / Enter write · n / Esc cancel
+Saved            any key closes (the top bar shows `restart required`)
+Discard?         y / Enter quit without saving · n / Esc stay
+Rollback         ↑↓ PgUp PgDn Home End · Enter stage · v preview · d delete · Esc
+                 (the list windows around the cursor, 3.20)
+Preview          ↑↓ PgUp PgDn Home End scroll · Esc back to the picker
+Delete backup?   y / Enter · n / Esc back to the picker
+Add map entry    name box (shared chords) · Enter stages · Esc cancels
+Delete entry?    y / Enter stage the deletion · n / Esc
+```
+
+Every modal is fitted to the terminal (3.20): on a
+small window it is clipped, never painted outside
+the frame.
+
+See [`Tutorials/45-config-tui.md`](Tutorials/45-config-tui.md)
 for the full workflow walkthrough.
 
 

@@ -26,6 +26,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use serde_json::Value;
 
+use crate::tui::app::handle_text_input_key;
+use crate::tui::input::TextInput;
+
 pub enum EditOutcome {
     /// Still editing — no commit.
     Continue,
@@ -34,6 +37,36 @@ pub enum EditOutcome {
     Commit(Value),
     /// User pressed Esc — abandon.
     Cancel,
+}
+
+/// Route a key to a one-line text box through the shared chord set
+/// (`KEYBINDING.md` §4.5): cursor moves, `Home`/`End`, word moves, the
+/// kills. A printable character is inserted only when `allow` accepts it,
+/// so a numeric box still refuses letters. Returns true when the text changed.
+fn edit_filtered(input: &mut TextInput, key: KeyEvent, allow: impl Fn(char) -> bool) -> bool {
+    let chorded = key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+    match key.code {
+        KeyCode::Char(c) if !chorded => {
+            if allow(c) {
+                input.insert_char(c);
+                true
+            } else {
+                false
+            }
+        }
+        _ => handle_text_input_key(input, key),
+    }
+}
+
+/// `"    text│"` with the cursor kept inside `width` cells.
+fn boxed(input: &TextInput, width: u16) -> String {
+    format!("    {}", input.render_with_cursor_fit('│', width.saturating_sub(5) as usize))
+}
+
+/// Replace a box's text and put the cursor at its end.
+fn set_text(input: &mut TextInput, s: String) {
+    let n = s.chars().count();
+    input.set_with_cursor(s, n);
 }
 
 pub enum Widget {
@@ -161,6 +194,11 @@ pub struct BoolWidget {
 
 impl BoolWidget {
     fn handle_key(&mut self, key: KeyEvent) -> EditOutcome {
+        if matches!(key.code, KeyCode::Char(_))
+            && key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            return EditOutcome::Continue;
+        }
         match key.code {
             KeyCode::Char(' ') | KeyCode::Char('t') | KeyCode::Char('f') => {
                 self.value = !self.value;
@@ -226,18 +264,18 @@ impl BoolWidget {
 // ── int ───────────────────────────────────────────────
 
 pub struct IntWidget {
-    buffer: String,
+    buffer: TextInput,
     error: Option<String>,
 }
 
 impl IntWidget {
     fn from_i64(v: i64) -> Self {
-        Self { buffer: v.to_string(), error: None }
+        Self { buffer: TextInput::from(v.to_string().as_str()), error: None }
     }
 
     fn parse(&mut self) -> Option<i64> {
         self.error = None;
-        match self.buffer.parse::<i64>() {
+        match self.buffer.as_str().parse::<i64>() {
             Ok(v) => Some(v),
             Err(e) => {
                 self.error = Some(format!("not an integer: {e}"));
@@ -248,23 +286,15 @@ impl IntWidget {
 
     fn handle_key(&mut self, key: KeyEvent) -> EditOutcome {
         match key.code {
-            KeyCode::Backspace => {
-                self.buffer.pop();
-                EditOutcome::Continue
-            }
-            KeyCode::Char(c) if c.is_ascii_digit() || c == '-' || c == '+' => {
-                self.buffer.push(c);
-                EditOutcome::Continue
-            }
             KeyCode::Up => {
                 if let Some(v) = self.parse() {
-                    self.buffer = (v + 1).to_string();
+                    set_text(&mut self.buffer, v.saturating_add(1).to_string());
                 }
                 EditOutcome::Continue
             }
             KeyCode::Down => {
                 if let Some(v) = self.parse() {
-                    self.buffer = (v - 1).to_string();
+                    set_text(&mut self.buffer, v.saturating_sub(1).to_string());
                 }
                 EditOutcome::Continue
             }
@@ -276,7 +306,10 @@ impl IntWidget {
                 }
             }
             KeyCode::Esc => EditOutcome::Cancel,
-            _ => EditOutcome::Continue,
+            _ => {
+                edit_filtered(&mut self.buffer, key, |c| c.is_ascii_digit() || c == '-' || c == '+');
+                EditOutcome::Continue
+            }
         }
     }
 
@@ -291,7 +324,7 @@ impl IntWidget {
         f.render_widget(block, area);
         let mut lines = vec![
             Line::from(""),
-            Line::from(format!("    {}│", self.buffer)),
+            Line::from(boxed(&self.buffer, inner.width)),
             Line::from(""),
         ];
         if let Some(err) = &self.error {
@@ -311,18 +344,18 @@ impl IntWidget {
 // ── float ─────────────────────────────────────────────
 
 pub struct FloatWidget {
-    buffer: String,
+    buffer: TextInput,
     error: Option<String>,
 }
 
 impl FloatWidget {
     fn from_f64(v: f64) -> Self {
-        Self { buffer: format!("{v}"), error: None }
+        Self { buffer: TextInput::from(format!("{v}").as_str()), error: None }
     }
 
     fn parse(&mut self) -> Option<f64> {
         self.error = None;
-        match self.buffer.parse::<f64>() {
+        match self.buffer.as_str().parse::<f64>() {
             Ok(v) => Some(v),
             Err(e) => {
                 self.error = Some(format!("not a number: {e}"));
@@ -333,21 +366,6 @@ impl FloatWidget {
 
     fn handle_key(&mut self, key: KeyEvent) -> EditOutcome {
         match key.code {
-            KeyCode::Backspace => {
-                self.buffer.pop();
-                EditOutcome::Continue
-            }
-            KeyCode::Char(c)
-                if c.is_ascii_digit()
-                    || c == '-'
-                    || c == '+'
-                    || c == '.'
-                    || c == 'e'
-                    || c == 'E' =>
-            {
-                self.buffer.push(c);
-                EditOutcome::Continue
-            }
             KeyCode::Enter => match self.parse() {
                 Some(v) => match serde_json::Number::from_f64(v) {
                     Some(n) => EditOutcome::Commit(Value::Number(n)),
@@ -359,7 +377,12 @@ impl FloatWidget {
                 None => EditOutcome::Continue,
             },
             KeyCode::Esc => EditOutcome::Cancel,
-            _ => EditOutcome::Continue,
+            _ => {
+                edit_filtered(&mut self.buffer, key, |c| {
+                    c.is_ascii_digit() || matches!(c, '-' | '+' | '.' | 'e' | 'E')
+                });
+                EditOutcome::Continue
+            }
         }
     }
 
@@ -374,7 +397,7 @@ impl FloatWidget {
         f.render_widget(block, area);
         let mut lines = vec![
             Line::from(""),
-            Line::from(format!("    {}│", self.buffer)),
+            Line::from(boxed(&self.buffer, inner.width)),
             Line::from(""),
         ];
         if let Some(err) = &self.error {
@@ -394,29 +417,22 @@ impl FloatWidget {
 // ── text ──────────────────────────────────────────────
 
 pub struct TextWidget {
-    buffer: String,
+    buffer: TextInput,
 }
 
 impl TextWidget {
     fn from_str(s: &str) -> Self {
-        Self { buffer: s.to_string() }
+        Self { buffer: TextInput::from(s) }
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> EditOutcome {
         match key.code {
-            KeyCode::Backspace => {
-                self.buffer.pop();
-                EditOutcome::Continue
-            }
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL)
-                && !key.modifiers.contains(KeyModifiers::ALT) =>
-            {
-                self.buffer.push(c);
-                EditOutcome::Continue
-            }
-            KeyCode::Enter => EditOutcome::Commit(Value::String(self.buffer.clone())),
+            KeyCode::Enter => EditOutcome::Commit(Value::String(self.buffer.as_str().to_string())),
             KeyCode::Esc => EditOutcome::Cancel,
-            _ => EditOutcome::Continue,
+            _ => {
+                edit_filtered(&mut self.buffer, key, |_| true);
+                EditOutcome::Continue
+            }
         }
     }
 
@@ -431,10 +447,10 @@ impl TextWidget {
         f.render_widget(block, area);
         let lines = vec![
             Line::from(""),
-            Line::from(format!("    {}│", self.buffer)),
+            Line::from(boxed(&self.buffer, inner.width)),
             Line::from(""),
             Line::from(Span::styled(
-                "  type to edit · Backspace deletes · Enter commits · Esc cancels",
+                "  type to edit · ←→ Home End · Ctrl+U / Ctrl+K kill · Enter commits · Esc cancels",
                 Style::default().add_modifier(Modifier::DIM),
             )),
         ];
@@ -498,7 +514,7 @@ enum ColorPreviewKind {
 }
 
 pub struct ColorWidget {
-    buffer: String,
+    buffer: TextInput,
     /// Field path — drives the theme-preview pane's
     /// mock layout.  Suffix decides whether the
     /// candidate value paints as fg / bg / border.
@@ -562,7 +578,7 @@ impl ColorWidget {
     #[allow(dead_code)]
     fn from_str(s: &str) -> Self {
         Self {
-            buffer: s.to_string(),
+            buffer: TextInput::from(s),
             path: String::new(),
             mode: ColorMode::Hex,
             hsl: HslState { h: 0, s: 0, l: 0, active: 0 },
@@ -574,7 +590,7 @@ impl ColorWidget {
             .map(|(r, g, b)| HslState::from_rgb(r, g, b))
             .unwrap_or(HslState { h: 0, s: 0, l: 0, active: 0 });
         Self {
-            buffer: s.to_string(),
+            buffer: TextInput::from(s),
             path: path.to_string(),
             mode: ColorMode::Hex,
             hsl,
@@ -593,7 +609,7 @@ impl ColorWidget {
 
     fn parsed(&self) -> Option<(u8, u8, u8)> {
         match self.mode {
-            ColorMode::Hex => parse_hex(&self.buffer),
+            ColorMode::Hex => parse_hex(self.buffer.as_str()),
             ColorMode::Hsl => Some(self.hsl.to_rgb()),
         }
     }
@@ -604,7 +620,7 @@ impl ColorWidget {
     /// stays in lockstep with what the preview shows.
     fn sync_buffer_from_hsl(&mut self) {
         let (r, g, b) = self.hsl.to_rgb();
-        self.buffer = format!("#{r:02x}{g:02x}{b:02x}");
+        set_text(&mut self.buffer, format!("#{r:02x}{g:02x}{b:02x}"));
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> EditOutcome {
@@ -612,26 +628,21 @@ impl ColorWidget {
         if matches!(self.mode, ColorMode::Hsl) {
             return self.handle_key_hsl(key);
         }
+        let chorded = key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
         // ── Hex mode (default) ─────────────────────
         match key.code {
-            KeyCode::Char('h') | KeyCode::Char('H') => {
+            KeyCode::Char('h') | KeyCode::Char('H') if !chorded => {
                 // Flip into HSL mode, seeding from the
                 // current hex value if it parses;
                 // otherwise keep the cached HSL state.
-                if let Some((r, g, b)) = parse_hex(&self.buffer) {
+                if let Some((r, g, b)) = parse_hex(self.buffer.as_str()) {
                     self.hsl = HslState::from_rgb(r, g, b);
                 }
                 self.mode = ColorMode::Hsl;
                 EditOutcome::Continue
             }
-            KeyCode::Backspace => {
-                self.buffer.pop();
-                EditOutcome::Continue
-            }
-            KeyCode::Char(c)
-                if c.is_ascii_hexdigit() || c == '#' =>
-            {
-                self.buffer.push(c.to_ascii_lowercase());
+            KeyCode::Char(c) if !chorded && (c.is_ascii_hexdigit() || c == '#') => {
+                self.buffer.insert_char(c.to_ascii_lowercase());
                 EditOutcome::Continue
             }
             KeyCode::Enter => {
@@ -639,7 +650,7 @@ impl ColorWidget {
                     // Normalise to lowercase `#rrggbb`
                     // form on commit so the saved
                     // HJSON is stable.
-                    let raw = self.buffer.trim();
+                    let raw = self.buffer.as_str().trim();
                     let hex = raw.strip_prefix('#').unwrap_or(raw);
                     let normalised = format!("#{}", hex.to_lowercase());
                     EditOutcome::Commit(Value::String(normalised))
@@ -648,14 +659,20 @@ impl ColorWidget {
                 }
             }
             KeyCode::Esc => EditOutcome::Cancel,
-            _ => EditOutcome::Continue,
+            _ => {
+                // Everything else is an editing key (cursor, kills); other
+                // printable characters are not hex and are dropped.
+                edit_filtered(&mut self.buffer, key, |_| false);
+                EditOutcome::Continue
+            }
         }
     }
 
     fn handle_key_hsl(&mut self, key: KeyEvent) -> EditOutcome {
         let shifted = key.modifiers.contains(KeyModifiers::SHIFT);
+        let chorded = key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
         match key.code {
-            KeyCode::Char('h') | KeyCode::Char('H') => {
+            KeyCode::Char('h') | KeyCode::Char('H') if !chorded => {
                 // Toggle back to hex mode.  Buffer is
                 // already in sync (every slider move
                 // calls `sync_buffer_from_hsl`).
@@ -722,7 +739,7 @@ impl ColorWidget {
                 EditOutcome::Continue
             }
             KeyCode::Enter => {
-                let raw = self.buffer.trim();
+                let raw = self.buffer.as_str().trim();
                 let hex = raw.strip_prefix('#').unwrap_or(raw);
                 let normalised = format!("#{}", hex.to_lowercase());
                 EditOutcome::Commit(Value::String(normalised))
@@ -750,7 +767,7 @@ impl ColorWidget {
         match self.mode {
             ColorMode::Hex => {
                 lines.push(Line::from(""));
-                lines.push(Line::from(format!("    {}│", self.buffer)));
+                lines.push(Line::from(boxed(&self.buffer, inner.width)));
                 lines.push(Line::from(""));
             }
             ColorMode::Hsl => {
@@ -778,7 +795,7 @@ impl ColorWidget {
                 lines.push(Line::from(""));
                 lines.push(Line::from(format!(
                     "    hex equivalent: {}",
-                    self.buffer
+                    self.buffer.as_str()
                 )));
                 lines.push(Line::from(""));
             }
@@ -1027,7 +1044,7 @@ fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
 /// buffer.  Mirrors the main TUI's F3 chord so muscle
 /// memory transfers.
 pub struct PathWidget {
-    buffer: String,
+    buffer: TextInput,
     picker: Option<crate::tui::file_picker::FilePicker>,
     /// Project root captured at widget-start so the
     /// picker has a sensible fallback when the buffer
@@ -1039,14 +1056,14 @@ pub struct PathWidget {
 impl PathWidget {
     pub(super) fn from_str_with_root(s: &str, project_root: &std::path::Path) -> Self {
         Self {
-            buffer: s.to_string(),
+            buffer: TextInput::from(s),
             picker: None,
             project_root: project_root.to_path_buf(),
         }
     }
 
     fn exists(&self) -> bool {
-        std::path::Path::new(self.buffer.trim()).exists()
+        std::path::Path::new(self.buffer.as_str().trim()).exists()
     }
 
     /// 1.2.11+ — root the picker at the directory
@@ -1055,7 +1072,7 @@ impl PathWidget {
     /// parent that exists; otherwise the project
     /// root.
     fn picker_root(&self) -> std::path::PathBuf {
-        let candidate = std::path::Path::new(self.buffer.trim());
+        let candidate = std::path::Path::new(self.buffer.as_str().trim());
         if !candidate.as_os_str().is_empty() {
             if candidate.is_dir() {
                 return candidate.to_path_buf();
@@ -1120,7 +1137,7 @@ impl PathWidget {
                     // commit the value to config.
                     if let Some(p) = self.picker.as_ref() {
                         if let Some(entry) = p.current() {
-                            self.buffer = entry.path.to_string_lossy().into_owned();
+                            set_text(&mut self.buffer, entry.path.to_string_lossy().into_owned());
                         }
                     }
                     self.picker = None;
@@ -1147,26 +1164,18 @@ impl PathWidget {
                 ));
                 EditOutcome::Continue
             }
-            KeyCode::Backspace => {
-                self.buffer.pop();
-                EditOutcome::Continue
-            }
-            KeyCode::Char(c)
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !key.modifiers.contains(KeyModifiers::ALT) =>
-            {
-                self.buffer.push(c);
-                EditOutcome::Continue
-            }
             KeyCode::Enter => {
                 // Don't block save on non-existent
                 // paths — many config paths (backup
                 // out_dir, etc.) get created on
                 // first use.
-                EditOutcome::Commit(Value::String(self.buffer.clone()))
+                EditOutcome::Commit(Value::String(self.buffer.as_str().to_string()))
             }
             KeyCode::Esc => EditOutcome::Cancel,
-            _ => EditOutcome::Continue,
+            _ => {
+                edit_filtered(&mut self.buffer, key, |_| true);
+                EditOutcome::Continue
+            }
         }
     }
 
@@ -1189,7 +1198,7 @@ impl PathWidget {
     fn render_text_mode(&self, f: &mut ratatui::Frame, inner: Rect) {
         let dim = Style::default().add_modifier(Modifier::DIM);
         let exists = self.exists();
-        let status = if self.buffer.trim().is_empty() {
+        let status = if self.buffer.as_str().trim().is_empty() {
             ("(empty)", Color::DarkGray)
         } else if exists {
             ("✓ exists", Color::Green)
@@ -1198,7 +1207,7 @@ impl PathWidget {
         };
         let lines = vec![
             Line::from(""),
-            Line::from(format!("    {}│", self.buffer)),
+            Line::from(boxed(&self.buffer, inner.width)),
             Line::from(""),
             Line::from(vec![
                 Span::raw("    "),
@@ -1361,7 +1370,7 @@ pub struct ListWidget {
     items: Vec<String>,
     cursor: usize,
     mode: ListMode,
-    inline_buffer: String,
+    inline_buffer: TextInput,
 }
 
 enum ListMode {
@@ -1383,7 +1392,7 @@ impl ListWidget {
             items,
             cursor: 0,
             mode: ListMode::Browse,
-            inline_buffer: String::new(),
+            inline_buffer: TextInput::new(),
         }
     }
 
@@ -1396,6 +1405,7 @@ impl ListWidget {
     }
 
     fn handle_browse(&mut self, key: KeyEvent) -> EditOutcome {
+        let chorded = key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
         match key.code {
             KeyCode::Up => {
                 if self.cursor > 0 {
@@ -1417,12 +1427,12 @@ impl ListWidget {
                 self.cursor = self.items.len().saturating_sub(1);
                 EditOutcome::Continue
             }
-            KeyCode::Char('a') | KeyCode::Char('A') => {
+            KeyCode::Char('a') | KeyCode::Char('A') if !chorded => {
                 self.mode = ListMode::Add;
                 self.inline_buffer.clear();
                 EditOutcome::Continue
             }
-            KeyCode::Char('d') | KeyCode::Char('D') => {
+            KeyCode::Char('d') | KeyCode::Char('D') if !chorded => {
                 if !self.items.is_empty() {
                     self.items.remove(self.cursor);
                     if self.cursor >= self.items.len() && self.cursor > 0 {
@@ -1431,10 +1441,10 @@ impl ListWidget {
                 }
                 EditOutcome::Continue
             }
-            KeyCode::Char('e') | KeyCode::Char('E') => {
+            KeyCode::Char('e') | KeyCode::Char('E') if !chorded => {
                 if !self.items.is_empty() {
                     self.mode = ListMode::Edit;
-                    self.inline_buffer = self.items[self.cursor].clone();
+                    set_text(&mut self.inline_buffer, self.items[self.cursor].clone());
                 }
                 EditOutcome::Continue
             }
@@ -1472,7 +1482,7 @@ impl ListWidget {
                 self.inline_buffer.clear();
             }
             KeyCode::Enter => {
-                let trimmed = self.inline_buffer.trim().to_string();
+                let trimmed = self.inline_buffer.as_str().trim().to_string();
                 if !trimmed.is_empty() {
                     if replace && !self.items.is_empty() {
                         self.items[self.cursor] = trimmed;
@@ -1484,16 +1494,9 @@ impl ListWidget {
                 self.mode = ListMode::Browse;
                 self.inline_buffer.clear();
             }
-            KeyCode::Backspace => {
-                self.inline_buffer.pop();
+            _ => {
+                edit_filtered(&mut self.inline_buffer, key, |_| true);
             }
-            KeyCode::Char(c)
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !key.modifiers.contains(KeyModifiers::ALT) =>
-            {
-                self.inline_buffer.push(c);
-            }
-            _ => {}
         }
         EditOutcome::Continue
     }
@@ -1553,8 +1556,8 @@ impl ListWidget {
                     bold,
                 )));
                 lines.push(Line::from(format!(
-                    "      {}│",
-                    self.inline_buffer
+                    "      {}",
+                    self.inline_buffer.render_with_cursor_fit('│', inner.width.saturating_sub(7) as usize)
                 )));
                 lines.push(Line::from(Span::styled(
                     "    Enter adds · Esc cancels",
@@ -1568,8 +1571,8 @@ impl ListWidget {
                     bold,
                 )));
                 lines.push(Line::from(format!(
-                    "      {}│",
-                    self.inline_buffer
+                    "      {}",
+                    self.inline_buffer.render_with_cursor_fit('│', inner.width.saturating_sub(7) as usize)
                 )));
                 lines.push(Line::from(Span::styled(
                     "    Enter saves · Esc cancels",

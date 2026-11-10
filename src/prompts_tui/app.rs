@@ -1,9 +1,9 @@
-//! 1.2.10+ — prompts-editor event loop + render.
-//!
-//! Phase 1: read-only walk-through.  CLI plumbing,
-//! the four-pane shell, list navigation, show-on-
-//! focus editor display, help pane.  No mutation,
-//! no save, no AI send.
+//! 1.2.10+ — prompts-editor event loop + render: the
+//! four-pane shell (list · editor · AI response · AI
+//! prompt), add / delete / language-tag staging, the
+//! save pipeline with `.prompts-backups/` rollback and
+//! the reviewer-LLM send.  `KEYBINDING.md` has the chord
+//! table; `app/probe.rs` drives every key headlessly.
 
 use std::collections::HashSet;
 use std::fs;
@@ -35,7 +35,9 @@ use crate::ai::prompts::{Prompt, PromptLibrary};
 use crate::ai::stream::{StreamMsg, spawn_chat_stream};
 use crate::config::{Config, DEFAULT_PROMPTS};
 use crate::prompts_tui::backup::{self, BackupEntry};
-use crate::tui::input::TextInput;
+use crate::tui::app::handle_text_input_key;
+use crate::tui::input::{recall_newer, recall_older, reset_recall, TextInput};
+use std::cell::Cell;
 
 /// Two-step entry: install panic hook + raw-mode +
 /// alt-screen, run the event loop, restore the
@@ -110,10 +112,10 @@ impl Focus {
 
 enum Modal {
     None,
-    Help { body: String },
+    Help { body: String, scroll: usize },
     SaveConfirm { summary: SaveSummary },
     Saved { message: String },
-    AddPrompt { buffer: String, error: Option<String> },
+    AddPrompt { buffer: TextInput, error: Option<String> },
     DeletePromptConfirm { name: String },
     DiscardConfirm { unsaved: usize },
     /// Phase 4 — Ctrl+R rollback picker.
@@ -208,6 +210,15 @@ struct App {
     /// intercepts (Ctrl+G as ASCII BEL is the typical
     /// offender) can't eat our chords.
     meta_pending: bool,
+    /// 3.20 — first visible row of the AI response pane. `Ctrl+B ↑/↓`,
+    /// `Ctrl+B PgUp/PgDn` from any pane, `PgUp`/`PgDn` from the AI prompt.
+    ai_scroll: usize,
+    /// Written by the renderer: the largest useful `ai_scroll` for the
+    /// content the last frame drew.
+    ai_scroll_max: Cell<usize>,
+    /// 3.20 — the text being typed when a history walk began; `↓` past the
+    /// newest entry brings it back (shared recall, `tui::input`).
+    ai_history_draft: Option<String>,
 }
 
 #[derive(Clone)]
@@ -338,6 +349,9 @@ impl App {
             last_send: None,
             inference: None,
             meta_pending: false,
+            ai_scroll: 0,
+            ai_scroll_max: Cell::new(0),
+            ai_history_draft: None,
         })
     }
 
@@ -565,12 +579,18 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                 // the editor right after.
                 app.focus = Focus::Editor;
             }
+            KeyCode::Up => app.ai_scroll = app.ai_scroll.saturating_sub(1),
+            KeyCode::Down => app.ai_scroll = app.ai_scroll.saturating_add(1),
+            KeyCode::PageUp => app.ai_scroll = app.ai_scroll.saturating_sub(10),
+            KeyCode::PageDown => app.ai_scroll = app.ai_scroll.saturating_add(10),
+            KeyCode::Home => app.ai_scroll = 0,
+            KeyCode::End => app.ai_scroll = usize::MAX / 2,
             KeyCode::Esc => {
                 app.status = "meta: cancelled".into();
             }
             other => {
                 app.status = format!(
-                    "meta: unknown chord (got {other:?}) — Ctrl+B G to insert AI response",
+                    "meta: unknown chord (got {other:?}) — Ctrl+B G inserts the AI response · Ctrl+B ↑↓ PgUp PgDn Home End scroll it",
                 );
             }
         }
@@ -590,10 +610,21 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
     }
 
     // Modal-first dispatch.
-    if matches!(
-        app.modal,
-        Modal::Help { .. } | Modal::Saved { .. }
-    ) {
+    if let Modal::Help { scroll, .. } = &mut app.modal {
+        // The render pass clamps `scroll` to the body, so `End` may overshoot.
+        match key.code {
+            KeyCode::Up => *scroll = scroll.saturating_sub(1),
+            KeyCode::Down => *scroll = scroll.saturating_add(1),
+            KeyCode::PageUp => *scroll = scroll.saturating_sub(10),
+            KeyCode::PageDown => *scroll = scroll.saturating_add(10),
+            KeyCode::Home => *scroll = 0,
+            KeyCode::End => *scroll = usize::MAX / 2,
+            _ => app.modal = Modal::None,
+        }
+        app.first_launch = false;
+        return Ok(false);
+    }
+    if matches!(app.modal, Modal::Saved { .. }) {
         app.modal = Modal::None;
         app.first_launch = false;
         return Ok(false);
@@ -624,7 +655,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                 app.status = "add prompt: cancelled".into();
             }
             KeyCode::Enter => {
-                let name = buffer.trim().to_string();
+                let name = buffer.as_str().trim().to_string();
                 if name.is_empty() {
                     *error = Some("name is required".into());
                 } else if !is_valid_prompt_name(&name) {
@@ -674,18 +705,11 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                         format!("staged new prompt `{name}` — Ctrl+S to commit");
                 }
             }
-            KeyCode::Backspace => {
-                buffer.pop();
-                *error = None;
+            _ => {
+                if handle_text_input_key(buffer, key) {
+                    *error = None;
+                }
             }
-            KeyCode::Char(c)
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !key.modifiers.contains(KeyModifiers::ALT) =>
-            {
-                buffer.push(c);
-                *error = None;
-            }
-            _ => {}
         }
         return Ok(false);
     }
@@ -932,12 +956,14 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
         return Ok(false);
     }
 
-    // Help — Ctrl+H or ? (only when AI prompt isn't
-    // focused, since `?` is a printable char people
-    // type into prompts).
+    // Help — Ctrl+H anywhere, or `?` from the list pane only: the editor
+    // and the AI prompt are text boxes where `?` must type (3.20 — the
+    // editor used to open help instead, so a template could not hold one).
     if (key.code == KeyCode::Char('h')
         && key.modifiers.contains(KeyModifiers::CONTROL))
-        || (key.code == KeyCode::Char('?') && app.focus != Focus::AiPrompt)
+        || (key.code == KeyCode::Char('?')
+            && app.focus == Focus::List
+            && !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT))
     {
         open_help(app);
         return Ok(false);
@@ -991,6 +1017,12 @@ fn is_valid_prompt_name(name: &str) -> bool {
 
 fn dispatch_list_keys(app: &mut App, key: KeyEvent) {
     let n = app.library.prompts.len();
+    // 3.20 — a chorded letter never fires a bare-key action here.
+    if matches!(key.code, KeyCode::Char(_))
+        && key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        return;
+    }
     match key.code {
         KeyCode::Up => {
             if app.cursor > 0 {
@@ -1043,7 +1075,7 @@ fn dispatch_list_keys(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('a') | KeyCode::Char('A') => {
             app.modal = Modal::AddPrompt {
-                buffer: String::new(),
+                buffer: TextInput::new(),
                 error: None,
             };
         }
@@ -1264,86 +1296,55 @@ fn insert_ai_response_into_editor(app: &mut App) {
 }
 
 fn dispatch_ai_prompt_keys(app: &mut App, key: KeyEvent) {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let chorded = key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
     match key.code {
-        KeyCode::Enter => {
+        // A plain Enter sends; a chorded one is ignored (3.20 — the rule the
+        // main TUI's confirmations follow since 3.19).
+        KeyCode::Enter if !chorded => {
             send_ai_prompt(app);
         }
+        // History walk through the shared recall (3.20): the draft being
+        // typed comes back when `↓` passes the newest entry.
         KeyCode::Up => {
-            if app.ai_history.is_empty() {
-                return;
-            }
-            let new_cursor = match app.ai_history_cursor {
-                None => Some(app.ai_history.len() - 1),
-                Some(0) => Some(0),
-                Some(i) => Some(i - 1),
-            };
-            app.ai_history_cursor = new_cursor;
-            if let Some(i) = new_cursor {
-                let text = app.ai_history[i].clone();
-                let len = text.chars().count();
-                app.ai_input.set_with_cursor(text, len);
+            if let Some(text) = recall_older(
+                &app.ai_history,
+                &mut app.ai_history_cursor,
+                &mut app.ai_history_draft,
+                app.ai_input.as_str(),
+            ) {
+                let n = text.chars().count();
+                app.ai_input.set_with_cursor(text, n);
             }
         }
         KeyCode::Down => {
-            let Some(i) = app.ai_history_cursor else {
-                return;
-            };
-            if i + 1 < app.ai_history.len() {
-                app.ai_history_cursor = Some(i + 1);
-                let text = app.ai_history[i + 1].clone();
-                let len = text.chars().count();
-                app.ai_input.set_with_cursor(text, len);
-            } else {
-                // Past the most-recent entry — clear
-                // back to a fresh empty buffer.
-                app.ai_history_cursor = None;
-                app.ai_input.clear();
+            if let Some(text) =
+                recall_newer(&app.ai_history, &mut app.ai_history_cursor, &mut app.ai_history_draft)
+            {
+                let n = text.chars().count();
+                app.ai_input.set_with_cursor(text, n);
             }
         }
-        KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        // The response pane sits right above this strip: page it from here.
+        KeyCode::PageUp => app.ai_scroll = app.ai_scroll.saturating_sub(10),
+        KeyCode::PageDown => app.ai_scroll = app.ai_scroll.saturating_add(10),
+        KeyCode::Char('l') | KeyCode::Char('L') if ctrl => {
             app.ai_input.clear();
-            app.ai_history_cursor = None;
+            reset_recall(&mut app.ai_history_cursor, &mut app.ai_history_draft);
         }
-        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Char('k') | KeyCode::Char('K') if ctrl => {
             app.ai_input.clear();
             app.ai_history.clear();
-            app.ai_history_cursor = None;
+            reset_recall(&mut app.ai_history_cursor, &mut app.ai_history_draft);
             app.status = "ai prompt: input + history cleared".into();
         }
-        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.ai_input.move_home();
+        // Everything else is the shared one-line chord set (`KEYBINDING.md`
+        // §4.5): insert, ←/→, Home/End, Ctrl+A/E, word moves, kills.
+        _ => {
+            if handle_text_input_key(&mut app.ai_input, key) {
+                reset_recall(&mut app.ai_history_cursor, &mut app.ai_history_draft);
+            }
         }
-        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.ai_input.move_end();
-        }
-        KeyCode::Home => {
-            app.ai_input.move_home();
-        }
-        KeyCode::End => {
-            app.ai_input.move_end();
-        }
-        KeyCode::Left => {
-            app.ai_input.move_left();
-        }
-        KeyCode::Right => {
-            app.ai_input.move_right();
-        }
-        KeyCode::Backspace => {
-            app.ai_input.backspace();
-            app.ai_history_cursor = None;
-        }
-        KeyCode::Delete => {
-            app.ai_input.delete();
-            app.ai_history_cursor = None;
-        }
-        KeyCode::Char(c)
-            if !key.modifiers.contains(KeyModifiers::CONTROL)
-                && !key.modifiers.contains(KeyModifiers::ALT) =>
-        {
-            app.ai_input.insert_char(c);
-            app.ai_history_cursor = None;
-        }
-        _ => {}
     }
 }
 
@@ -1389,8 +1390,9 @@ fn send_ai_prompt(app: &mut App) {
     {
         app.ai_history.push(instruction.to_string());
     }
-    app.ai_history_cursor = None;
+    reset_recall(&mut app.ai_history_cursor, &mut app.ai_history_draft);
     app.ai_input.clear();
+    app.ai_scroll = 0;
 
     let rx = spawn_chat_stream(
         rt.client.client.clone(),
@@ -1583,7 +1585,7 @@ fn open_help(app: &mut App) {
         Focus::Editor => editor_help_body(),
         Focus::AiPrompt => ai_prompt_help_body(),
     };
-    app.modal = Modal::Help { body };
+    app.modal = Modal::Help { body, scroll: 0 };
     app.first_launch = false;
 }
 
@@ -1608,7 +1610,10 @@ fn list_help_body() -> String {
         "   ✚ newly added (staged)",
         "   ✗ staged for deletion (strike-through)",
         "",
-        " Phase 3 adds: live LLM evaluation in the AI pane.",
+        " AI response pane (right), from any pane:",
+        "   Ctrl+B ↑ / ↓          scroll a line",
+        "   Ctrl+B PgUp / PgDn    scroll a page",
+        "   Ctrl+B Home / End     top / bottom",
     ]
     .join("\n")
 }
@@ -1642,7 +1647,7 @@ fn editor_help_body() -> String {
         "",
         " App-global chords (intercepted before the editor sees them):",
         "   Ctrl+S            save library (confirm modal)",
-        "   Ctrl+H / ?        help (this pane)",
+        "   Ctrl+H            help (this pane; `?` types)",
         "   Ctrl+Q / Esc      quit (confirm if unsaved)",
         "   Tab / Shift+Tab   cycle pane focus",
         "",
@@ -1666,7 +1671,11 @@ fn ai_prompt_help_body() -> String {
         "   type to edit · Backspace / Delete remove",
         "   Left / Right / Home / End / Ctrl+A / Ctrl+E",
         "                  cursor movement",
-        "   Up / Down       history walk (in-session)",
+        "   Ctrl+← / → · Alt+B / F    word moves",
+        "   Ctrl+U / Ctrl+W           kill to start / kill word",
+        "   Up / Down       history walk (in-session); past the",
+        "                  newest entry the draft you typed returns",
+        "   PgUp / PgDn     scroll the AI response pane",
         "   Enter           SEND for analysis",
         "   Ctrl+L          clear input",
         "   Ctrl+K          clear input + clear history",
@@ -1718,16 +1727,24 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
         .split(size);
     draw_top_bar(f, v_chunks[0], app);
     draw_body(f, v_chunks[1], app);
+    // The AI pane just published the extent it drew; settle the offset on it.
+    app.ai_scroll = app.ai_scroll.min(app.ai_scroll_max.get());
     draw_ai_prompt(f, v_chunks[2], app);
     draw_status(f, v_chunks[3], app);
 
+    if let Modal::Help { body, scroll } = &mut app.modal {
+        let max = help_scroll_max(size, body);
+        if *scroll > max {
+            *scroll = max;
+        }
+    }
     match &app.modal {
         Modal::None => {
             if app.first_launch {
                 draw_welcome_overlay(f, size, app);
             }
         }
-        Modal::Help { body } => draw_help_modal(f, size, body),
+        Modal::Help { body, scroll } => draw_help_modal(f, size, body, *scroll),
         Modal::Saved { message } => draw_saved_overlay(f, size, message),
         Modal::SaveConfirm { summary } => {
             draw_save_confirm(f, size, &app.prompts_path, summary);
@@ -1844,7 +1861,7 @@ fn draw_list_pane(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 
     if n == 0 {
         let body = vec![Line::from(Span::styled(
-            "  (empty — Phase 2 ships `a` to add)",
+            "  (empty — press `a` to add a prompt)",
             Style::default().add_modifier(Modifier::DIM),
         ))];
         f.render_widget(Paragraph::new(body), inner);
@@ -1958,6 +1975,7 @@ fn draw_editor_pane(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 }
 
 fn draw_ai_pane(f: &mut ratatui::Frame, area: Rect, app: &App) {
+    app.ai_scroll_max.set(0);
     let title = ai_pane_title(app);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2086,7 +2104,24 @@ fn draw_ai_pane(f: &mut ratatui::Frame, area: Rect, app: &App) {
             lines.push(Line::from(format!("   {body}")));
         }
     }
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    // 3.20 — scrollable: publish the extent so the offset clamps to it and
+    // the opposite key always moves (over-estimating wrapped rows rather
+    // than ever leaving the tail unreachable).
+    let total = wrapped_rows(lines.iter().map(|l| l.width()), inner.width);
+    let max = total.saturating_sub(inner.height as usize);
+    app.ai_scroll_max.set(max);
+    let scroll = app.ai_scroll.min(max);
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).scroll((scroll.min(u16::MAX as usize) as u16, 0)),
+        inner,
+    );
+}
+
+/// Rows the lines take once wrapped to `cols`; a wrapped line counts one
+/// row extra so the estimate never falls short of what ratatui draws.
+fn wrapped_rows(widths: impl Iterator<Item = usize>, cols: u16) -> usize {
+    let cols = cols.max(1) as usize;
+    widths.map(|w| if w > cols { w.div_ceil(cols) + 1 } else { 1 }).sum()
 }
 
 fn ai_pane_title(app: &App) -> String {
@@ -2142,7 +2177,7 @@ fn draw_ai_prompt(f: &mut ratatui::Frame, area: Rect, app: &App) {
     } else if app.inference.is_some() {
         "  (Esc cancels by ending the session; Enter ignored while streaming)"
     } else if focused {
-        "  Enter sends · Up/Down history · Ctrl+L clear · Ctrl+K clear+history"
+        "  Enter sends · ↑↓ history · PgUp/PgDn scroll response · Ctrl+L clear · Ctrl+K clear+history"
     } else {
         "  Tab to focus · type a test input, Enter sends"
     };
@@ -2177,12 +2212,32 @@ fn draw_status(f: &mut ratatui::Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn draw_help_modal(f: &mut ratatui::Frame, host: Rect, body: &str) {
+/// A `w`×`h` box centred on `host`, never larger than `host` — a modal
+/// drawn on a small terminal is clipped, not painted outside the frame.
+fn centered(host: Rect, w: u16, h: u16) -> Rect {
+    let w = w.min(host.width);
+    let h = h.min(host.height);
+    let x = host.x + (host.width - w) / 2;
+    let y = host.y + (host.height - h) / 2;
+    Rect { x, y, width: w, height: h }
+}
+
+fn help_rect(host: Rect) -> Rect {
     let w = host.width.saturating_sub(8).min(96);
     let h = host.height.saturating_sub(4).min(28);
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    centered(host, w, h)
+}
+
+/// The largest useful help scroll: the rows past the box's inner height.
+fn help_scroll_max(host: Rect, body: &str) -> usize {
+    let rect = help_rect(host);
+    let inner = rect.height.saturating_sub(2) as usize;
+    let total = wrapped_rows(body.lines().map(|l| l.chars().count()), rect.width.saturating_sub(2)) + 2;
+    total.saturating_sub(inner)
+}
+
+fn draw_help_modal(f: &mut ratatui::Frame, host: Rect, body: &str, scroll: usize) {
+    let rect = help_rect(host);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2215,11 +2270,14 @@ fn draw_help_modal(f: &mut ratatui::Frame, host: Rect, body: &str) {
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        " any key closes ",
+        " ↑↓ PgUp PgDn scroll · any other key closes ",
         Style::default().add_modifier(Modifier::DIM),
     )));
     let _ = bold;
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).scroll((scroll.min(u16::MAX as usize) as u16, 0)),
+        inner,
+    );
 }
 
 fn draw_save_confirm(
@@ -2232,9 +2290,7 @@ fn draw_save_confirm(
     let max_rows = (entry_count.min(20) as u16).max(1);
     let w = host.width.saturating_sub(8).min(96);
     let h = (max_rows + 8).min(host.height.saturating_sub(4));
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2294,9 +2350,7 @@ fn draw_save_confirm(
 fn draw_saved_overlay(f: &mut ratatui::Frame, host: Rect, message: &str) {
     let w = host.width.saturating_sub(8).min(96);
     let h: u16 = 12;
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2323,14 +2377,12 @@ fn draw_saved_overlay(f: &mut ratatui::Frame, host: Rect, message: &str) {
 fn draw_add_prompt(
     f: &mut ratatui::Frame,
     host: Rect,
-    buffer: &str,
+    buffer: &TextInput,
     error: Option<&str>,
 ) {
     let w = host.width.saturating_sub(8).min(72);
     let h: u16 = 10;
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2347,7 +2399,7 @@ fn draw_add_prompt(
     let mut lines = vec![
         Line::from(""),
         Line::from(Span::styled("    Name:", bold)),
-        Line::from(format!("    {buffer}│")),
+        Line::from(format!("    {}", buffer.render_with_cursor_fit('│', inner.width.saturating_sub(5) as usize))),
         Line::from(""),
     ];
     if let Some(err) = error {
@@ -2377,9 +2429,7 @@ fn draw_delete_prompt_confirm(
 ) {
     let w = host.width.saturating_sub(8).min(72);
     let h: u16 = 9;
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2419,9 +2469,7 @@ fn draw_delete_prompt_confirm(
 fn draw_discard_confirm(f: &mut ratatui::Frame, host: Rect, unsaved: usize) {
     let w = host.width.saturating_sub(8).min(72);
     let h: u16 = 8;
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2460,9 +2508,7 @@ fn draw_rollback_picker(
 ) {
     let w = host.width.saturating_sub(8).min(96);
     let h = (entries.len() as u16 + 6).min(host.height.saturating_sub(4));
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2477,8 +2523,12 @@ fn draw_rollback_picker(
     let now = chrono::Local::now();
     let dim = Style::default().add_modifier(Modifier::DIM);
     let bold = Style::default().add_modifier(Modifier::BOLD);
-    let mut lines: Vec<Line<'_>> = Vec::with_capacity(entries.len() + 2);
-    for (i, entry) in entries.iter().enumerate() {
+    // 3.20 — window the rows around the cursor; the two trailing rows hold
+    // the hint, so a long backup list no longer walks the cursor off-screen.
+    let visible = (inner.height as usize).saturating_sub(2).max(1);
+    let start = cursor.saturating_sub(visible / 2).min(entries.len().saturating_sub(visible));
+    let mut lines: Vec<Line<'_>> = Vec::with_capacity(visible + 2);
+    for (i, entry) in entries.iter().enumerate().skip(start).take(visible) {
         let selected = i == cursor;
         let style = if selected {
             Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
@@ -2517,9 +2567,7 @@ fn draw_rollback_delete_confirm(
 ) {
     let w = host.width.saturating_sub(8).min(72);
     let h: u16 = 8;
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2562,9 +2610,7 @@ fn draw_rollback_preview(
 ) {
     let w = host.width.saturating_sub(4).min(120);
     let h = host.height.saturating_sub(2).min(40);
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2607,13 +2653,11 @@ fn draw_rollback_preview(
 fn draw_welcome_overlay(f: &mut ratatui::Frame, host: Rect, app: &App) {
     let w = host.width.saturating_sub(8).min(72);
     let h: u16 = 12;
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Welcome — prompts editor · Phase 1 ")
+        .title(" Welcome — prompts editor ")
         .border_style(
             Style::default()
                 .fg(Color::Cyan)
@@ -2642,10 +2686,10 @@ fn draw_welcome_overlay(f: &mut ratatui::Frame, host: Rect, app: &App) {
             ),
         ]),
         Line::from(""),
-        Line::from(Span::raw("  Phase 1 is a read-only walk-through:")),
-        Line::from(Span::raw("    · ↑↓ to navigate the prompts list")),
+        Line::from(Span::raw("  Getting around:")),
+        Line::from(Span::raw("    · ↑↓ to navigate the prompts list · Enter edits")),
         Line::from(Span::raw("    · Tab to cycle between the three editable panes")),
-        Line::from(Span::raw("    · ? or Ctrl+H for focus-aware help")),
+        Line::from(Span::raw("    · Ctrl+H (or ? in the list) for focus-aware help")),
         Line::from(""),
         Line::from(Span::styled(
             "  any key dismisses this banner",
@@ -2748,6 +2792,9 @@ mod tests {
             last_send: None,
             inference: None,
             meta_pending: false,
+            ai_scroll: 0,
+            ai_scroll_max: Cell::new(0),
+            ai_history_draft: None,
         };
         assert!(app.current_prompt().is_none());
     }
@@ -2860,6 +2907,9 @@ mod tests {
             last_send: None,
             inference: None,
             meta_pending: false,
+            ai_scroll: 0,
+            ai_scroll_max: Cell::new(0),
+            ai_history_draft: None,
         };
         // alpha modified, beta unchanged, gamma added, beta also removed.
         app.dirty.insert("alpha".into());
@@ -2901,6 +2951,9 @@ mod tests {
             last_send: None,
             inference: None,
             meta_pending: false,
+            ai_scroll: 0,
+            ai_scroll_max: Cell::new(0),
+            ai_history_draft: None,
         };
         assert!(!app.has_unsaved());
         app.dirty.insert("x".into());
@@ -2956,8 +3009,14 @@ mod tests {
             last_send: None,
             inference: None,
             meta_pending: false,
+            ai_scroll: 0,
+            ai_scroll_max: Cell::new(0),
+            ai_history_draft: None,
         };
         let p = app.current_prompt().expect("cursor points at a prompt");
         assert_eq!(p.name, "beta");
     }
 }
+
+#[cfg(test)]
+mod probe;

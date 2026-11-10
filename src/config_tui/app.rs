@@ -40,6 +40,8 @@ use crate::config_tui::hjson_index::{self, HjsonIndex};
 use crate::config_tui::save::{self, Edit, EditKind};
 use crate::config_tui::schema::{self, ConfigType, SchemaNode, ValueSource};
 use crate::config_tui::widgets::{EditOutcome, Widget};
+use crate::tui::app::handle_text_input_key;
+use crate::tui::input::TextInput;
 
 /// Two-step entry: install panic hook + raw-mode +
 /// alt-screen, run the event loop, restore the
@@ -129,6 +131,8 @@ enum Modal {
     None,
     Help {
         body: String,
+        /// 3.20 — first visible row; ↑↓ / PgUp / PgDn scroll a long body.
+        scroll: usize,
     },
     Edit {
         path: String,
@@ -167,13 +171,13 @@ enum Modal {
     /// Phase 3 — `Ctrl+A` annotation editor.
     Annotate {
         path: String,
-        buffer: String,
+        buffer: TextInput,
     },
     /// Phase 5 — `a` add map entry.  Prompts for a
     /// new entry name; `parent` is the map path.
     AddMapEntry {
         parent: String,
-        buffer: String,
+        buffer: TextInput,
         error: Option<String>,
     },
     /// Phase 5 — `d` delete confirm.  The targeted
@@ -381,100 +385,83 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
         }
         return Ok(false);
     }
-    if matches!(
-        app.modal,
-        Modal::Help { .. } | Modal::Saved { .. } | Modal::Inspector { .. }
-    ) {
+    if let Modal::Help { scroll, .. } = &mut app.modal {
+        // The render pass clamps `scroll` to the body, so `End` may overshoot.
+        match key.code {
+            KeyCode::Up => *scroll = scroll.saturating_sub(1),
+            KeyCode::Down => *scroll = scroll.saturating_add(1),
+            KeyCode::PageUp => *scroll = scroll.saturating_sub(10),
+            KeyCode::PageDown => *scroll = scroll.saturating_add(10),
+            KeyCode::Home => *scroll = 0,
+            KeyCode::End => *scroll = usize::MAX / 2,
+            _ => app.modal = Modal::None,
+        }
+        return Ok(false);
+    }
+    if matches!(app.modal, Modal::Saved { .. } | Modal::Inspector { .. }) {
         app.modal = Modal::None;
         return Ok(false);
     }
     if matches!(app.modal, Modal::AddMapEntry { .. }) {
-        // Handle in two stages so we can drop the
-        // modal borrow before calling staging
-        // helpers that need `&mut app`.
-        #[derive(Default)]
-        struct Outcome {
-            cancel: bool,
-            commit_parent_name: Option<(String, String)>,
-            set_error: Option<String>,
-            clear_error: bool,
-            push_char: Option<char>,
-            backspace: bool,
+        enum Next {
+            Cancel,
+            Commit(String, String),
+            Stay,
         }
-        let outcome = if let Modal::AddMapEntry { parent, buffer, .. } = &app.modal {
-            let parent = parent.clone();
-            let buffer = buffer.clone();
-            let mut out = Outcome::default();
-            match key.code {
-                KeyCode::Esc => out.cancel = true,
-                KeyCode::Enter => {
-                    let name = buffer.trim().to_string();
-                    if name.is_empty() {
-                        out.set_error = Some("name is required".into());
-                    } else if !is_valid_map_entry_name(&name) {
-                        out.set_error = Some(
-                            "name must start with a letter or `_` and contain only letters / digits / `_`".into(),
-                        );
-                    } else {
-                        let new_path = format!("{parent}.{name}");
-                        if find_in_tree(&app.schema, &new_path).is_some() {
-                            out.set_error =
-                                Some(format!("`{new_path}` already exists"));
-                        } else {
-                            out.commit_parent_name = Some((parent, name));
+        // Decide on the modal borrow, act after it is released: the commit
+        // path needs `&mut app` for the staging helpers.
+        let next = match (&mut app.modal, key.code) {
+            (Modal::AddMapEntry { .. }, KeyCode::Esc) => Next::Cancel,
+            (Modal::AddMapEntry { parent, buffer, error }, KeyCode::Enter) => {
+                let name = buffer.as_str().trim().to_string();
+                if name.is_empty() {
+                    *error = Some("name is required".into());
+                    Next::Stay
+                } else if !is_valid_map_entry_name(&name) {
+                    *error = Some(
+                        "name must start with a letter or `_` and contain only letters / digits / `_`".into(),
+                    );
+                    Next::Stay
+                } else {
+                    Next::Commit(parent.clone(), name)
+                }
+            }
+            (Modal::AddMapEntry { buffer, error, .. }, _) => {
+                if handle_text_input_key(buffer, key) {
+                    *error = None;
+                }
+                Next::Stay
+            }
+            _ => Next::Stay,
+        };
+        match next {
+            Next::Cancel => {
+                app.modal = Modal::None;
+                app.status = "add map entry: cancelled".into();
+            }
+            Next::Commit(parent, name) => {
+                let new_path = format!("{parent}.{name}");
+                let failure = if find_in_tree(&app.schema, &new_path).is_some() {
+                    Some(format!("`{new_path}` already exists"))
+                } else {
+                    match stage_new_map_entry(app, &parent, &name) {
+                        Ok(()) => None,
+                        Err(e) => Some(format!("failed: {e:#}")),
+                    }
+                };
+                match failure {
+                    None => {
+                        app.modal = Modal::None;
+                        app.status = format!("staged new map entry {new_path}");
+                    }
+                    Some(msg) => {
+                        if let Modal::AddMapEntry { error, .. } = &mut app.modal {
+                            *error = Some(msg);
                         }
                     }
                 }
-                KeyCode::Backspace => {
-                    out.backspace = true;
-                    out.clear_error = true;
-                }
-                KeyCode::Char(c)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                        && !key.modifiers.contains(KeyModifiers::ALT) =>
-                {
-                    out.push_char = Some(c);
-                    out.clear_error = true;
-                }
-                _ => {}
             }
-            out
-        } else {
-            Outcome::default()
-        };
-        if outcome.cancel {
-            app.modal = Modal::None;
-            app.status = "add map entry: cancelled".into();
-            return Ok(false);
-        }
-        if let Some((parent, name)) = outcome.commit_parent_name {
-            let new_path = format!("{parent}.{name}");
-            match stage_new_map_entry(app, &parent, &name) {
-                Ok(()) => {
-                    app.modal = Modal::None;
-                    app.status = format!("staged new map entry {new_path}");
-                }
-                Err(e) => {
-                    if let Modal::AddMapEntry { error, .. } = &mut app.modal {
-                        *error = Some(format!("failed: {e:#}"));
-                    }
-                }
-            }
-            return Ok(false);
-        }
-        if let Modal::AddMapEntry { buffer, error, .. } = &mut app.modal {
-            if outcome.backspace {
-                buffer.pop();
-            }
-            if let Some(c) = outcome.push_char {
-                buffer.push(c);
-            }
-            if outcome.clear_error {
-                *error = None;
-            }
-            if let Some(err) = outcome.set_error {
-                *error = Some(err);
-            }
+            Next::Stay => {}
         }
         return Ok(false);
     }
@@ -516,7 +503,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
             }
             KeyCode::Enter => {
                 let path = path.clone();
-                let text = buffer.clone();
+                let text = buffer.as_str().to_string();
                 app.annotations.set(&path, &text);
                 let outcome = app.annotations.save(&app.project_root);
                 app.modal = Modal::None;
@@ -531,16 +518,9 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                     Err(e) => format!("annotation save FAILED: {e:#}"),
                 };
             }
-            KeyCode::Backspace => {
-                buffer.pop();
+            _ => {
+                handle_text_input_key(buffer, key);
             }
-            KeyCode::Char(c)
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !key.modifiers.contains(KeyModifiers::ALT) =>
-            {
-                buffer.push(c);
-            }
-            _ => {}
         }
         return Ok(false);
     }
@@ -781,7 +761,17 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
     }
 
     static_chord_dispatch(app, key);
+    clamp_cursor(app);
     Ok(false)
+}
+
+/// Keep the tree cursor on a row: a collapse or a dropped map entry can
+/// shorten the row list under it.
+fn clamp_cursor(app: &mut App) {
+    let n = app.rows().len();
+    if app.cursor >= n {
+        app.cursor = n.saturating_sub(1);
+    }
 }
 
 fn open_rollback(app: &mut App) {
@@ -845,11 +835,7 @@ fn open_annotation_editor(app: &mut App) {
         app.status = "annotation: select a field first".into();
         return;
     }
-    let buffer = app
-        .annotations
-        .get(&path)
-        .map(str::to_owned)
-        .unwrap_or_default();
+    let buffer = TextInput::from(app.annotations.get(&path).unwrap_or(""));
     app.modal = Modal::Annotate { path, buffer };
 }
 
@@ -897,6 +883,14 @@ fn stage_from_value(app: &mut App, prefix: &str, value: &Value, count: &mut usiz
 
 fn static_chord_dispatch(app: &mut App, key: KeyEvent) {
     use KeyCode::*;
+    // 3.20 — a chorded letter is never a bare-key action: `Ctrl+D` must not
+    // delete a map entry, `Alt+E` must not open an editor. `Ctrl+H` (help) is
+    // the one chord this table owns.
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let chorded = key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+    if matches!(key.code, Char(_)) && chorded && !(ctrl && matches!(key.code, Char('h') | Char('H'))) {
+        return;
+    }
     match key.code {
         Up => {
             if app.cursor > 0 {
@@ -1006,7 +1000,7 @@ fn static_chord_dispatch(app: &mut App, key: KeyEvent) {
             };
             app.modal = Modal::AddMapEntry {
                 parent,
-                buffer: String::new(),
+                buffer: TextInput::new(),
                 error: None,
             };
         }
@@ -1138,7 +1132,7 @@ fn open_help(app: &mut App) {
         }
     }
 
-    app.modal = Modal::Help { body };
+    app.modal = Modal::Help { body, scroll: 0 };
 }
 
 /// Compact one-line render of a JSON value for the
@@ -1502,9 +1496,15 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
     draw_body(f, v_chunks[1], app);
     draw_status(f, v_chunks[2], app);
 
+    if let Modal::Help { body, scroll } = &mut app.modal {
+        let max = help_scroll_max(size, body);
+        if *scroll > max {
+            *scroll = max;
+        }
+    }
     match &app.modal {
         Modal::None => {}
-        Modal::Help { body } => draw_help_modal(f, size, body),
+        Modal::Help { body, scroll } => draw_help_modal(f, size, body, *scroll),
         Modal::Edit { path, widget } => {
             draw_edit_modal(f, size, path, widget);
         }
@@ -1600,6 +1600,7 @@ fn draw_body(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
 }
 
 fn draw_tree_pane(f: &mut ratatui::Frame, area: Rect, app: &mut App) {
+    clamp_cursor(app);
     let inner_h = area.height.saturating_sub(2) as usize;
     if app.cursor < app.scroll {
         app.scroll = app.cursor;
@@ -1742,7 +1743,7 @@ fn draw_detail_pane(f: &mut ratatui::Frame, area: Rect, app: &App) {
                 dim,
             )));
             lines.push(Line::from(Span::styled(
-                "   (add / delete via Ctrl+B 0 HJSON editor for now)",
+                "   a adds an entry · d deletes the focused entry",
                 dim,
             )));
             lines.push(Line::from(""));
@@ -1798,7 +1799,7 @@ fn draw_detail_pane(f: &mut ratatui::Frame, area: Rect, app: &App) {
 fn draw_status(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let n = app.rows().len();
     let pos = format!("{} / {}", app.cursor + 1, n.max(1));
-    let hints = " ↑↓ · Enter · e edit · r reset · a add-entry · d del-entry · Ctrl+S save · Ctrl+R rollback · Ctrl+I inspect · Ctrl+A annotate · ? help · Esc";
+    let hints = " ↑↓ · Enter · e edit · r reset · a add-entry · d del-entry · Ctrl+S save · Ctrl+R rollback · Ctrl+I inspect · Ctrl+A annotate · ? help · Esc quit";
     let dim = Style::default().add_modifier(Modifier::DIM);
     let spans = vec![
         Span::styled(format!(" {pos} "), dim),
@@ -1810,12 +1811,40 @@ fn draw_status(f: &mut ratatui::Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn draw_help_modal(f: &mut ratatui::Frame, host: Rect, body: &str) {
+/// A `w`×`h` box centred on `host`, never larger than `host` — a modal
+/// drawn on a small terminal is clipped, not painted outside the frame.
+fn centered(host: Rect, w: u16, h: u16) -> Rect {
+    let w = w.min(host.width);
+    let h = h.min(host.height);
+    let x = host.x + (host.width - w) / 2;
+    let y = host.y + (host.height - h) / 2;
+    Rect { x, y, width: w, height: h }
+}
+
+fn help_rect(host: Rect) -> Rect {
     let w = host.width.saturating_sub(8).min(96);
     let h = host.height.saturating_sub(4).min(32);
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    centered(host, w, h)
+}
+
+/// Rows the lines take once wrapped to `cols`; a wrapped line counts one
+/// row extra so the estimate never falls short of what ratatui draws (a
+/// short count would leave the tail unreachable).
+fn wrapped_rows(widths: impl Iterator<Item = usize>, cols: u16) -> usize {
+    let cols = cols.max(1) as usize;
+    widths.map(|w| if w > cols { w.div_ceil(cols) + 1 } else { 1 }).sum()
+}
+
+/// The largest useful help scroll: the rows past the box's inner height.
+fn help_scroll_max(host: Rect, body: &str) -> usize {
+    let rect = help_rect(host);
+    let inner = rect.height.saturating_sub(2) as usize;
+    let total = wrapped_rows(body.lines().map(|l| l.chars().count()), rect.width.saturating_sub(2)) + 2;
+    total.saturating_sub(inner)
+}
+
+fn draw_help_modal(f: &mut ratatui::Frame, host: Rect, body: &str, scroll: usize) {
+    let rect = help_rect(host);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -1868,10 +1897,13 @@ fn draw_help_modal(f: &mut ratatui::Frame, host: Rect, body: &str) {
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        " any key closes ",
+        " ↑↓ PgUp PgDn scroll · any other key closes ",
         dim,
     )));
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).scroll((scroll.min(u16::MAX as usize) as u16, 0)),
+        inner,
+    );
 }
 
 /// Helper for the help modal: split a 3-space-indent
@@ -1918,9 +1950,7 @@ fn draw_edit_modal(
         Widget::Enum(_) => 12,
         _ => 9,
     };
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     widget.render(f, rect, path);
 }
@@ -1934,9 +1964,7 @@ fn draw_save_confirm(
     let max_rows = edits.len().min(15).max(1) as u16;
     let w = host.width.saturating_sub(8).min(96);
     let h = (max_rows + 7).min(host.height.saturating_sub(4));
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2000,9 +2028,7 @@ fn draw_save_confirm(
 fn draw_saved_overlay(f: &mut ratatui::Frame, host: Rect, message: &str) {
     let w = host.width.saturating_sub(8).min(96);
     let h: u16 = 10;
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2029,9 +2055,7 @@ fn draw_saved_overlay(f: &mut ratatui::Frame, host: Rect, message: &str) {
 fn draw_discard_confirm(f: &mut ratatui::Frame, host: Rect, unsaved: usize) {
     let w = host.width.saturating_sub(8).min(72);
     let h: u16 = 8;
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2072,9 +2096,7 @@ fn draw_rollback_picker(
 ) {
     let w = host.width.saturating_sub(8).min(96);
     let h = (entries.len() as u16 + 6).min(host.height.saturating_sub(4));
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2089,8 +2111,12 @@ fn draw_rollback_picker(
     let now = chrono::Local::now();
     let dim = Style::default().add_modifier(Modifier::DIM);
     let bold = Style::default().add_modifier(Modifier::BOLD);
-    let mut lines: Vec<Line<'_>> = Vec::with_capacity(entries.len() + 2);
-    for (i, entry) in entries.iter().enumerate() {
+    // 3.20 — window the rows around the cursor; the two trailing rows hold
+    // the hint, so a long backup list no longer walks the cursor off-screen.
+    let visible = (inner.height as usize).saturating_sub(2).max(1);
+    let start = cursor.saturating_sub(visible / 2).min(entries.len().saturating_sub(visible));
+    let mut lines: Vec<Line<'_>> = Vec::with_capacity(visible + 2);
+    for (i, entry) in entries.iter().enumerate().skip(start).take(visible) {
         let selected = i == cursor;
         let style = if selected {
             Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
@@ -2129,9 +2155,7 @@ fn draw_rollback_delete_confirm(
 ) {
     let w = host.width.saturating_sub(8).min(72);
     let h: u16 = 8;
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2172,9 +2196,7 @@ fn draw_rollback_preview(
 ) {
     let w = host.width.saturating_sub(4).min(120);
     let h = host.height.saturating_sub(2).min(40);
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2223,9 +2245,7 @@ fn draw_inspector(
 ) {
     let w = host.width.saturating_sub(8).min(96);
     let h = host.height.saturating_sub(4).min(28);
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2281,14 +2301,12 @@ fn draw_add_map_entry(
     f: &mut ratatui::Frame,
     host: Rect,
     parent: &str,
-    buffer: &str,
+    buffer: &TextInput,
     error: Option<&str>,
 ) {
     let w = host.width.saturating_sub(8).min(72);
     let h: u16 = 10;
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2308,7 +2326,7 @@ fn draw_add_map_entry(
             "    Name for the new entry:",
             bold,
         )),
-        Line::from(format!("    {buffer}│")),
+        Line::from(format!("    {}", buffer.render_with_cursor_fit('│', inner.width.saturating_sub(5) as usize))),
         Line::from(""),
     ];
     if let Some(err) = error {
@@ -2337,9 +2355,7 @@ fn draw_delete_map_entry_confirm(
 ) {
     let w = host.width.saturating_sub(8).min(72);
     let h: u16 = 9;
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2378,13 +2394,11 @@ fn draw_annotation_editor(
     f: &mut ratatui::Frame,
     host: Rect,
     path: &str,
-    buffer: &str,
+    buffer: &TextInput,
 ) {
     let w = host.width.saturating_sub(8).min(96);
     let h: u16 = 8;
-    let x = host.x + host.width.saturating_sub(w) / 2;
-    let y = host.y + host.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = centered(host, w, h);
     f.render_widget(ratatui::widgets::Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2399,7 +2413,7 @@ fn draw_annotation_editor(
     let dim = Style::default().add_modifier(Modifier::DIM);
     let lines = vec![
         Line::from(""),
-        Line::from(format!("    {buffer}│")),
+        Line::from(format!("    {}", buffer.render_with_cursor_fit('│', inner.width.saturating_sub(5) as usize))),
         Line::from(""),
         Line::from(Span::styled(
             "    Free-text note attached to this field.  Empty input clears.",
@@ -2460,3 +2474,6 @@ fn trim_value(value: &Value, max_chars: usize) -> String {
 const _: fn() = || {
     let _ = ConfigType::Bool.label();
 };
+
+#[cfg(test)]
+mod probe;

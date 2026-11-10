@@ -99,11 +99,15 @@ Two sources combine:
 ```
 Ctrl+S        save (confirmation modal + atomic write + backup)
 Ctrl+R        rollback picker (list .config-backups/)
-Ctrl+H / ?    field-aware help pane (CONFIGURATION.md row + doc-comment + structural metadata)
+Ctrl+H / ?    field-aware help pane (CONFIGURATION.md row + doc-comment + structural metadata);
+              ↑↓ / PgUp / PgDn scroll a long entry, any other key closes (3.20)
 Ctrl+I        comment inspector (HJSON `#` / `//` / `/* */` comments attached to the focused field)
 Ctrl+A        edit annotation on the focused field (free-text note stored in .config-annotations.hjson)
 Esc / Ctrl+Q  quit (confirm if unsaved)
 ```
+
+A `Ctrl`/`Alt` letter not listed here is ignored —
+it never fires one of the bare tree keys (3.20).
 
 ### Value editor widgets
 
@@ -114,15 +118,26 @@ ship:
 | Type     | Widget                                                     |
 |----------|------------------------------------------------------------|
 | `bool`   | `Space` / `t` / `f` toggle; `y` / `n` snap; `Enter` commits |
-| `int`    | digits + sign + Backspace input; `↑`/`↓` for ±1; bounds-checked |
+| `int`    | digits + sign in a one-line box; `↑`/`↓` for ±1; bounds-checked |
 | `float`  | same shape with `.` / `e` / `E` accepted; rejects NaN / infinity |
-| `string` | free text; multibyte clean                                  |
-| Color    | hex digit + `#`; live RGB swatch + decomposition; theme-preview pane (fg / bg / border variants based on path suffix); validates `#RRGGBB` |
-| Path     | text input + live `✓ exists` / `○ created on first use` check |
+| `string` | free text in a one-line box; multibyte clean                |
+| Color    | hex digit + `#` in a one-line box; live RGB swatch + decomposition; theme-preview pane (fg / bg / border variants based on path suffix); validates `#RRGGBB`; `h` toggles HSL sliders |
+| Path     | one-line box + live `✓ exists` / `○ created on first use` check; `F3` file picker |
 | Enum     | `↑↓` cycler over the variant list; Home/End jump endpoints  |
-| List     | vertical `Vec<String>` editor: browse mode (↑↓ / a add / d delete / e edit) + inline single-line edit submode |
+| List     | vertical `Vec<String>` editor: browse mode (↑↓ / a add / d delete / e edit) + inline one-line edit submode |
 
 `Esc` cancels any editor; `Enter` commits.
+
+Every one-line box (3.20) takes the shared
+text-input chord set from `KEYBINDING.md` §4.5:
+`←`/`→`, `Home`/`End`, `Ctrl+A`/`Ctrl+E`,
+`Ctrl+←`/`→` and `Alt+B`/`F` word moves,
+`Ctrl+U`/`Ctrl+K` kills, `Ctrl+W` kill-word.  The
+cursor is drawn and a long value windows to the
+box.  A character the box cannot hold (a letter in
+an int box, a non-hex digit in a colour) is dropped.
+The map-entry name box (`a`) and the annotation
+editor (`Ctrl+A`) are the same box.
 
 ## Save semantics
 
@@ -225,6 +240,9 @@ in `.config-backups/`, newest-first.
     scrollable pane.
   * `d` deletes the backup with confirm.
   * `Esc` back to the main view.
+
+The list windows around the cursor (3.20 — a long
+list used to walk it off-screen).
 
 The first `Ctrl+S` after a rollback writes a fresh
 backup of the pre-rollback state, so the safety
