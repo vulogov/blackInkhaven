@@ -1574,6 +1574,7 @@ impl Default for LlmConfig {
             LlmProvider {
                 model: "gemini-3.1-pro-preview".into(),
                 api_key_env: Some("GEMINI_API_KEY".into()),
+                base_url: None,
             },
         );
         // Claude — Anthropic. genai routes any `claude-*` model to
@@ -1583,6 +1584,7 @@ impl Default for LlmConfig {
             LlmProvider {
                 model: "claude-sonnet-4-5".into(),
                 api_key_env: Some("ANTHROPIC_API_KEY".into()),
+                base_url: None,
             },
         );
         // OpenAI — `gpt-4o` is the multi-modal workhorse. The user
@@ -1594,6 +1596,7 @@ impl Default for LlmConfig {
             LlmProvider {
                 model: "gpt-4o".into(),
                 api_key_env: Some("OPENAI_API_KEY".into()),
+                base_url: None,
             },
         );
         // DeepSeek.
@@ -1602,6 +1605,7 @@ impl Default for LlmConfig {
             LlmProvider {
                 model: "deepseek-chat".into(),
                 api_key_env: Some("DEEPSEEK_API_KEY".into()),
+                base_url: None,
             },
         );
         // Grok — xAI. genai dispatches `grok-*` model names to its
@@ -1612,6 +1616,7 @@ impl Default for LlmConfig {
             LlmProvider {
                 model: "grok-2-latest".into(),
                 api_key_env: Some("XAI_API_KEY".into()),
+                base_url: None,
             },
         );
         Self {
@@ -1630,6 +1635,15 @@ pub struct LlmProvider {
     /// absent, the auth check is skipped.
     #[serde(default)]
     pub api_key_env: Option<String>,
+    /// 3.21 — an OpenAI-compatible endpoint for this provider (`https://…/v1`).
+    /// When set, the model is sent to this URL through genai's OpenAI adapter
+    /// with the key from `api_key_env`, instead of genai choosing the
+    /// adapter and host from the model name. Serves LM Studio, vLLM,
+    /// OpenRouter, Together, a company gateway — any host that speaks the
+    /// OpenAI chat API. The model string is what identifies the provider at
+    /// request time, so two providers must not list the same model string.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

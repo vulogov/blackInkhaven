@@ -2,9 +2,12 @@ pub mod prompts;
 pub mod stream;
 pub mod usage;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use genai::Client;
+use genai::adapter::AdapterKind;
+use genai::resolver::{AuthData, Endpoint, ServiceTargetResolver};
+use genai::{Client, ModelIden, ServiceTarget};
 
 use crate::config::LlmConfig;
 use crate::error::{Error, Result};
@@ -27,8 +30,22 @@ impl AiClient {
                 cfg.default
             )));
         }
+        // 3.21 — providers with a `base_url` are routed by a service-target
+        // resolver keyed on the model string; without any, the stock client
+        // (adapter and host from the model name) is unchanged.
+        let targets = custom_targets(cfg)?;
+        let client = if targets.is_empty() {
+            Client::default()
+        } else {
+            let resolver = ServiceTargetResolver::from_resolver_fn(
+                move |st: ServiceTarget| -> std::result::Result<ServiceTarget, genai::resolver::Error> {
+                    Ok(resolve_custom_target(&targets, st))
+                },
+            );
+            Client::builder().with_service_target_resolver(resolver).build()
+        };
         Ok(Self {
-            client: Arc::new(Client::default()),
+            client: Arc::new(client),
             default_provider: cfg.default.clone(),
         })
     }
@@ -83,6 +100,61 @@ impl AiClient {
 
 /// Whether a provider can be used right now: it needs no key (local, e.g. Ollama),
 /// or its `api_key_env` variable is set.
+/// One custom endpoint: the normalised base URL and the API-key env var.
+type CustomTarget = (String, Option<String>);
+
+/// The `base_url` providers keyed by model string, validated: a URL must be
+/// http(s) (a trailing `/` is added — genai appends `chat/completions` to
+/// it), and no model string may be claimed twice, since the model is all the
+/// resolver sees at request time.
+fn custom_targets(cfg: &LlmConfig) -> Result<HashMap<String, CustomTarget>> {
+    let mut out: HashMap<String, CustomTarget> = HashMap::new();
+    let mut owner: HashMap<&str, &str> = HashMap::new();
+    for (name, p) in &cfg.providers {
+        if let Some(prev) = owner.insert(p.model.as_str(), name.as_str()) {
+            if p.base_url.is_some() || cfg.providers[prev].base_url.is_some() {
+                return Err(Error::Config(format!(
+                    "llm providers `{prev}` and `{name}` both list model `{}`; a `base_url` provider is \
+                     recognised by its model string, so give it a distinct one (e.g. `gateway/{}`)",
+                    p.model, p.model
+                )));
+            }
+        }
+        if let Some(url) = &p.base_url {
+            out.insert(p.model.clone(), (normalise_base_url(name, url)?, p.api_key_env.clone()));
+        }
+    }
+    Ok(out)
+}
+
+fn normalise_base_url(provider: &str, url: &str) -> Result<String> {
+    let url = url.trim();
+    if !(url.starts_with("https://") || url.starts_with("http://")) || url.len() <= 8 {
+        return Err(Error::Config(format!(
+            "llm provider `{provider}`: base_url `{url}` must start with https:// or http://"
+        )));
+    }
+    Ok(if url.ends_with('/') { url.to_string() } else { format!("{url}/") })
+}
+
+/// Send a `base_url` provider's model to its endpoint through the OpenAI
+/// adapter, with its key; every other model keeps genai's own target.
+fn resolve_custom_target(targets: &HashMap<String, CustomTarget>, st: ServiceTarget) -> ServiceTarget {
+    let name = st.model.model_name.to_string();
+    match targets.get(&name) {
+        Some((url, key)) => ServiceTarget {
+            endpoint: Endpoint::from_owned(url.clone()),
+            auth: match key {
+                Some(env) => AuthData::from_env(env.clone()),
+                // A keyless local server; the adapter still sends a bearer.
+                None => AuthData::from_single("none"),
+            },
+            model: ModelIden::new(AdapterKind::OpenAI, name),
+        },
+        None => st,
+    }
+}
+
 fn provider_available(prov: &crate::config::LlmProvider) -> bool {
     match prov.api_key_env.as_deref() {
         None => true,
@@ -105,11 +177,12 @@ mod fallback_tests {
             LlmProvider {
                 model: "cloud-model".into(),
                 api_key_env: Some("INKHAVEN_TEST_UNSET_KEY_ZZZ".into()),
+                base_url: None,
             },
         );
         providers.insert(
             "local".into(),
-            LlmProvider { model: "local-model".into(), api_key_env: None },
+            LlmProvider { model: "local-model".into(), api_key_env: None, base_url: None },
         );
         LlmConfig { default: "cloud".into(), providers, auto_fallback }
     }
@@ -121,6 +194,91 @@ mod fallback_tests {
         let (model, env) = ai.resolve_provider(&cfg, None).unwrap();
         assert_eq!(model, "local-model"); // cloud key unset → keyless local
         assert!(env.is_none());
+    }
+
+    #[test]
+    fn base_url_routes_its_model_through_the_openai_adapter() {
+        let mut c = cfg(true);
+        c.providers.insert(
+            "gateway".into(),
+            LlmProvider {
+                model: "org/some-open-model".into(),
+                api_key_env: Some("GATEWAY_KEY".into()),
+                base_url: Some("https://gateway.example/v1".into()),
+            },
+        );
+        c.providers.insert(
+            "lmstudio".into(),
+            LlmProvider {
+                model: "local-gguf".into(),
+                api_key_env: None,
+                base_url: Some("http://127.0.0.1:1234/v1/".into()),
+            },
+        );
+        let targets = custom_targets(&c).unwrap();
+        assert_eq!(targets.len(), 2);
+        // The trailing slash genai needs is added; an existing one is kept.
+        assert_eq!(targets["org/some-open-model"].0, "https://gateway.example/v1/");
+        assert_eq!(targets["local-gguf"].0, "http://127.0.0.1:1234/v1/");
+        let incoming = ServiceTarget {
+            endpoint: Endpoint::from_static("http://localhost:11434/v1/"),
+            auth: AuthData::from_single(""),
+            model: ModelIden::new(AdapterKind::Ollama, "org/some-open-model"),
+        };
+        let out = resolve_custom_target(&targets, incoming);
+        assert_eq!(out.endpoint.base_url(), "https://gateway.example/v1/");
+        assert_eq!(out.model.adapter_kind, AdapterKind::OpenAI);
+        assert_eq!(out.model.model_name.to_string(), "org/some-open-model");
+        assert!(matches!(out.auth, AuthData::FromEnv(ref e) if e == "GATEWAY_KEY"));
+        // A keyless local endpoint gets a placeholder bearer, not an env lookup.
+        let local = resolve_custom_target(
+            &targets,
+            ServiceTarget {
+                endpoint: Endpoint::from_static("http://localhost:11434/v1/"),
+                auth: AuthData::from_single(""),
+                model: ModelIden::new(AdapterKind::Ollama, "local-gguf"),
+            },
+        );
+        assert!(matches!(local.auth, AuthData::Key(_)));
+        // A model that belongs to no base_url provider is left to genai.
+        let other = resolve_custom_target(
+            &targets,
+            ServiceTarget {
+                endpoint: Endpoint::from_static("https://api.openai.com/v1/"),
+                auth: AuthData::from_env("OPENAI_API_KEY"),
+                model: ModelIden::new(AdapterKind::OpenAI, "gpt-4o"),
+            },
+        );
+        assert_eq!(other.endpoint.base_url(), "https://api.openai.com/v1/");
+        // The client builds, and the key gate still applies to the provider.
+        let ai = AiClient::from_config(&c).unwrap();
+        // With auto_fallback the unset GATEWAY_KEY falls through to a keyless
+        // provider; strict mode refuses, like any other keyed provider.
+        assert!(ai.resolve_provider(&c, Some("gateway")).is_ok());
+        let mut strict = c.clone();
+        strict.auto_fallback = false;
+        assert!(ai.resolve_provider(&strict, Some("gateway")).is_err(), "GATEWAY_KEY is unset");
+        assert_eq!(ai.resolve_provider(&c, Some("lmstudio")).unwrap().0, "local-gguf");
+    }
+
+    #[test]
+    fn base_url_rejects_a_bad_scheme_and_a_shared_model_string() {
+        let mut c = cfg(true);
+        c.providers.insert(
+            "gateway".into(),
+            LlmProvider {
+                model: "m".into(),
+                api_key_env: None,
+                base_url: Some("gateway.example/v1".into()),
+            },
+        );
+        let err = AiClient::from_config(&c).err().map(|e| e.to_string()).expect("a config error");
+        assert!(err.contains("must start with https:// or http://"), "{err}");
+        // Same model string as the keyless `local` provider → refused.
+        c.providers.get_mut("gateway").unwrap().base_url = Some("https://gateway.example/v1".into());
+        c.providers.get_mut("gateway").unwrap().model = "local-model".into();
+        let err = AiClient::from_config(&c).err().map(|e| e.to_string()).expect("a config error");
+        assert!(err.contains("both list model `local-model`"), "{err}");
     }
 
     #[test]

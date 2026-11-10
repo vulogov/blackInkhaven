@@ -184,6 +184,7 @@ llm: {
 | `default` | string | `gemini` | Which entry in `providers` is used when no `--provider` flag is passed (CLI) and no override is hard-coded (TUI). |
 | `providers.<name>.model` | string | varies | Model identifier passed to [genai](https://github.com/jeremychone/rust-genai). genai picks the adapter (Gemini / OpenAI / Anthropic / Ollama / …) from this string. |
 | `providers.<name>.api_key_env` | string \| absent | varies | Environment variable that holds the API key. **Omit entirely** for local providers like Ollama. |
+| `providers.<name>.base_url` | string \| absent | absent | (3.21) An OpenAI-compatible endpoint (`https://host/v1`). When set, the model is sent there through genai's OpenAI adapter with the key from `api_key_env` (omit the key for a local server), instead of genai choosing the adapter and host from the model name. Any host that speaks the OpenAI chat API: LM Studio, vLLM, OpenRouter, Together, a company gateway. The model string identifies the provider at request time, so two providers may not list the same model string. Must start with `http://` or `https://`. |
 | `auto_fallback` | bool | `true` | When the `default` provider's API key is unset, fall back to any other configured provider whose key IS available (or a keyless local provider). `false` fails with a clear error instead — for users who want the configured provider or nothing. |
 
 If `api_key_env` is set and that env var is unset at runtime, Inkhaven
@@ -207,6 +208,21 @@ claude: {
   api_key_env: ANTHROPIC_API_KEY
 }
 ```
+
+To reach any other OpenAI-compatible host (3.21) — a vLLM or LM Studio
+server on another machine, OpenRouter, a gateway — give the provider a
+`base_url`:
+
+```hjson
+gateway: {
+  model: org/some-open-model
+  base_url: https://gateway.example/v1
+  api_key_env: GATEWAY_API_KEY
+}
+```
+
+`auto_fallback` and the `Ctrl+B L` provider cycle treat it like any other
+provider.
 
 Switching the default is one edit: `default: claude` and you're done.
 

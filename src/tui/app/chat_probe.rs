@@ -121,7 +121,7 @@ fn chat_probe() {
         // fails fast (no such adapter) and is never read.
         app.cfg.llm.providers.insert(
             "probe".into(),
-            LlmProvider { model: "probe-model".into(), api_key_env: None },
+            LlmProvider { model: "probe-model".into(), api_key_env: None, base_url: None },
         );
         app.cfg.llm.default = "probe".into();
         app.ai = crate::ai::AiClient::from_config(&app.cfg.llm).unwrap();
