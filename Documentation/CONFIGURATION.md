@@ -1467,8 +1467,8 @@ existing snippet bodies.
     expand_on: ["space", "tab"]     // 1.2.14
     bindings: [
       // Bund-prefix bodies (NEW in 1.2.16):
-      { trigger: ";today",
-        body: "bund:ink.now \"%Y-%m-%d\" ink.fmt" }
+      { trigger: ";uuid",
+        body: "bund:\"facts/harbor\" ink.path.to_uuid" }
       { trigger: ";doubled",
         body: "bund:40 2 *" }
 
@@ -1492,7 +1492,7 @@ The top-of-stack value at program end (coerced
 to string) becomes the expansion.
 
 * Sync placeholders are expanded BEFORE
-  evaluation, so `bund:"{author}" ink.print`
+  evaluation, so `bund:"{author}" ink.io.print`
   injects `{author}` first then runs the
   program.
 * Script execution honours the trust gate +

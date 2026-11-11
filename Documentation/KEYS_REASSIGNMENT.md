@@ -175,7 +175,7 @@ is what you type, not what the table key is.
 
 ### View sub-chords (Ctrl+V prefix, 1.2.4+)
 
-Layer name: `view_sub`. Rebind via HJSON or `ink.key.bind_view_sub`.
+Layer name: `view_sub`. Rebind via HJSON or `ink.key.bind` with a `"Ctrl+V <key>"` chord.
 
 | Action | Default chord | Effect |
 |--------|---------------|--------|
@@ -798,7 +798,7 @@ HJSON block:
 | `In {place_lookup}` | Same shape — Places picker |
 | `the {artefact_lookup} fell` | Same — Artefacts picker |
 | `bund:40 2 +` | Evaluates the Bund-VM program; top-of-stack string becomes the expansion |
-| `bund:"{author}" ink.print` | Sync placeholders expanded before eval — `{author}` is injected first |
+| `bund:"{author}" ink.io.print` | Sync placeholders expanded before eval — `{author}` is injected first |
 
 First picker placeholder in a body fires the
 modal; any subsequent picker placeholders pass

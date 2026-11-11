@@ -39,7 +39,7 @@ pub mod event_critique;
 pub mod comments;
 pub mod language;
 #[cfg(test)]
-mod surface;
+pub(crate) mod surface;
 pub mod language_index;
 pub mod inner_socrates;
 pub mod inner_editor;
