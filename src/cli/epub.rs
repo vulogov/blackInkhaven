@@ -132,7 +132,7 @@ fn collect_chapters(
 ) -> Result<Vec<EpubChapter>> {
     let mut chapters = Vec::new();
     for chapter in h.children_of(Some(book.id)) {
-        if chapter.kind != NodeKind::Chapter {
+        if chapter.kind != NodeKind::Chapter || crate::cli::book_walk::is_timeline_chapter(chapter) {
             continue;
         }
         let mut body = String::new();
@@ -174,6 +174,9 @@ fn append_branch_prose(
     }
     for child in h.children_of(Some(branch.id)) {
         match child.kind {
+            // 3.22 — a stray timeline event outside the Timeline chapter is
+            // still metadata, not prose.
+            NodeKind::Paragraph if child.event.is_some() => {}
             NodeKind::Paragraph => {
                 let raw = read_paragraph(store, child)?;
                 // A3 — footnotes are finalized once per chapter (see

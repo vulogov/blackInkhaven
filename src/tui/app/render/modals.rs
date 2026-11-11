@@ -227,7 +227,8 @@ impl super::super::App {
         area: Rect,
         scroll: usize,
     ) {
-        let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        // 3.22 — the same day key the ledger writes under (`inkhaven cost` too).
+        let day = crate::dayclock::today_key();
         let report = crate::cli::cost::gather(
             self.store.project_root(),
             &day,

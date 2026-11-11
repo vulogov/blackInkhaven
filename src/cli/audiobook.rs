@@ -210,7 +210,7 @@ fn collect_chapter_texts(
 ) -> Result<Vec<(String, String)>> {
     let mut out = Vec::new();
     for chapter in h.children_of(Some(book.id)) {
-        if chapter.kind != NodeKind::Chapter {
+        if chapter.kind != NodeKind::Chapter || crate::cli::book_walk::is_timeline_chapter(chapter) {
             continue;
         }
         let mut prose = String::new();
@@ -243,6 +243,8 @@ fn append_branch_prose(
 ) -> Result<()> {
     for child in h.children_of(Some(branch.id)) {
         match child.kind {
+            // 3.22 — timeline events are never read aloud.
+            NodeKind::Paragraph if child.event.is_some() => {}
             NodeKind::Paragraph => {
                 let bytes = store
                     .get_content(child.id)

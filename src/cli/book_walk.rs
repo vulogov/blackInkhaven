@@ -26,6 +26,15 @@ use crate::store::NodeKind;
 /// flattened, then filtered to paragraphs).  Paragraph
 /// nodes with no file, or whose file can't be read, are
 /// skipped.
+/// 3.22 — is this chapter the book's Timeline chapter? Its paragraphs are
+/// events (metadata about the manuscript), so every chapter walk that feeds a
+/// reader-facing artefact (EPUB, DOCX, audiobook, HTML) skips it, exactly as
+/// `export::assemble_typst_source` does for the flat exports.
+pub(crate) fn is_timeline_chapter(node: &crate::store::node::Node) -> bool {
+    node.kind == NodeKind::Chapter
+        && node.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_BOOK_TIMELINE)
+}
+
 pub(crate) fn chapter_paragraphs_raw(
     layout: &ProjectLayout,
     h: &Hierarchy,
@@ -34,7 +43,8 @@ pub(crate) fn chapter_paragraphs_raw(
     let mut out = Vec::new();
     for id in h.collect_subtree(chapter_id) {
         let Some(p) = h.get(id) else { continue };
-        if p.kind != NodeKind::Paragraph {
+        if p.kind != NodeKind::Paragraph || p.event.is_some() {
+            // 3.22 — timeline events are metadata, never manuscript prose.
             continue;
         }
         let Some(rel) = p.file.as_ref() else { continue };

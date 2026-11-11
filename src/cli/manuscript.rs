@@ -127,7 +127,7 @@ pub(crate) fn collect_chapters(
 ) -> Vec<ManuscriptChapter> {
     let mut out = Vec::new();
     for chapter in h.children_of(Some(book.id)) {
-        if chapter.kind != NodeKind::Chapter {
+        if chapter.kind != NodeKind::Chapter || crate::cli::book_walk::is_timeline_chapter(chapter) {
             continue;
         }
         let paragraphs: Vec<String> =
