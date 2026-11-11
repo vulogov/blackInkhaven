@@ -40,6 +40,8 @@ const MAIN: [Para; 4] = [
     Para { title: "March", sentinel: "MARCHTHAW", status: Some("ready"), tags: &[] },
 ];
 const OTHER_SENTINEL: &str = "BOOTSMUD";
+/// Body sentinel of the one timeline event (3.22): must appear in no export.
+const TIMELINE_SENTINEL: &str = "TIMELINEEVENT";
 
 fn body(title: &str, sentinel: &str) -> String {
     format!("= {title}\n\nThe {sentinel} sentence stands in for prose. A second sentence follows it.\n")
@@ -82,6 +84,7 @@ fn project() -> Project {
     let mut cfg = Config::default();
     cfg.images.preview_enabled = false;
     cfg.sync_interval_seconds = 0;
+    cfg.timeline.enabled = true;
     let layout = ProjectLayout::new(tmp.path());
     layout.create_layout().unwrap();
     cfg.save(&layout.config_path()).unwrap();
@@ -98,6 +101,31 @@ fn project() -> Project {
     seed(&store, &cfg, tmp.path(), &night, &MAIN[2]);
     let thaw = mk(NodeKind::Chapter, "Thaw", Some(&book));
     seed(&store, &cfg, tmp.path(), &thaw, &MAIN[3]);
+    // 3.22 — a Timeline chapter with one event. Events are metadata about the
+    // manuscript, never prose: no export may carry the sentinel.
+    let tl_id = store.ensure_timeline_chapter(&cfg, book.id).expect("timeline chapter");
+    let h = Hierarchy::load(&store).unwrap();
+    let tl = h.get(tl_id).cloned().expect("timeline node");
+    let mut ev = store
+        .create_paragraph_with_body(
+            &cfg,
+            &h,
+            "Storm",
+            Some(&tl),
+            InsertPosition::End,
+            body("Storm", TIMELINE_SENTINEL).as_bytes(),
+            None,
+        )
+        .expect("event paragraph");
+    ev.event = Some(crate::store::node::EventData {
+        start_ticks: 86_400,
+        end_ticks: None,
+        precision: Default::default(),
+        characters: vec![],
+        places: vec![],
+        track: None,
+    });
+    store.raw().update_metadata(ev.id, ev.to_json()).expect("event metadata");
     let other = mk(NodeKind::Book, "Field Notes", None);
     let walk = mk(NodeKind::Chapter, "Walk", Some(&other));
     seed(
@@ -188,6 +216,12 @@ fn check_full_book(label: &str, text: &str, problems: &mut Vec<String>, out: &mu
     }
     if text.contains(OTHER_SENTINEL) {
         problems.push(format!("[{label}] the other book's paragraph leaked into a `--book-name` export"));
+    }
+    if text.contains(TIMELINE_SENTINEL) {
+        problems.push(format!("[{label}] the timeline event leaked into the export"));
+    }
+    if matches!(label, "EPUB" | "DOCX") && text.to_uppercase().contains("TIMELINE") {
+        problems.push(format!("[{label}] the Timeline chapter itself appears in the export"));
     }
     // Two documented structures: the flat exports (Typst/Markdown/TeX/bundle)
     // emit paragraphs only — branch nodes carry no text and the paragraphs'

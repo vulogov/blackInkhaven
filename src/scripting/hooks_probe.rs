@@ -12,7 +12,7 @@
 //! the first `Store::open`, so this runs alone:
 //!
 //! ```text
-//! cargo test --bin inkhaven -- --ignored --nocapture hooks_probe
+//! cargo test --bin inkhaven -- --ignored --nocapture --exact scripting::hooks_probe::hooks_probe
 //! ```
 #![cfg(test)]
 

@@ -360,6 +360,48 @@ fn flows_probe() {
 
         // ---- Usage ledger: every flow counted, under its own category --------
         out.push(String::new());
+        // ---- Cost parity (3.22): `inkhaven cost` and the Ctrl+B $ dashboard show
+        // every category the ledger recorded today, with the same counts.
+        {
+            let ledger = usage(&root);
+            let day = crate::dayclock::today_key();
+            let report = crate::cli::cost::gather(
+                &root,
+                &day,
+                app.cfg.cost.world_daily_call_cap,
+                app.cfg.cost.inner_socrates_daily_call_cap,
+                app.cfg.inner_editor.llm.editor_engagement.max_calls_per_day,
+            );
+            for (cat, n) in &ledger {
+                if !report.entries.iter().any(|e| &e.name == cat && e.calls_today == *n) {
+                    note!(format!(
+                        "[COST-CLI] `{cat}` = {n} is missing from `inkhaven cost`: {:?}",
+                        report.entries.iter().map(|e| format!("{}={}", e.name, e.calls_today)).collect::<Vec<_>>()
+                    ));
+                }
+            }
+            app.open_cost_dashboard();
+            match crate::probe_kit::render_text(140, 50, |f| app.draw(f)) {
+                Err(e) => note!(format!("[COST-TUI] the dashboard failed to render: {e}")),
+                Ok(screen) => {
+                    for (cat, _) in &ledger {
+                        if !screen.contains(cat.as_str()) {
+                            note!(format!("[COST-TUI] `{cat}` is not on the Ctrl+B $ dashboard"));
+                        }
+                    }
+                }
+            }
+            send(&mut app, k(KeyCode::Esc)).unwrap();
+            if !matches!(app.modal, Modal::None) {
+                note!("[COST-TUI] Esc did not close the dashboard".into());
+            }
+            if ledger.is_empty() {
+                note!("[COST] the ledger recorded nothing today".into());
+            } else {
+                out.push(format!("  [COST] {} ledger categories match `inkhaven cost` and the dashboard", ledger.len()));
+            }
+        }
+
         out.push("  usage categories per flow:".into());
         for (label, delta) in &categories {
             out.push(format!("    {label:<18} {}", delta.join(", ")));

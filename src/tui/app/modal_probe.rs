@@ -252,11 +252,18 @@ pub(super) fn write_body(store: &Store, root: &std::path::Path, node: &mut Node,
 }
 
 pub(super) fn probe_app() -> (tempfile::TempDir, App, Uuid) {
+    probe_app_with(|_| {})
+}
+
+/// `probe_app` with a last word on the config before it is saved and the
+/// store opened (3.22 — the hooks probe needs a bootstrap and project trust).
+pub(super) fn probe_app_with(tweak: impl FnOnce(&mut Config)) -> (tempfile::TempDir, App, Uuid) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut cfg = Config::default();
     cfg.images.preview_enabled = false;
     cfg.sync_interval_seconds = 0;
     cfg.timeline.enabled = true;
+    tweak(&mut cfg);
     let layout = ProjectLayout::new(tmp.path());
     layout.create_layout().unwrap();
     cfg.save(&layout.config_path()).unwrap();

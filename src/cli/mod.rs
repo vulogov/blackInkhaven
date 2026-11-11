@@ -12,6 +12,8 @@ pub mod help_corpus;
 pub mod import_help;
 pub mod import_epub;
 pub mod import_scrivener;
+#[cfg(test)]
+mod probe;
 pub mod import_typst_help;
 pub mod init;
 pub mod list;

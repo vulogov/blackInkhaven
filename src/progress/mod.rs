@@ -84,6 +84,15 @@ pub fn uninstall() {
 /// Run `f` against the active store, returning `None` if no
 /// store is installed (progress tracking disabled). The lock is
 /// released before `f` returns to keep the active section short.
+/// Test-only window onto the installed store (probes seed history through it).
+#[cfg(test)]
+pub(crate) fn with_active<F, T>(f: F) -> Option<Result<T>>
+where
+    F: FnOnce(&ProgressStore) -> Result<T>,
+{
+    with_store(f)
+}
+
 fn with_store<F, T>(f: F) -> Option<Result<T>>
 where
     F: FnOnce(&ProgressStore) -> Result<T>,
