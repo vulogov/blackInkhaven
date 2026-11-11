@@ -2243,7 +2243,8 @@ impl WorldbuilderApp {
                 continue;
             }
             h.push(AiTurn::User(t.prompt.clone()));
-            if !t.response.trim().is_empty() && !t.response.starts_with('[') {
+            // 3.21 — a failed stream appends `\n[error: …]`: trim before the test.
+            if !t.response.trim().is_empty() && !t.response.trim_start().starts_with('[') {
                 h.push(AiTurn::Assistant(t.response.clone()));
             }
         }
@@ -2452,6 +2453,9 @@ pub(super) fn node_is_compiler_owned(h: &Hierarchy, id: Uuid) -> bool {
     };
     is_layer(node) || h.ancestors(node).iter().any(|a| is_layer(a))
 }
+
+#[cfg(test)]
+mod probe;
 
 #[cfg(test)]
 mod tests {

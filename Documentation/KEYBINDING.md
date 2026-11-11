@@ -266,7 +266,8 @@ before tui-textarea sees them, so they never insert a literal tab.
 The third meta prefix. Routes to in-process exporters, pickers,
 the writing-progress modal, paragraph links, and bookmarks. In
 1.2.4+ all view-sub chords are rebindable through HJSON
-`keys.bindings.view_sub` and `ink.key.bind_view_sub`; the
+`keys.bindings.view_sub` and `ink.key.bind` (a `"Ctrl+V <key>"` chord
+selects the layer); the
 prefix itself is rebindable via `keys.view_prefix` (default
 `"Ctrl+V"`). See tutorials 15 / 16 / 17 / 19 / 21 for the
 full workflows.
@@ -1723,12 +1724,14 @@ query prompt — needing ≥ 80 columns.
 | `Ctrl+B h` | Full quick reference of every chord + `/command` (any key closes) |
 | `?` | Toggle the keybind hints bar |
 | `q` / `Ctrl+C` / `Ctrl+Q` | Quit (restores the terminal; Ctrl+Q works in text fields too) |
-| **Facts tree** | `j`/`k` nav, `Enter`/`l`/`h` expand/collapse, `g`/`G` top/bottom |
+| **Facts tree** | `j`/`k` nav, `l`/`h` step in/out, `g`/`G` top/bottom; `Enter` quick-views a fact (`j`/`k` scroll · `Y` copy · `Esc` close) or folds a branch |
+| **Facts tree** edits | `R` rename · `c`/`s` new chapter/subchapter · `-`/`D` delete a paragraph/branch (`y`/`N`) · `K`/`J` move · `y`/`x`/`p` copy/cut/paste · `u` toggle undisputed · `Y` copy the body |
 | `Ctrl+P` (tree) | Pin / unpin the cursor node for RAG context (max 3, `⬡`) |
-| `n` (tree) | Manually add a fact (title → `Ctrl+S` body) |
+| `n` (tree) | Manually add a fact (title → `Enter` → body → `Ctrl+S`; an empty body is refused, `Esc` discards) |
 | **Query prompt** | `Enter` send, `↑`/`↓` recall history, `Esc` clear-then-defocus |
-| **Chat** | `j`/`k`/`g`/`G` scroll, `Ctrl+F` search (`n`/`N` between matches) |
-| **Confirm overlay** | `Tab` switch title/body, `Ctrl+S` / `Ctrl+Enter` insert, `Esc` discard |
+| **Chat** | `j`/`k`/`g`/`G` scroll, `Ctrl+F` search (`n`/`N` between matches, `Esc` closes), `y` copy the last response, `Esc` back to the prompt |
+| `<` / `>` · `Ctrl+Z` | Resize the tree/chat split (tree or chat focused) · zoom the focused pane (toggle) |
+| **Confirm overlay** | `Tab` switch title/body, `Ctrl+S` / `Ctrl+Enter` insert (an empty body is refused), `Esc` discard |
 
 Commands (type in the prompt): `/fact "..." [→ path]`, `/note "..." [→ path]`,
 `/promote [notes/path] [→ facts/path]`, `/sources`, `/import [path]`,
@@ -1749,8 +1752,8 @@ change lands in `world.hjson`; it never generates prose. Launched outside the ed
 |:---|:---|
 | `Tab` / `Shift+Tab` | Cycle panes: Facts → World → Query → Right |
 | `Ctrl+R` | Cycle the right pane (Chat / Research / Map / Ledger) |
-| `?` | Toggle the keybind hints bar |
-| `Ctrl+Q` / `Ctrl+C` | Quit (restores the terminal) |
+| `?` | Toggle the keybind hints bar (in a pane; in the prompt it types) |
+| `q` (pane) · `Ctrl+Q` / `Ctrl+C` | Quit (restores the terminal; `q` in the prompt types) |
 | **Left trees** | `j`/`k` nav, `Enter`/`l`/`h` expand/collapse, `g`/`G` top/bottom |
 | `Ctrl+P` (tree) | Pin / unpin the cursor node for AI context (`⬡`) |
 | `Ctrl+T` (Facts) | Toggle the `fact:world` tag on the selected paragraph (`◎`) |
@@ -1773,6 +1776,38 @@ Commands (type in the prompt): `/interview`, `/set <path> <value>`, `/star`, `/t
 `/switch <name>`, `/export [--pdf]`. See
 [Worldbuilding reference](WORLDBUILDING.md#the-interactive-worldbuilder-inkhaven-worldbuilder)
 and *Building the World with Inkhaven*, chs. 20–21.
+
+## `inkhaven linguistic` (1.7.0+, LING-1)
+
+Standalone TUI over the **Language** system book — the Inner Linguist's desk.
+Launched outside the main editor: `inkhaven linguistic [--language <name>]
+[--session <name>]`. Two panes: the language tree (left 35%) and a right pane
+that cycles through five views; a one-line prompt opens over the Chat view. The
+status line shows the key hints (`i ask · m metrics · u universals · p pairs ·
+Tab cycle · jk move · q quit`).
+
+| Key | Action |
+|:---|:---|
+| `i` / `/` | Open the prompt (switches the right pane to Chat); typed text builds the question |
+| `Enter` (prompt) | Send the question (grounded in the selected language's sub-book), or run a `/command` |
+| `Esc` (prompt) | Leave the prompt (the typed text is kept); outside the prompt `Esc` does nothing (3.21) |
+| `Tab` | Cycle the right pane: Chat → Preview → Metrics → Universals → Pairs |
+| `m` / `u` / `p` | Metrics (phonology) / Universals (typology) / Minimal pairs for the selected language |
+| `j`/`k` · `↑`/`↓` | Move in the tree (the preview and the active report follow the selection) |
+| `l`/`→` · `h`/`←` · `Enter` | Step into / out of a branch · fold / unfold |
+| `g`/`Home` · `G`/`End` | Top / bottom of the tree |
+| `PgUp` / `PgDn` | Scroll the chat |
+| `q` · `Ctrl+C` · `Ctrl+Q` | Quit (`Ctrl+C` / `Ctrl+Q` also work while the prompt is open; `q` then types) |
+
+Commands (typed in the prompt; all run locally, no model call): `/trace <rule>`
+(preview a sound change), `/parse <word>`, `/check <word>` (the Oracle),
+`/tree <verb> <subject> [object] [indirect]`, `/clause …`, `/igt <sentence>`,
+`/texts`, `/settrans <name> = <translation>`, `/frequency`, `/kwic <word>`,
+`/coll <word>`, `/hypotheses`, `/hcheck <id>`. Anything else is a question to
+the Inner Linguist. The transcript is a named **session**
+(`.inkhaven/linguistic-sessions/<name>.json`, default `default`) that replays on
+reopen; only completed answers are recorded — a failed or cancelled stream is
+shown in the chat but not saved. See [CONLANG.md](CONLANG.md#the-linguistic-companion-inkhaven-linguistic).
 
 ## `inkhaven prompts-editor` (1.2.10+)
 

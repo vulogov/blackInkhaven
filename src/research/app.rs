@@ -4366,9 +4366,11 @@ impl ResearchApp {
             if t.streaming || t.prompt.trim_start().starts_with('/') {
                 continue; // in-flight, or a slash-command output
             }
-            let is_placeholder = t.response.starts_with("[no ")
-                || t.response.starts_with("[provider error")
-                || t.response.starts_with("[error");
+            // 3.21 — a failed stream appends `\n[error: …]`: trim before the test.
+            let r = t.response.trim_start();
+            let is_placeholder = r.starts_with("[no ")
+                || r.starts_with("[provider error")
+                || r.starts_with("[error");
             if is_placeholder || t.response.trim().is_empty() {
                 continue;
             }
@@ -5778,7 +5780,10 @@ impl ResearchApp {
         let Some(id) = self.facts_tree.selected() else { return };
         let Some(node) = self.hierarchy.get(id) else { return };
         if node.kind != crate::store::NodeKind::Paragraph {
-            self.facts_tree.step_in(&self.hierarchy);
+            // A branch folds / unfolds (as the docs say and the other companions
+            // do); 3.21 — it used to step in, so Enter on an open chapter moved
+            // onto its first fact and a second Enter opened that fact's view.
+            self.facts_tree.toggle(&self.hierarchy);
             return;
         }
         let title = node.title.clone();
@@ -5886,6 +5891,12 @@ impl ResearchApp {
 
     /// Insert the manual entry as a Facts paragraph, then reload + rebuild.
     fn save_manual_entry(&mut self) {
+        // 3.21 — refuse an empty body (the confirmation overlay already does),
+        // keeping the entry open instead of inserting a heading-only fact.
+        if self.manual.as_ref().is_some_and(|m| m.body.trim().is_empty()) {
+            self.status_message = Some("fact body is empty — type it, or Esc to cancel".to_string());
+            return;
+        }
         let Some(m) = self.manual.take() else { return };
         let Some(book_id) = self.facts_tree.root else {
             self.status_message = Some("no Facts book to insert into".to_string());
@@ -7138,6 +7149,9 @@ fn longest_common_prefix(items: &[String]) -> String {
     }
     first.chars().take(end).collect()
 }
+
+#[cfg(test)]
+mod probe;
 
 #[cfg(test)]
 mod contradiction_tests {

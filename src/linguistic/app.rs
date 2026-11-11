@@ -40,6 +40,9 @@ const RAG_TOP_N: usize = 6;
 const MAX_REPLAY_TURNS: usize = 10;
 const MAX_REPLAY_CHARS: usize = 20_000;
 
+/// The navigation-mode hint line (also restored by Esc outside the prompt).
+const NAV_HINT: &str = "i ask · m metrics · u universals · p pairs · Tab cycle · jk move · q quit";
+
 /// One chat exchange in the Linguist's transcript.
 struct Turn {
     prompt: String,
@@ -56,7 +59,7 @@ impl Turn {
 }
 
 /// Which view the right pane shows.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum RightPane {
     Chat,
     Preview,
@@ -150,7 +153,7 @@ impl LinguisticApp {
         } else if tree.is_empty() {
             "No languages yet. `inkhaven language init <name>` scaffolds one.".to_string()
         } else {
-            "i ask · m metrics · u universals · p pairs · Tab cycle · jk move · q quit".to_string()
+            NAV_HINT.to_string()
         };
 
         let mut app = LinguisticApp {
@@ -804,7 +807,8 @@ impl LinguisticApp {
         let mut picked: Vec<&Turn> = Vec::new();
         let mut budget = MAX_REPLAY_CHARS;
         for t in self.chat.iter().rev() {
-            if t.streaming || t.response.trim().is_empty() || t.response.starts_with('[') {
+            // Error placeholders arrive as `\n[error: …]` (3.21: trim first).
+            if t.streaming || t.response.trim().is_empty() || t.response.trim_start().starts_with('[') {
                 continue;
             }
             let cost = t.prompt.len() + t.response.len();
@@ -1067,7 +1071,10 @@ impl TuiHost for LinguisticApp {
             if let Some(turn) = self.chat.get_mut(idx) {
                 turn.streaming = false;
                 // Persist genuine answers; skip empty or error-placeholder turns.
-                let ok = !turn.response.trim().is_empty() && !turn.response.starts_with('[');
+                // 3.21 — a failed stream appends `\n[error: …]`; the leading
+                // newline used to defeat this check, so error turns were saved
+                // and replayed to the model on the next question.
+                let ok = !turn.response.trim().is_empty() && !turn.response.trim_start().starts_with('[');
                 if ok {
                     to_record = Some(SessionTurn {
                         prompt: turn.prompt.clone(),
@@ -1079,11 +1086,11 @@ impl TuiHost for LinguisticApp {
             }
             self.status = if let Some(t) = to_record {
                 match self.session.record(t, &self.layout) {
-                    Ok(()) => "i ask · m metrics · u universals · p pairs · Tab cycle · jk move · q quit".to_string(),
+                    Ok(()) => NAV_HINT.to_string(),
                     Err(e) => format!("answer received, but the session didn't save: {e}"),
                 }
             } else {
-                "i ask · m metrics · u universals · p pairs · Tab cycle · jk move · q quit".to_string()
+                NAV_HINT.to_string()
             };
         }
     }
@@ -1158,7 +1165,10 @@ impl TuiHost for LinguisticApp {
         // Navigation mode.
         let mut moved = false;
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
+            KeyCode::Char('q') => self.should_quit = true,
+            // Esc is not a quit key in any companion (3.21): outside the prompt it
+            // only restores the hint line.
+            KeyCode::Esc => self.status = NAV_HINT.to_string(),
             KeyCode::Char('i') | KeyCode::Char('/') => {
                 self.right = RightPane::Chat;
                 self.input_focused = true;
@@ -1399,6 +1409,9 @@ impl LinguisticApp {
         );
     }
 }
+
+#[cfg(test)]
+mod probe;
 
 #[cfg(test)]
 mod tests {
