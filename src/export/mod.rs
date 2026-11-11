@@ -30,6 +30,8 @@ pub mod bundle;
 pub mod docx;
 pub mod html;
 pub mod markdown;
+#[cfg(test)]
+mod probe;
 pub mod tex;
 
 use std::path::{Path, PathBuf};

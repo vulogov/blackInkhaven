@@ -244,6 +244,13 @@ node inside the project tree (`Ctrl+Z N` to create one). Inkhaven
 `bund.eval`s every Script node at startup, after the inline
 bootstrap.
 
+Both the bootstrap and Script nodes run only in a **trusted**
+project: set `scripting.trust_decision: "trust"` or create
+`<project>/.inkhaven/trust` (see CONFIGURATION.md). In an untrusted
+project the hooks are never defined, so a save fires nothing and
+`.inkhaven.log` carries a `scripting.bootstrap NOT run` warning —
+if a hook "does nothing", check the trust decision first.
+
 A more useful save hook — warn when a paragraph mentions a
 Character name not in the Characters book (sketch):
 
@@ -662,7 +669,7 @@ and are deliberately *not* exposed. Every word also answers to its short alias
 | `ink.doctor.scan` | `store_read` | `( -- list )` | full project scan `{class, severity, path, detail}` |
 | `ink.backup.last` | `store_read` | `( -- dict \| NODATA )` | last-backup timestamp `{last_at}` |
 | `ink.backup.list` | `fs_read` | `( -- list )` | backup zips, newest first `{name, bytes, modified}` |
-| `ink.words` | `pure` | `( prefix -- list )` | registered `ink.*` words `{word, category}` starting with `prefix` ("" = all) — introspect the surface |
+| `ink.words` | `pure` | `( prefix -- list )` | registered `ink.*` words `{word, category, alias}` starting with `prefix` ("" = all) — introspect the surface; `alias` is the `ink.`-less short name, "" when bundcore or another word owns it (3.22) |
 
 **Opt-in writes (default-denied).** Enable with
 `scripting: { enabled_categories: ["store_write", "fs_write"] }`. Import bundle

@@ -32,6 +32,8 @@
 //! - **P6**: ephemeral worker pool + result queue.
 
 pub mod hooks;
+#[cfg(test)]
+mod hooks_probe;
 pub mod policy;
 pub mod stdlib;
 #[cfg(test)]
