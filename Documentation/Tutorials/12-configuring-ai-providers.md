@@ -253,7 +253,10 @@ gateway: {
 The model is then sent there through the OpenAI adapter with that key;
 omit `api_key_env` for a local server that needs none. Everything else is
 unchanged: `auto_fallback` skips it when the key is unset, `Ctrl+B L`
-cycles to it, `inkhaven ai --provider gateway` picks it. One rule: the
+cycles to it, `inkhaven ai --provider gateway` picks it. Before the first
+send, `inkhaven ai --resolve` (3.22) prints every provider with its model,
+where its requests go and whether its key is set, then the provider a send
+would actually use — with `--provider gateway` it answers for that one. One rule: the
 model string is what identifies the provider at request time, so two
 providers may not list the same model string — spell the gateway's copy
 of a model differently (`openai/gpt-4o`, as OpenRouter does).

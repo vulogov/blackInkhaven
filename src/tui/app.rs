@@ -2723,6 +2723,8 @@ mod chord_probe;
 mod search_probe;
 #[cfg(test)]
 mod chat_probe;
+#[cfg(test)]
+mod flows_probe;
 
 /// The next rung in the leaf-type morph cycle (`t`/`T` in the Tree pane, and
 /// `Ctrl+B M`). Single source of truth for both the single-node and bulk paths
@@ -22538,8 +22540,24 @@ impl App {
         }
 
         self.modal = Modal::None;
+        // 3.22 — say what was switched to: the model, where it goes and the
+        // key state, so a `base_url` provider or an unset key shows at once.
+        let detail = self
+            .cfg
+            .llm
+            .providers
+            .get(&chosen)
+            .map(|p| {
+                format!(
+                    " · {} → {} · {}",
+                    p.model,
+                    AiClient::describe_target(p),
+                    AiClient::describe_key(p)
+                )
+            })
+            .unwrap_or_default();
         self.status = format!(
-            "LLM provider switched to `{chosen}` · saved to {}",
+            "LLM provider switched to `{chosen}`{detail} · saved to {}",
             config_path.display()
         );
     }

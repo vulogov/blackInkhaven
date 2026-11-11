@@ -478,11 +478,19 @@ pub enum Command {
 
     /// Run a one-shot AI inference from the command line.
     Ai {
+        /// The prompt. Not needed with `--resolve`.
+        #[arg(default_value = "", hide_default_value = true)]
         prompt: String,
         /// Provider to use instead of `llm.default` (3.20 — no `-p`: that is
         /// the global project flag).
         #[arg(long)]
         provider: Option<String>,
+        /// 3.22 — dry run: print every configured provider with its model,
+        /// where its requests go (`base_url` or genai's default for the model
+        /// name) and its key state, then which provider this command would
+        /// actually use (after `auto_fallback`). Sends nothing.
+        #[arg(long)]
+        resolve: bool,
     },
 
     /// Import a directory tree into the Help system book. Subdirectories
@@ -6919,8 +6927,17 @@ impl Cli {
                 argue::run(&project, book_name.as_deref(), provider.as_deref(), json)
                     .map_err(Into::into)
             }
-            Command::Ai { prompt, provider } => {
-                ai::run(&project, &prompt, provider.as_deref()).map_err(Into::into)
+            Command::Ai { prompt, provider, resolve } => {
+                if resolve {
+                    ai::resolve(&project, provider.as_deref()).map_err(Into::into)
+                } else if prompt.trim().is_empty() {
+                    Err(crate::error::Error::Config(
+                        "inkhaven ai: a prompt is required (or pass --resolve for the dry run)".into(),
+                    )
+                    .into())
+                } else {
+                    ai::run(&project, &prompt, provider.as_deref()).map_err(Into::into)
+                }
             }
             Command::ImportHelp {
                 documents_directory,

@@ -50,6 +50,55 @@ impl AiClient {
         })
     }
 
+    /// 3.22 — where a provider's requests go, in words: its `base_url`
+    /// through the OpenAI adapter, or genai's own choice of adapter and host
+    /// from the model name. Pure; shared by `inkhaven ai --resolve` and the
+    /// `Ctrl+B L` switch status.
+    pub fn describe_target(prov: &crate::config::LlmProvider) -> String {
+        match &prov.base_url {
+            Some(url) => format!("{} (OpenAI-compatible)", url.trim().trim_end_matches('/')),
+            None => "genai default (adapter and host from the model name)".to_string(),
+        }
+    }
+
+    /// 3.22 — the key state of a provider, in words: `no key needed`,
+    /// `KEY set` or `KEY unset`.
+    pub fn describe_key(prov: &crate::config::LlmProvider) -> String {
+        match prov.api_key_env.as_deref() {
+            None => "no key needed".to_string(),
+            Some(env) if std::env::var(env).is_ok() => format!("{env} set"),
+            Some(env) => format!("{env} unset"),
+        }
+    }
+
+    /// 3.22 — the provider name [`resolve_provider`](Self::resolve_provider)
+    /// would land on for `provider` (the requested one, or the fallback it
+    /// picks), with the model it sends.
+    pub fn resolve_provider_name<'a>(
+        &self,
+        cfg: &'a LlmConfig,
+        provider: Option<&str>,
+    ) -> Result<(&'a str, &'a str)> {
+        let (model, _) = self.resolve_provider(cfg, provider)?;
+        let name = provider.unwrap_or(&self.default_provider);
+        let chosen = cfg
+            .providers
+            .get(name)
+            .filter(|p| p.model == model && provider_available(p))
+            .map(|_| name)
+            .or_else(|| {
+                cfg.providers
+                    .iter()
+                    .find(|(n, p)| n.as_str() != name && p.model == model && provider_available(p))
+                    .map(|(n, _)| n.as_str())
+            })
+            .unwrap_or(name);
+        let (chosen, _) = cfg.providers.get_key_value(chosen).ok_or_else(|| {
+            Error::Config(format!("unknown llm provider `{chosen}` — check inkhaven.hjson"))
+        })?;
+        Ok((chosen.as_str(), model))
+    }
+
     /// Resolve a provider name to `(model, env_var_or_none)`. Prefers the
     /// requested (or default) provider, but **falls back to any configured
     /// provider whose key is actually available** when the requested one's key is
