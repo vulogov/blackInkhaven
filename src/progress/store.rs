@@ -63,6 +63,22 @@ impl ProgressStore {
         })
     }
 
+    /// Test-only: an event stamped `ts` instead of now, so a probe can seed
+    /// writing days in the past and drive the streak hooks.
+    #[cfg(test)]
+    pub fn record_event_at(&self, ts: i64, kind: &str, node_id: Uuid, book_id: Option<Uuid>, word_delta: i64, total_words: i64) -> Result<()> {
+        let node_str = node_id.to_string();
+        let book_str = book_id.map(|b| b.to_string());
+        let extra: Option<&str> = None;
+        self.engine.execute_with(
+            "INSERT INTO writing_events
+             (ts, node_id, book_id, kind, word_delta, total_words, extra_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            &[&ts, &node_str, &book_str, &kind, &word_delta, &total_words, &extra],
+        )?;
+        Ok(())
+    }
+
     /// Append one event row. `node_id` / `book_id` may be `None`
     /// for project-wide events. `extra` is a JSON string the
     /// status-ladder analyser parses — pass `None` when the
@@ -262,9 +278,14 @@ impl ProgressStore {
         let cutoff_secs = now_unix_secs() - days_back * 86_400;
         // Bin events into days under the active boundary (offset 0 = UTC)
         // so the streak agrees with `today_days` (1.3.37 day_boundary).
+        // 3.22 — `/` is float division in DuckDB, so the old `(ts + ?) / 86400`
+        // came back as DOUBLE rows, which the integer-only reader below
+        // dropped: every project reported a 0-day streak, an empty heatmap
+        // and no `hook.on_streak_milestone`. Floor-divide like
+        // `dayclock::today_days` does and read the row as an integer.
         let offset = crate::dayclock::offset_secs();
         let rows = self.engine.select_all_with(
-            "SELECT DISTINCT ((ts + ?) / 86400) AS day
+            "SELECT DISTINCT CAST(floor((ts + ?) / 86400) AS BIGINT) AS day
              FROM writing_events
              WHERE kind = 'save' AND word_delta > 0 AND ts >= ?
              ORDER BY day DESC",
@@ -275,6 +296,8 @@ impl ProgressStore {
             match row.into_iter().next() {
                 Some(DuckValue::Int(i)) => out.push(i as i64),
                 Some(DuckValue::BigInt(i)) => out.push(i),
+                Some(DuckValue::HugeInt(i)) => out.push(i as i64),
+                Some(DuckValue::Double(f)) => out.push(f.floor() as i64),
                 _ => {}
             }
         }
@@ -335,3 +358,28 @@ fn now_unix_secs() -> i64 {
         .unwrap_or(0)
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 3.22 regression — the writing-day query must come back as integer
+    /// day numbers (DuckDB's `/` is float division), one per day with a
+    /// positive save, newest first, and never count an empty save.
+    #[test]
+    fn writing_days_recent_bins_positive_saves_by_day() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ProgressStore::open(&tmp.path().join("progress.duckdb")).unwrap();
+        let now = now_unix_secs();
+        let today = (now + crate::dayclock::offset_secs()).div_euclid(86_400);
+        let pid = Uuid::new_v4();
+        store.record_event_at(now, "save", pid, None, 10, 100).unwrap();
+        store.record_event_at(now - 3 * 86_400, "save", pid, None, 5, 90).unwrap();
+        store.record_event_at(now - 3 * 86_400 + 60, "save", pid, None, 2, 92).unwrap();
+        // Empty saves and status flips don't tick the streak.
+        store.record_event_at(now - 86_400, "save", pid, None, 0, 90).unwrap();
+        store.record_event_at(now - 2 * 86_400, "status_change", pid, None, 7, 90).unwrap();
+        let days = store.writing_days_recent(30).unwrap();
+        assert_eq!(days, vec![today, today - 3]);
+    }
+}

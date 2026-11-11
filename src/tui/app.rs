@@ -27151,6 +27151,30 @@ impl App {
             .raw()
             .update_metadata(id, updated.to_json())
             .map_err(|e| format!("store update: {e}"))?;
+        // 3.22 — the multi-select cycle used to stop here, so marked
+        // paragraphs never reached the progress ledger (status ladder,
+        // "promoted this week") and `hook.on_status_promoted` stayed silent
+        // for them. Every status transition now records and fires here.
+        let from_label = display_status(node.status.as_deref()).to_ascii_lowercase();
+        let to_label = next.to_ascii_lowercase();
+        let total_words = node.word_count.max(0) as i64;
+        let book_id = self.book_of_node(id);
+        crate::progress::record_status_change(
+            id, book_id, &from_label, &to_label, total_words,
+        );
+        // hook.on_status_promoted ( uuid from_status to_status -- )
+        // Fires on every transition — manual cycles AND the
+        // auto-promote path. Scripts that want to act only on
+        // promotions (not demotions / wraps to "none") can
+        // inspect the labels.
+        crate::scripting::hooks::fire(
+            "hook.on_status_promoted",
+            vec![
+                rust_dynamic::value::Value::from_string(id.to_string()),
+                rust_dynamic::value::Value::from_string(from_label),
+                rust_dynamic::value::Value::from_string(to_label),
+            ],
+        );
         Ok(())
     }
 
@@ -27206,48 +27230,17 @@ impl App {
             return;
         }
         let next = next_status(node.status.as_deref());
-        let mut updated = node.clone();
-        updated.status = if next == "None" {
-            None
-        } else {
-            Some(next.to_string())
-        };
-        // Manual cycle clears the auto-promote bookkeeping so a
-        // future save that's still above target will re-promote
-        // from whichever status the user just rolled into.
-        updated.target_hit_at_status = None;
-        if let Err(e) = self
-            .store
-            .raw()
-            .update_metadata(id, updated.to_json())
-        {
+        // The single-paragraph cycle is the multi-select cycle applied to one
+        // id: store update (which also clears the auto-promote bookkeeping so
+        // a future save still above target re-promotes from whichever status
+        // the user just rolled into), progress ledger row, and the
+        // `hook.on_status_promoted` fire all live in `cycle_status_single`.
+        if let Err(e) = self.cycle_status_single(id) {
             self.status = format!("status update failed: {e}");
             return;
         }
         // Refresh hierarchy so the status reads back next frame.
         self.reload_hierarchy();
-        // Progress event log — feeds the status-ladder bar in
-        // Ctrl+V G and the "promoted-to-Final this week" counts.
-        let from_label = display_status(node.status.as_deref()).to_ascii_lowercase();
-        let to_label = next.to_ascii_lowercase();
-        let total_words = node.word_count.max(0) as i64;
-        let book_id = self.book_of_node(id);
-        crate::progress::record_status_change(
-            id, book_id, &from_label, &to_label, total_words,
-        );
-        // hook.on_status_promoted ( uuid from_status to_status -- )
-        // Fires on every transition — manual cycles AND the
-        // auto-promote path. Scripts that want to act only on
-        // promotions (not demotions / wraps to "none") can
-        // inspect the labels.
-        crate::scripting::hooks::fire(
-            "hook.on_status_promoted",
-            vec![
-                rust_dynamic::value::Value::from_string(id.to_string()),
-                rust_dynamic::value::Value::from_string(from_label.clone()),
-                rust_dynamic::value::Value::from_string(to_label.clone()),
-            ],
-        );
         self.status = format!("status: `{}` → `{}`", display_status(node.status.as_deref()), next);
     }
 
