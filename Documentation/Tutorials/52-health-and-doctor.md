@@ -101,6 +101,23 @@ Every auto-repair is logged to `<project>/.inkhaven/health.log`
 with a `Repaired|<class>|<note>` line so you have an audit
 trail even when the TUI is closed.
 
+## Plain `inkhaven doctor` (3.22)
+
+Without flags the doctor prints the health report: binary, Typst
+engine, package cache, project counts, and since 3.22 three more
+sections:
+
+* **Project scan** — the `--scan` findings summarised (counts per
+  severity and per class) so a missing file or a broken parent
+  reference shows up without a second command.
+* **Scripting** — the trust outcome, the bootstrap's hook
+  registrations and the Script-node count. When hooks exist but the
+  project is not trusted, the Notes carry a warning: nothing runs,
+  so every hook silently does nothing.
+* **AI providers** — the same table as `inkhaven ai --resolve`:
+  provider, model, target, key state, and which one a request would
+  use.
+
 ## `inkhaven doctor --scan`
 
 The doctor is the synchronous on-demand counterpart.  Run

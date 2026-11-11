@@ -336,7 +336,7 @@ fn load_store_scripts(bund: &mut Bund) {
 /// 1.2.15+ Phase S.6 (H1) — outcome of the
 /// trust-decision lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TrustOutcome {
+pub(crate) enum TrustOutcome {
     /// Scripts run.
     Trusted,
     /// Scripts do NOT run; user has not opted in.
@@ -349,7 +349,7 @@ enum TrustOutcome {
 /// project.  HJSON `trust_decision` is the
 /// override; absent or `"ask"` falls back to the
 /// `.inkhaven/trust` file marker.
-fn trust_decision(policy: &Policy, project_root: &std::path::Path) -> TrustOutcome {
+pub(crate) fn trust_decision(policy: &Policy, project_root: &std::path::Path) -> TrustOutcome {
     match policy.trust_decision.trim().to_lowercase().as_str() {
         "trust" => TrustOutcome::Trusted,
         "deny" => TrustOutcome::Deny,

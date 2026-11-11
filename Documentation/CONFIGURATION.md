@@ -1278,6 +1278,11 @@ project author's declaration "I wrote these
 scripts" — recipients of a shared project should
 audit before keeping that value.
 
+`inkhaven doctor` (3.22) reports the outcome in its
+Scripting section and warns when the bootstrap or a
+Script node defines hooks the trust decision keeps
+from running.
+
 See [Tutorial 53](Tutorials/53-bund-trust-gate.md)
 and `Documentation/SECURITY_WARNING.md` §3.2.
 

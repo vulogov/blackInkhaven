@@ -249,7 +249,8 @@ project: set `scripting.trust_decision: "trust"` or create
 `<project>/.inkhaven/trust` (see CONFIGURATION.md). In an untrusted
 project the hooks are never defined, so a save fires nothing and
 `.inkhaven.log` carries a `scripting.bootstrap NOT run` warning —
-if a hook "does nothing", check the trust decision first.
+if a hook "does nothing", check the trust decision first;
+`inkhaven doctor` says so in its Scripting section.
 
 A more useful save hook — warn when a paragraph mentions a
 Character name not in the Characters book (sketch):

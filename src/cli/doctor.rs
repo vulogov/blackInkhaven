@@ -29,6 +29,12 @@ use crate::store::hierarchy::Hierarchy;
 use crate::store::node::NodeKind;
 use crate::store::Store;
 
+/// `println!` into a report buffer.
+macro_rules! pl {
+    ($o:expr) => { $o.push('\n') };
+    ($o:expr, $($a:tt)*) => {{ $o.push_str(&format!($($a)*)); $o.push('\n'); }};
+}
+
 /// 1.2.9+ — `inkhaven doctor --voices` — pipe-friendly
 /// list of every TTS voice visible through `tts-rs`.  No
 /// project context needed (this is a host-OS query),
@@ -297,18 +303,28 @@ pub fn run_tts_test(project: &Path, text: &str) -> Result<()> {
     Ok(())
 }
 
+/// `inkhaven doctor` — print [`report`].
 pub fn run(project: &Path) -> Result<()> {
-    println!("inkhaven doctor — v{}", env!("CARGO_PKG_VERSION"));
-    println!("================================================================");
-    println!();
+    print!("{}", report(project)?);
+    Ok(())
+}
+
+/// The doctor's report as one string (pure apart from reading the project), so
+/// the probe can pin what it says.
+pub fn report(project: &Path) -> Result<String> {
+    let mut out = String::new();
+    let out = &mut out;
+    pl!(out, "inkhaven doctor — v{}", env!("CARGO_PKG_VERSION"));
+    pl!(out, "================================================================");
+    pl!(out);
 
     // ── Binary ────────────────────────────────────────────────
-    section("Binary");
-    kv("version", env!("CARGO_PKG_VERSION"));
-    kv("description", env!("CARGO_PKG_DESCRIPTION"));
-    kv("rust-version (min)", env!("CARGO_PKG_RUST_VERSION"));
-    kv("repository", env!("CARGO_PKG_REPOSITORY"));
-    println!();
+    section(out, "Binary");
+    kv(out, "version", env!("CARGO_PKG_VERSION"));
+    kv(out, "description", env!("CARGO_PKG_DESCRIPTION"));
+    kv(out, "rust-version (min)", env!("CARGO_PKG_RUST_VERSION"));
+    kv(out, "repository", env!("CARGO_PKG_REPOSITORY"));
+    pl!(out);
 
     // The engine summary needs a config. Outside-of-project
     // contexts get the compiled defaults; inside-project gets
@@ -318,7 +334,7 @@ pub fn run(project: &Path) -> Result<()> {
         match Config::load_layered(&layout.config_path()) {
             Ok(c) => Some(c),
             Err(e) => {
-                println!("  config-load: ERROR {e}");
+                pl!(out, "  config-load: ERROR {e}");
                 None
             }
         }
@@ -327,55 +343,60 @@ pub fn run(project: &Path) -> Result<()> {
     };
     let cfg_for_engine = cfg_opt.clone().unwrap_or_default();
 
-    section("Typst engine");
-    kv("engine", &crate::typst_compile::engine_summary(&cfg_for_engine));
+    section(out, "Typst engine");
+    kv(out, "engine", &crate::typst_compile::engine_summary(&cfg_for_engine));
     kv(
+                out,
         "external typst path",
         &crate::typst_compile::typst_external_path()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "NOT FOUND on PATH".to_owned()),
     );
     kv(
+                out,
         "bundle_fonts (HJSON)",
         &cfg_for_engine.typst_compile.bundle_fonts.to_string(),
     );
     kv(
+                out,
         "use_system_fonts (HJSON)",
         &cfg_for_engine.typst_compile.use_system_fonts.to_string(),
     );
     kv(
+                out,
         "packages_enabled (HJSON)",
         &cfg_for_engine.typst_compile.packages_enabled.to_string(),
     );
     kv(
+                out,
         "semantic_diagnostics (HJSON)",
         &cfg_for_engine.typst_compile.semantic_diagnostics.to_string(),
     );
-    println!();
+    pl!(out);
 
-    section("Package cache");
+    section(out, "Package cache");
     if let Some(cache) = default_package_cache_path() {
-        kv("path", &cache.display().to_string());
+        kv(out, "path", &cache.display().to_string());
         let (count, bytes) = dir_count_size(&cache);
-        kv("entries", &count.to_string());
-        kv("size", &humanise_bytes(bytes));
+        kv(out, "entries", &count.to_string());
+        kv(out, "size", &humanise_bytes(bytes));
     } else {
-        println!("  (platform default unknown — no `cache_dir`)");
+        pl!(out, "  (platform default unknown — no `cache_dir`)");
     }
-    println!();
+    pl!(out);
 
     // ── Project ───────────────────────────────────────────────
-    section("Project");
-    kv("root", &project.display().to_string());
+    section(out, "Project");
+    kv(out, "root", &project.display().to_string());
     if !layout.is_initialized() {
-        println!("  status: not an inkhaven project (no inkhaven.hjson)");
-        println!();
+        pl!(out, "  status: not an inkhaven project (no inkhaven.hjson)");
+        pl!(out);
     } else {
-        kv("status", "initialised");
-        kv("config", &layout.config_path().display().to_string());
-        kv("metadata.db", &layout.metadata_db_path().display().to_string());
-        kv("vectors/", &layout.vecstore_path().display().to_string());
-        kv("books/", &layout.books_path().display().to_string());
+        kv(out, "status", "initialised");
+        kv(out, "config", &layout.config_path().display().to_string());
+        kv(out, "metadata.db", &layout.metadata_db_path().display().to_string());
+        kv(out, "vectors/", &layout.vecstore_path().display().to_string());
+        kv(out, "books/", &layout.books_path().display().to_string());
 
         // Walk the hierarchy — paragraph + word counts. Word
         // counts come from each node's persisted `word_count`
@@ -416,31 +437,143 @@ pub fn run(project: &Path) -> Result<()> {
                                 _ => {}
                             }
                         }
-                        kv("user books", &user_books.to_string());
-                        kv("system books", &system_books.to_string());
-                        kv("paragraphs (total)", &paragraphs.to_string());
-                        kv("paragraphs (user)", &user_paragraphs.to_string());
+                        kv(out, "user books", &user_books.to_string());
+                        kv(out, "system books", &system_books.to_string());
+                        kv(out, "paragraphs (total)", &paragraphs.to_string());
+                        kv(out, "paragraphs (user)", &user_paragraphs.to_string());
                         kv(
+                out,
                             "words (user paragraphs)",
                             &total_words.to_string(),
                         );
                     }
                     Err(e) => {
-                        println!("  hierarchy: ERROR {e}");
+                        pl!(out, "  hierarchy: ERROR {e}");
                     }
                 },
                 Err(e) => {
-                    println!("  store: ERROR {e}");
+                    pl!(out, "  store: ERROR {e}");
                 }
             }
         } else {
-            println!("  (no config loaded — skipping hierarchy walk)");
+            pl!(out, "  (no config loaded — skipping hierarchy walk)");
         }
-        println!();
+        pl!(out);
+    }
+
+    // ── Project scan (3.22) ──────────────────────────────────
+    // The same scanner as `inkhaven doctor --scan`, summarised: counts per
+    // severity and per class, so the plain report shows store ↔ disk
+    // problems without a second invocation. `--scan` lists each finding;
+    // `--autofix` repairs the repairable ones.
+    let mut scan_notes: Vec<String> = Vec::new();
+    if layout.is_initialized() {
+        if let Some(cfg) = cfg_opt.as_ref() {
+            section(out, "Project scan");
+            match Store::open(layout.clone(), cfg) {
+                Ok(store) => match Hierarchy::load(&store) {
+                    Ok(hierarchy) => {
+                        use crate::cli::doctor_scan::{scan_with_store, ScanSeverity};
+                        let scan = scan_with_store(&store, &layout, cfg, &hierarchy, None);
+                        let critical = scan.count_at_or_above(ScanSeverity::Critical);
+                        let warnings = scan.count_at_or_above(ScanSeverity::Warning) - critical;
+                        let infos = scan.findings.len() - critical - warnings;
+                        kv(out, "findings", &scan.findings.len().to_string());
+                        kv(out, "critical", &critical.to_string());
+                        kv(out, "warning", &warnings.to_string());
+                        kv(out, "info", &infos.to_string());
+                        let mut per_class: std::collections::BTreeMap<&str, usize> = Default::default();
+                        for f in &scan.findings {
+                            *per_class.entry(f.class.slug()).or_default() += 1;
+                        }
+                        for (class, n) in &per_class {
+                            kv(out, &format!("  {class}"), &n.to_string());
+                        }
+                        if critical + warnings > 0 {
+                            scan_notes.push(format!(
+                                "the project scan found {critical} critical and {warnings} warning finding(s) — \
+                                 run `inkhaven doctor --scan` to list them and `inkhaven doctor --autofix` \
+                                 to repair the repairable classes."
+                            ));
+                        }
+                    }
+                    Err(e) => pl!(out, "  scan: ERROR {e}"),
+                },
+                Err(e) => pl!(out, "  scan: ERROR {e}"),
+            }
+            pl!(out);
+        }
+    }
+
+    // ── Scripting (3.22) ──────────────────────────────────────
+    // Hooks and Script nodes run only in a trusted project; an untrusted
+    // one silently defines nothing, which looks exactly like a broken hook.
+    let mut scripting_notes: Vec<String> = Vec::new();
+    if let Some(cfg) = cfg_opt.as_ref() {
+        section(out, "Scripting");
+        let outcome = crate::scripting::trust_decision(&cfg.scripting, &layout.root);
+        let outcome_label = match outcome {
+            crate::scripting::TrustOutcome::Trusted => "trusted — bootstrap and Script nodes run",
+            crate::scripting::TrustOutcome::PendingOptIn => "pending opt-in — bootstrap and Script nodes do NOT run",
+            crate::scripting::TrustOutcome::Deny => "deny — bootstrap and Script nodes do NOT run",
+        };
+        kv(out, "trust", outcome_label);
+        kv(out, "trust_decision (HJSON)", &cfg.scripting.trust_decision);
+        let bootstrap = cfg.scripting.bootstrap.trim();
+        let hooks_in_bootstrap = bootstrap.matches("\"hook.").count();
+        kv(
+            out,
+            "bootstrap",
+            &if bootstrap.is_empty() {
+                "none".to_string()
+            } else {
+                format!("{} line(s), {hooks_in_bootstrap} hook registration(s)", bootstrap.lines().count())
+            },
+        );
+        let scripts = if layout.is_initialized() {
+            Store::open(layout.clone(), cfg)
+                .ok()
+                .and_then(|s| s.count_nodes_of_kind(NodeKind::Script).ok())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        kv(out, "Script nodes", &scripts.to_string());
+        if (hooks_in_bootstrap > 0 || scripts > 0)
+            && !matches!(outcome, crate::scripting::TrustOutcome::Trusted)
+        {
+            scripting_notes.push(format!(
+                "the project defines {hooks_in_bootstrap} hook(s) in the bootstrap and has {scripts} Script \
+                 node(s), but trust is {} — none of it runs, so every hook silently does nothing. \
+                 Set scripting.trust_decision = \"trust\" in inkhaven.hjson or create \
+                 <project>/.inkhaven/trust (marker line `trust`) once you have audited the code.",
+                match outcome {
+                    crate::scripting::TrustOutcome::Deny => "deny",
+                    _ => "pending opt-in",
+                }
+            ));
+        }
+        pl!(out);
+    }
+
+    // ── AI providers (3.22) ───────────────────────────────────
+    // The same table as `inkhaven ai --resolve`: which provider a request
+    // would use, its target and whether its key is set — no token spent.
+    if let Some(cfg) = cfg_opt.as_ref() {
+        section(out, "AI providers");
+        match crate::ai::AiClient::from_config(&cfg.llm) {
+            Ok(ai) => {
+                for line in crate::cli::ai::resolve_report(&ai, &cfg.llm, None).lines() {
+                    pl!(out, "  {line}");
+                }
+            }
+            Err(e) => pl!(out, "  ai client: ERROR {e}"),
+        }
+        pl!(out);
     }
 
     // ── Notes ─────────────────────────────────────────────────
-    section("Notes");
+    section(out, "Notes");
     let mut notes: Vec<String> = Vec::new();
     if !cfg_for_engine.typst_compile.use_inprocess_engine()
         && crate::typst_compile::typst_external_path().is_none()
@@ -461,29 +594,31 @@ pub fn run(project: &Path) -> Result<()> {
                 .into(),
         );
     }
+    notes.extend(scan_notes);
+    notes.extend(scripting_notes);
     if notes.is_empty() {
-        println!("  no warnings");
+        pl!(out, "  no warnings");
     } else {
         for n in notes {
             // Soft-wrap at 76 cols so paragraph hints stay readable on
             // an 80-col terminal.
-            print_wrapped("  ⚠ ", "    ", &n, 76);
+            print_wrapped(out, "  ⚠ ", "    ", &n, 76);
         }
     }
-    println!();
+    pl!(out);
 
-    Ok(())
+    Ok(std::mem::take(out))
 }
 
-fn section(title: &str) {
-    println!("─── {title} ───");
+fn section(out: &mut String, title: &str) {
+    pl!(out, "─── {title} ───");
 }
 
-fn kv(key: &str, value: &str) {
-    println!("  {key:32} {value}");
+fn kv(out: &mut String, key: &str, value: &str) {
+    pl!(out, "  {key:32} {value}");
 }
 
-fn print_wrapped(first_prefix: &str, cont_prefix: &str, text: &str, width: usize) {
+fn print_wrapped(out: &mut String, first_prefix: &str, cont_prefix: &str, text: &str, width: usize) {
     let mut current = String::new();
     let mut first_line = true;
     for word in text.split_whitespace() {
@@ -499,19 +634,19 @@ fn print_wrapped(first_prefix: &str, cont_prefix: &str, text: &str, width: usize
             current.push_str(word);
         } else {
             if first_line {
-                println!("{first_prefix}{current}");
+                pl!(out, "{first_prefix}{current}");
                 first_line = false;
             } else {
-                println!("{cont_prefix}{current}");
+                pl!(out, "{cont_prefix}{current}");
             }
             current = word.to_owned();
         }
     }
     if !current.is_empty() {
         if first_line {
-            println!("{first_prefix}{current}");
+            pl!(out, "{first_prefix}{current}");
         } else {
-            println!("{cont_prefix}{current}");
+            pl!(out, "{cont_prefix}{current}");
         }
     }
 }

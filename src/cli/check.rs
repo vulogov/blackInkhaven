@@ -39,6 +39,23 @@ pub fn run(
     no_continuity: bool,
     no_lector: bool,
 ) -> Result<()> {
+    print!("{}", run_report(project, paragraph, book_name, no_fact, no_socrates, no_timeline, no_continuity, no_lector)?);
+    Ok(())
+}
+
+/// The review pass as text (3.22 — pure apart from reading the project, so the
+/// probe can pin which tracks ran and which were skipped).
+#[allow(clippy::too_many_arguments)]
+pub fn run_report(
+    project: &Path,
+    paragraph: Option<&str>,
+    book_name: Option<&str>,
+    no_fact: bool,
+    no_socrates: bool,
+    no_timeline: bool,
+    no_continuity: bool,
+    no_lector: bool,
+) -> Result<String> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = Config::load_layered(&layout.config_path())?;
@@ -56,8 +73,7 @@ pub fn run(
 
     let scope = scope_paragraphs(&store, &hierarchy, paragraph, book_filter_id)?;
     if scope.is_empty() {
-        println!("(no prose paragraphs in scope — nothing to check)");
-        return Ok(());
+        return Ok("(no prose paragraphs in scope — nothing to check)\n".to_string());
     }
 
     let mut findings: Vec<CheckFinding> = Vec::new();
@@ -126,7 +142,7 @@ pub fn run(
         run_lector(&layout, &cfg, &store, &hierarchy, &mut findings);
     }
 
-    print_report(
+    Ok(format_report(
         &findings,
         scope.len(),
         &cfg,
@@ -136,8 +152,7 @@ pub fn run(
         continuity_ran,
         lector_ran,
         &hierarchy,
-    );
-    Ok(())
+    ))
 }
 
 /// LECTOR (LR-P6) — the deterministic read-through (forward reader walk + scene/
@@ -330,7 +345,7 @@ fn run_timeline_critique(hierarchy: &Hierarchy, cfg: &Config, out: &mut Vec<Chec
 }
 
 #[allow(clippy::too_many_arguments)]
-fn print_report(
+fn format_report(
     findings: &[CheckFinding],
     paragraphs: usize,
     cfg: &Config,
@@ -340,9 +355,10 @@ fn print_report(
     continuity_ran: bool,
     lector_ran: bool,
     hierarchy: &Hierarchy,
-) {
+) -> String {
+    let mut out = String::new();
     if findings.is_empty() {
-        println!("✓ no issues across {paragraphs} paragraph(s)");
+        out.push_str(&format!("✓ no issues across {paragraphs} paragraph(s)")); out.push('\n');
     } else {
         for f in findings {
             let icon = match f.severity.as_str() {
@@ -355,42 +371,43 @@ fn print_report(
                 .and_then(|id| hierarchy.get(id))
                 .map(|n| format!("  ({})", n.title))
                 .unwrap_or_default();
-            println!("{icon} [{}/{}] {}{para}", f.checker, f.label, f.body);
+            out.push_str(&format!("{icon} [{}/{}] {}{para}", f.checker, f.label, f.body)); out.push('\n');
         }
-        println!();
+        out.push('\n');
     }
 
     // Per-checker summary.
     let count = |c: &str| findings.iter().filter(|f| f.checker == c).count();
-    println!("review pass · {paragraphs} paragraph(s)");
+    out.push_str(&format!("review pass · {paragraphs} paragraph(s)")); out.push('\n');
     if fact_ran {
-        println!("  fact-check : {}", count("fact-check"));
+        out.push_str(&format!("  fact-check : {}", count("fact-check"))); out.push('\n');
     } else {
-        println!("  fact-check : skipped");
+        out.push_str("  fact-check : skipped"); out.push('\n');
     }
     if socratic_ran {
-        println!("  socrates   : {}", count("socrates"));
+        out.push_str(&format!("  socrates   : {}", count("socrates"))); out.push('\n');
     } else {
-        println!("  socrates   : skipped");
+        out.push_str("  socrates   : skipped"); out.push('\n');
     }
     if timeline_ran {
-        println!("  timeline   : {}", count("timeline"));
+        out.push_str(&format!("  timeline   : {}", count("timeline"))); out.push('\n');
     } else {
         let why = if !cfg.timeline.enabled { " (timeline off)" } else { "" };
-        println!("  timeline   : skipped{why}");
+        out.push_str(&format!("  timeline   : skipped{why}")); out.push('\n');
     }
     if continuity_ran {
-        println!("  continuity : {}", count("continuity"));
+        out.push_str(&format!("  continuity : {}", count("continuity"))); out.push('\n');
     } else {
-        println!("  continuity : skipped");
+        out.push_str("  continuity : skipped"); out.push('\n');
     }
     if lector_ran {
-        println!("  read-through: {}", count("read-through"));
+        out.push_str(&format!("  read-through: {}", count("read-through"))); out.push('\n');
     } else {
-        println!("  read-through: skipped");
+        out.push_str("  read-through: skipped"); out.push('\n');
     }
-    println!("  ─────────────");
-    println!("  TOTAL      : {}", findings.len());
+    out.push_str("  ─────────────"); out.push('\n');
+    out.push_str(&format!("  TOTAL      : {}", findings.len())); out.push('\n');
+    out
 }
 
 #[cfg(test)]
