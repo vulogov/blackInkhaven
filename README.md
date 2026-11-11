@@ -27,31 +27,39 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.20.0 — Every Surface Checked
+## Latest release · 3.21.0 — Every Answer Checked
 
-3.20.0 finishes the verification track 3.19.0 opened: the two standalone
-editors are probed key by key, the one modal the main-editor probe could not
-reach is closed, and the command line gets a walker over the whole clap tree
-plus a docs-drift test. No new dependency, no new store, warning-free in
-everything touched:
+3.21.0 turns the verification track from the keys to the answers: the vector
+search, the AI chat, the three companion TUIs and the Bund words the
+documentation names are each probed against what they promise, and one
+feature lands — an optional `base_url` per LLM provider. No new dependency,
+no new store, warning-free in everything touched:
 
-- **The config editor and the prompts editor answer every key** — every
-  one-line box takes the shared text-input chord set with a drawn cursor,
-  chorded letters never fire bare actions, `?` types in the prompts editor,
-  the AI response pane scrolls and clamps, the prompt history keeps your
-  draft, help panes scroll, rollback pickers window around the cursor and
-  every modal fits the terminal. Two probes run in the default suite.
-- **The modal probe reaches everything** — the thesaurus opens through its
-  real opener against a seeded WordNet lexicon; unopened modals 1 → 0.
-- **One command-line surface** — `ai --provider` lost the `-p` it shared with
-  the global project flag; twenty-four commands take `-o/--output` (`--out`
-  stays as a hidden alias); a test resolves every `inkhaven …` line in the
-  documentation against the binary and nine stale invocations are fixed.
+- **Search finds the nearest neighbour** — HNSW missed it (the `:meta`
+  vectors saturate the graph), so a project under 20 000 vectors is searched
+  exactly; Facts, Book RAG, Help and similar-paragraph searches are scoped
+  inside the vector walk instead of post-filtering a global pool; a changed
+  embedding width is refused and `reindex` rebuilds the index.
+- **The chat does what the reference says** — `t` prepends below the
+  heading, Book is a sticky scope, cancel disarms the waiting flow, `Esc`
+  keeps a finished reply, the `/` picker closes and `/name extra words`
+  sends directly, the fullscreen history pins by wrapped rows.
+- **Any OpenAI-compatible host** — `providers.<name>.base_url` routes a
+  provider's model to vLLM, LM Studio, OpenRouter, Together or a gateway
+  with the key from `api_key_env`.
+- **The companions answer every key** — `inkhaven research`, `linguistic`
+  and `worldbuilder` are probed through every pane, overlay and map tool;
+  `Enter` folds a chapter, error turns are no longer remembered or replayed,
+  `Esc` does not quit, and `inkhaven linguistic` is documented at last.
+- **Every documented Bund word exists** and every `ink.*` word answers to
+  its short alias — two default-suite tests; six stale words fixed, 133
+  aliases registered.
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.20.0.md`](Documentation/RELEASE_NOTES/3.20.0.md).
-Four behaviour changes are listed there under *Upgrade notes* (`ai --provider`,
-`--out` → `--output`, `?` and `Ctrl+Enter` in the prompts editor); existing
-projects open unchanged.
+Read the full notes: [`Documentation/RELEASE_NOTES/3.21.0.md`](Documentation/RELEASE_NOTES/3.21.0.md).
+Behaviour changes are listed there under *Upgrade notes* (exact search
+ranking, the embedding-width refusal, `Esc` in the AI pane and in
+`inkhaven linguistic`, `Enter` on a research chapter); existing projects open
+unchanged.
 
 **Stable baseline · 3.0.0.** 3.0.0 remains the stable, maintained edition — the
 intelligence suite that watches, reads, and remembers itself (SEMNET → GRAPHMIND →
