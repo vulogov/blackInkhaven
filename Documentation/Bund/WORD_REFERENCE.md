@@ -613,7 +613,7 @@ Read/observe wrappers over existing features; writes are default-denied.
 | `ink.backup.last` | store_read | `( -- dict \| NODATA )` | last-backup timestamp `{last_at}` |
 | `ink.backup.list` | fs_read | `( -- list )` | backup zips, newest first `{name, bytes, modified}` |
 | `ink.backup.make` | fs_write | `( -- dict )` | create a backup zip now `{archive, kept}` |
-| `ink.words` | pure | `( prefix -- list )` | registered `ink.*` words `{word, category}` starting with `prefix` ("" = all) |
+| `ink.words` | pure | `( prefix -- list )` | registered `ink.*` words `{word, category, alias}` starting with `prefix` ("" = all); `alias` is the short name, "" when none (3.22) |
 
 **`ink.import.*` — importers (writes).** Enable with `enabled_categories:
 ["store_write"]`; an out-of-project bundle also needs `fs_unsandboxed`.

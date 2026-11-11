@@ -41,7 +41,7 @@ const MAX_REPLAY_TURNS: usize = 10;
 const MAX_REPLAY_CHARS: usize = 20_000;
 
 /// The navigation-mode hint line (also restored by Esc outside the prompt).
-const NAV_HINT: &str = "i ask · m metrics · u universals · p pairs · Tab cycle · jk move · q quit";
+const NAV_HINT: &str = "i ask · m metrics · u universals · p pairs · Tab cycle · jk move · ? help · q quit";
 
 /// One chat exchange in the Linguist's transcript.
 struct Turn {
@@ -102,6 +102,8 @@ pub struct LinguisticApp {
     /// The prompt being composed; `input_focused` gates keystrokes to it.
     input: String,
     input_focused: bool,
+    /// `?` (3.22) — the key reference overlay; any key closes it.
+    show_help: bool,
     /// In-flight response stream + the turn it feeds.
     stream_rx: Option<mpsc::UnboundedReceiver<StreamMsg>>,
     streaming_turn: Option<usize>,
@@ -171,6 +173,7 @@ impl LinguisticApp {
             chat_scroll: u16::MAX, // open scrolled to the latest turn
             input: String::new(),
             input_focused: false,
+            show_help: false,
             stream_rx: None,
             streaming_turn: None,
             status,
@@ -1104,6 +1107,9 @@ impl TuiHost for LinguisticApp {
         self.render_title(frame, chunks[0]);
         self.render_body(frame, chunks[1]);
         self.render_status(frame, chunks[2]);
+        if self.show_help {
+            self.render_help(frame, chunks[1]);
+        }
     }
 
     fn on_key(&mut self, key: KeyEvent) {
@@ -1111,6 +1117,12 @@ impl TuiHost for LinguisticApp {
             && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('q'))
         {
             self.should_quit = true;
+            return;
+        }
+
+        // The help overlay swallows the key that closes it (3.22).
+        if self.show_help {
+            self.show_help = false;
             return;
         }
 
@@ -1169,6 +1181,7 @@ impl TuiHost for LinguisticApp {
             // Esc is not a quit key in any companion (3.21): outside the prompt it
             // only restores the hint line.
             KeyCode::Esc => self.status = NAV_HINT.to_string(),
+            KeyCode::Char('?') => self.show_help = true,
             KeyCode::Char('i') | KeyCode::Char('/') => {
                 self.right = RightPane::Chat;
                 self.input_focused = true;
@@ -1396,6 +1409,45 @@ impl LinguisticApp {
             Paragraph::new(Span::styled(content, style))
                 .block(Block::default().borders(Borders::ALL).title(title)),
             rows[1],
+        );
+    }
+
+    /// `?` — the key reference, drawn over the body (3.22). Mirrors the
+    /// research and worldbuilder overlays: any key closes it.
+    fn render_help(&self, frame: &mut Frame, area: Rect) {
+        let lines: Vec<Line> = vec![
+            Line::from(Span::styled("  Inner Linguist — quick reference", Style::default().add_modifier(Modifier::BOLD))),
+            Line::from(""),
+            Line::from(Span::styled("  Panes", Style::default().add_modifier(Modifier::BOLD))),
+            Line::from("    Tab               cycle Chat → Preview → Metrics → Universals → Pairs"),
+            Line::from("    m / u / p         metrics · universals · minimal pairs (selected language)"),
+            Line::from("    PgUp / PgDn       scroll the chat"),
+            Line::from(""),
+            Line::from(Span::styled("  Language tree", Style::default().add_modifier(Modifier::BOLD))),
+            Line::from("    j/k ↑/↓  move     g/G Home/End  top / bottom"),
+            Line::from("    l/→ h/←  step in / out      Enter  fold / unfold"),
+            Line::from(""),
+            Line::from(Span::styled("  Prompt", Style::default().add_modifier(Modifier::BOLD))),
+            Line::from("    i or /            open (Chat pane)   Enter send   Esc leave (text kept)"),
+            Line::from("    /trace <rule>  /parse <w>  /check <w>  /tree …  /clause …  /igt <sentence>"),
+            Line::from("    /texts  /settrans <name> = <t>  /frequency  /kwic <w>  /coll <w>"),
+            Line::from("    /hypotheses  /hcheck <id>     anything else asks the Inner Linguist"),
+            Line::from(""),
+            Line::from(Span::styled("  Quit", Style::default().add_modifier(Modifier::BOLD))),
+            Line::from("    q · Ctrl+Q · Ctrl+C          (Esc never quits)      any key closes this"),
+        ];
+        let height = (lines.len() as u16 + 2).min(area.height);
+        let width = 84u16.min(area.width);
+        let rect = Rect {
+            x: area.x + (area.width.saturating_sub(width)) / 2,
+            y: area.y + (area.height.saturating_sub(height)) / 2,
+            width,
+            height,
+        };
+        frame.render_widget(ratatui::widgets::Clear, rect);
+        frame.render_widget(
+            Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" ? help ")),
+            rect,
         );
     }
 

@@ -786,7 +786,7 @@ pairs** (`p`) reports for the selected language. `i` or `/` opens the prompt;
 `Enter` sends a question or runs one of the local `/commands` (`/trace`,
 `/parse`, `/check`, `/tree`, `/clause`, `/igt`, `/texts`, `/settrans`,
 `/frequency`, `/kwic`, `/coll`, `/hypotheses`, `/hcheck`); `Esc` leaves the
-prompt. The chat is a named session under `.inkhaven/linguistic-sessions/`
+prompt; `?` shows the key reference (3.22). The chat is a named session under `.inkhaven/linguistic-sessions/`
 that replays when you reopen it. The full key table is in
 [KEYBINDING.md](KEYBINDING.md#inkhaven-linguistic-170-ling-1).
 

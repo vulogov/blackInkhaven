@@ -226,7 +226,7 @@ cancels with a status hint telling you which pane's table it consulted.
 | `C` / `c`  | **Character lookup** — same lexicon-inference flow as `P` but against the **Characters** system book. |
 | `G` / `g`  | **Notes lookup** — same lexicon-inference flow against the **Notes** system book. |
 | `Y` / `y`  | **Artefacts lookup** — same lexicon-inference flow against the **Artefacts** system book. |
-| `L` / `l`  | **LLM / model picker** — swap the active LLM (Any-scope `global.open_llm_picker`; works from every pane). *Not* the load-file dialog — that is F3. |
+| `L` / `l`  | **LLM / model picker** — swap the active LLM (Any-scope `global.open_llm_picker`; works from every pane). The status after a switch names the model, where it goes (its `base_url`, or genai's default for the model name) and whether its key is set (3.22). `inkhaven ai --resolve` prints the same for every provider without sending anything. *Not* the load-file dialog — that is F3. |
 | `H` / `h`  | Open the pane-aware **Quick reference** overlay.                |
 
 **AI pane (and AI prompt focus)** — inference management:
@@ -1757,7 +1757,7 @@ change lands in `world.hjson`; it never generates prose. Launched outside the ed
 | **Left trees** | `j`/`k` nav, `Enter`/`l`/`h` expand/collapse, `g`/`G` top/bottom |
 | `Ctrl+P` (tree) | Pin / unpin the cursor node for AI context (`⬡`) |
 | `Ctrl+T` (Facts) | Toggle the `fact:world` tag on the selected paragraph (`◎`) |
-| `Shift+F` (Facts) | Filter the Facts tree to `fact:world` only |
+| `Shift+F` (Facts) | Filter the Facts tree to `fact:world` facts and the branches that hold them; the status says how many are shown; press again to clear (3.22 — the toggle used to change the status line only) |
 | `z` (tree) | Zoom the focused left tree to fill the column |
 | `{` / `}` · `[` / `]` | Resize the left split · the left/right column ratio |
 | **Query prompt** | `Enter` send/answer, `Esc` clear-then-defocus (or leave interview) |
@@ -1791,6 +1791,7 @@ Tab cycle · jk move · q quit`).
 | `i` / `/` | Open the prompt (switches the right pane to Chat); typed text builds the question |
 | `Enter` (prompt) | Send the question (grounded in the selected language's sub-book), or run a `/command` |
 | `Esc` (prompt) | Leave the prompt (the typed text is kept); outside the prompt `Esc` does nothing (3.21) |
+| `?` | (3.22) Key reference overlay — panes, tree, prompt and the local `/commands`; any key closes it (`?` types while the prompt is open) |
 | `Tab` | Cycle the right pane: Chat → Preview → Metrics → Universals → Pairs |
 | `m` / `u` / `p` | Metrics (phonology) / Universals (typology) / Minimal pairs for the selected language |
 | `j`/`k` · `↑`/`↓` | Move in the tree (the preview and the active report follow the selection) |

@@ -2042,8 +2042,12 @@ impl WorldbuilderApp {
             }
             KeyCode::Char('F') if is_facts => {
                 self.facts_filter_world = !self.facts_filter_world;
+                self.rebuild_facts_tree();
+                let shown = self.facts_tree.rows().iter().filter(|r| {
+                    self.hierarchy.get(r.id).is_some_and(|n| n.kind == crate::store::NodeKind::Paragraph)
+                }).count();
                 self.status = if self.facts_filter_world {
-                    "filter: fact:world only".into()
+                    format!("filter: fact:world only — {shown} fact(s) shown · F to clear")
                 } else {
                     "filter off".into()
                 };
@@ -2054,6 +2058,17 @@ impl WorldbuilderApp {
                 self.reject_or_stub_edit(is_facts);
             }
             _ => {}
+        }
+    }
+
+    /// Rebuild the Facts tree rows, honouring the `F` filter (3.22): with it
+    /// on, only `fact:world`-tagged facts and the branches that hold them.
+    pub(super) fn rebuild_facts_tree(&mut self) {
+        if self.facts_filter_world {
+            let keep = |n: &crate::store::node::Node| n.tags.iter().any(|t| t == FACT_WORLD_TAG);
+            self.facts_tree.rebuild_filtered(&self.hierarchy, &keep);
+        } else {
+            self.facts_tree.rebuild(&self.hierarchy);
         }
     }
 
@@ -2411,7 +2426,7 @@ impl WorldbuilderApp {
     fn reload_hierarchy(&mut self) {
         if let Ok(h) = Hierarchy::load(&self.store) {
             self.hierarchy = h;
-            self.facts_tree.rebuild(&self.hierarchy);
+            self.rebuild_facts_tree();
             self.world_tree.rebuild(&self.hierarchy);
         }
     }

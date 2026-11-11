@@ -1088,6 +1088,10 @@ impl ResearchApp {
         self.query = TextArea::default();
         self.prompt_history_idx = None;
         self.chat_scroll = 0;
+        // 3.22 — the status line belongs to this submission: a command that
+        // answers in the chat (`/sources`, `/import`, `/stale`…) used to leave
+        // the previous command's status on screen.
+        self.status_message = None;
 
         if let Some(cmd) = super::command::parse(&text) {
             self.dispatch_command(cmd);

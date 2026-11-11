@@ -18,7 +18,7 @@ use crate::probe_kit::{battery, companion_project, ctrl, k, panic_text, render_t
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 const QUICK: [(u16, u16); 3] = [(40, 12), (100, 30), (200, 60)];
-const HINT: &str = "i ask · m metrics · u universals · p pairs · Tab cycle · jk move · q quit";
+const HINT: &str = "i ask · m metrics · u universals · p pairs · Tab cycle · jk move · ? help · q quit";
 
 fn send(app: &mut LinguisticApp, key: KeyEvent) -> Result<(), String> {
     match catch_unwind(AssertUnwindSafe(|| app.on_key(key))) {

@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::store::NodeKind;
 use crate::store::hierarchy::Hierarchy;
+use crate::store::node::Node;
 
 /// One visible row of the Facts tree (depth-first, fold-aware).
 pub struct SystemBookRow {
@@ -52,16 +53,45 @@ impl SystemBookTree {
 
     /// Recompute the visible rows from the hierarchy + fold state.
     pub fn rebuild(&mut self, h: &Hierarchy) {
+        self.rebuild_with(h, None);
+    }
+
+    /// [`rebuild`](Self::rebuild) showing only the paragraphs `keep` accepts;
+    /// a chapter / subchapter stays visible while it still contains one kept
+    /// paragraph somewhere beneath it (3.22 — the worldbuilder's `F` filter
+    /// used to be a status-line toggle that changed nothing). Fold state and
+    /// the cursor are kept; the cursor is clamped to the rows that remain.
+    pub fn rebuild_filtered(&mut self, h: &Hierarchy, keep: &dyn Fn(&Node) -> bool) {
+        self.rebuild_with(h, Some(keep));
+    }
+
+    fn rebuild_with(&mut self, h: &Hierarchy, keep: Option<&dyn Fn(&Node) -> bool>) {
         self.visible.clear();
         if let Some(root) = self.root {
-            self.push_children(h, root, 0);
+            self.push_children(h, root, 0, keep);
         }
         if self.cursor >= self.visible.len() {
             self.cursor = self.visible.len().saturating_sub(1);
         }
     }
 
-    fn push_children(&mut self, h: &Hierarchy, parent: Uuid, depth: usize) {
+    /// Whether `node` (a paragraph) or any paragraph beneath it (a branch)
+    /// passes `keep`.
+    fn subtree_kept(h: &Hierarchy, node: &Node, keep: &dyn Fn(&Node) -> bool, depth: usize) -> bool {
+        if depth > 32 {
+            return false;
+        }
+        match node.kind {
+            NodeKind::Paragraph => keep(node),
+            NodeKind::Image | NodeKind::Script => false,
+            _ => h
+                .children_of(Some(node.id))
+                .into_iter()
+                .any(|c| Self::subtree_kept(h, c, keep, depth + 1)),
+        }
+    }
+
+    fn push_children(&mut self, h: &Hierarchy, parent: Uuid, depth: usize, keep: Option<&dyn Fn(&Node) -> bool>) {
         // Defensive cap: a Facts book is only book → chapter → subchapter →
         // paragraph deep, so any recursion past this means a malformed (cyclic)
         // hierarchy — bail rather than overflow the stack.
@@ -75,17 +105,23 @@ impl SystemBookTree {
             if matches!(child.kind, NodeKind::Image | NodeKind::Script) {
                 continue;
             }
+            if let Some(keep) = keep {
+                if !Self::subtree_kept(h, child, keep, depth) {
+                    continue;
+                }
+            }
             let kids: Vec<Uuid> = h
                 .children_of(Some(child.id))
                 .iter()
                 .filter(|n| !matches!(n.kind, NodeKind::Image | NodeKind::Script))
+                .filter(|n| keep.is_none_or(|keep| Self::subtree_kept(h, n, keep, depth + 1)))
                 .map(|n| n.id)
                 .collect();
             let has_children = !kids.is_empty();
             let expanded = self.expanded.contains(&child.id);
             self.visible.push(SystemBookRow { id: child.id, depth, has_children, expanded });
             if has_children && expanded {
-                self.push_children(h, child.id, depth + 1);
+                self.push_children(h, child.id, depth + 1, keep);
             }
         }
     }

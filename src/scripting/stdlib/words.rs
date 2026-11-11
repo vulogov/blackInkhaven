@@ -53,6 +53,14 @@ fn do_words(vm: &mut VM) -> Result<&mut VM> {
     names.sort();
     names.dedup();
 
+    // 3.22 — the short aliases (`node.list` for `ink.node.list`), so the live
+    // inventory shows both spellings; "" when a word has none (its short name
+    // belongs to bundcore or to another word).
+    let mut aliases: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (alias, canonical) in &vm.name_mapping {
+        aliases.entry(canonical.as_str()).or_default().push(alias.as_str());
+    }
+
     let items: Vec<Value> = names
         .iter()
         .map(|n| {
@@ -60,9 +68,14 @@ fn do_words(vm: &mut VM) -> Result<&mut VM> {
                 .get(n.as_str())
                 .copied()
                 .unwrap_or(if pure.contains(n.as_str()) { "pure" } else { "uncategorised" });
+            let alias = aliases
+                .get(n.as_str())
+                .and_then(|a| a.iter().copied().min_by_key(|a| (a.len(), *a)))
+                .unwrap_or("");
             let mut m: HashMap<String, Value> = HashMap::new();
             m.insert("word".into(), Value::from_string(n));
             m.insert("category".into(), Value::from_string(category));
+            m.insert("alias".into(), Value::from_string(alias));
             Value::from_dict(m)
         })
         .collect();
@@ -86,13 +99,18 @@ mod tests {
         let mut found_rigor = false;
         for row in &list {
             let d = row.cast_dict().expect("a dict");
-            assert!(d.contains_key("word") && d.contains_key("category"));
+            assert!(d.contains_key("word") && d.contains_key("category") && d.contains_key("alias"));
             if d.get("word").and_then(|v| v.cast_string().ok()).as_deref() == Some("ink.rigor.scan")
             {
                 found_rigor = true;
                 assert_eq!(
                     d.get("category").and_then(|v| v.cast_string().ok()).as_deref(),
                     Some("store_read"),
+                );
+                // 3.22 — the short alias rides along.
+                assert_eq!(
+                    d.get("alias").and_then(|v| v.cast_string().ok()).as_deref(),
+                    Some("rigor.scan"),
                 );
             }
         }
