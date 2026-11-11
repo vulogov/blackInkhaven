@@ -234,6 +234,30 @@ provider decides where unattended AI chords (idle hooks
 firing critiques, auto-suggest-event, etc.) send their
 prompts.
 
+## Any OpenAI-compatible host (3.21)
+
+genai picks the adapter and the host from the model name, so a model
+that is not spelled like a frontier model goes to local Ollama. To reach
+another host that speaks the OpenAI chat API — a vLLM or LM Studio server
+on another machine, OpenRouter, Together, a company gateway — give the
+provider a `base_url` pointing at its `/v1` root:
+
+```hjson
+gateway: {
+  model: org/some-open-model
+  base_url: https://gateway.example/v1
+  api_key_env: GATEWAY_API_KEY
+}
+```
+
+The model is then sent there through the OpenAI adapter with that key;
+omit `api_key_env` for a local server that needs none. Everything else is
+unchanged: `auto_fallback` skips it when the key is unset, `Ctrl+B L`
+cycles to it, `inkhaven ai --provider gateway` picks it. One rule: the
+model string is what identifies the provider at request time, so two
+providers may not list the same model string — spell the gateway's copy
+of a model differently (`openai/gpt-4o`, as OpenRouter does).
+
 ## Next steps
 
 - [`13-ai-full-screen-mode.md`](13-ai-full-screen-mode.md) — the

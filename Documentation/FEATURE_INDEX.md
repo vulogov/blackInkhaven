@@ -71,6 +71,7 @@ Legend: **CLI** = `inkhaven <verb>` · **Chord** = in-editor keystroke · **Doc*
 |---|---|---|---|---|
 | ConLang suite | `language` | `Ctrl+B X` | [CONLANG.md](CONLANG.md) | `ink.lang` |
 | Linguistic analysis | `language scan` | — | [LINGUISTIC book] | `ink.lang` |
+| Linguistic companion (TUI) | `linguistic` | — | [CONLANG.md](CONLANG.md#the-linguistic-companion-inkhaven-linguistic) · [KEYBINDING.md](KEYBINDING.md#inkhaven-linguistic-170-ling-1) | `ink.lang` |
 | WordNet thesaurus | `wordnet` | `Ctrl+V Shift+Y` | [Tutorial 109](Tutorials/README.md) | `ink.wordnet` |
 | Poetry (measure verse) | `poetry` | `Ctrl+B J → P` | [POETRY book] | `ink.poem` |
 

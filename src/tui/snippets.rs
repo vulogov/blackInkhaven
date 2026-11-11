@@ -445,7 +445,7 @@ mod tests {
     #[test]
     fn analyse_bund_prefix_expands_sync_placeholders_in_program() {
         let plan = analyse(
-            "bund:\"{paragraph_title}\" ink.print",
+            "bund:\"{paragraph_title}\" ink.io.print",
             &ExpansionContext {
                 paragraph_title: "Rain".into(),
                 ..Default::default()
@@ -453,7 +453,7 @@ mod tests {
         );
         match plan {
             ExpansionPlan::Literal(s) => {
-                assert_eq!(s, "\x00bund:\"Rain\" ink.print");
+                assert_eq!(s, "\x00bund:\"Rain\" ink.io.print");
             }
             _ => panic!("expected Literal"),
         }

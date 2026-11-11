@@ -769,6 +769,27 @@ string of codepoints that renders in the generated font; unmatched characters
 pass through and are flagged (bind them with `font-import-glyph --phoneme`).
 This is the engine a live editor input mode would drive.
 
+## The Linguistic companion (`inkhaven linguistic`)
+
+A full-screen TUI over the Language book, sibling to `inkhaven research` and
+`inkhaven worldbuilder`:
+
+```
+inkhaven linguistic [--language <name>] [--session <name>]
+```
+
+The tree of your languages sits on the left; the right pane cycles with `Tab`
+through **Chat** (a grounded conversation with the Inner Linguist — each answer
+is retrieved from the language sub-book that contains your selection), the
+node **Preview**, and the **Metrics** (`m`), **Universals** (`u`) and **Minimal
+pairs** (`p`) reports for the selected language. `i` or `/` opens the prompt;
+`Enter` sends a question or runs one of the local `/commands` (`/trace`,
+`/parse`, `/check`, `/tree`, `/clause`, `/igt`, `/texts`, `/settrans`,
+`/frequency`, `/kwic`, `/coll`, `/hypotheses`, `/hcheck`); `Esc` leaves the
+prompt. The chat is a named session under `.inkhaven/linguistic-sessions/`
+that replays when you reopen it. The full key table is in
+[KEYBINDING.md](KEYBINDING.md#inkhaven-linguistic-170-ling-1).
+
 ## In the editor
 
 - **`Ctrl+B X`** — the ConLang hub: a read-only overview of every language

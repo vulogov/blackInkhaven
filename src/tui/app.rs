@@ -733,8 +733,9 @@ pub(super) fn select_apply_text(
     }
     // Non-grammar Replace path: convert markdown→Typst on the
     // whole response. The conversion is best-effort; passes
-    // through unrecognised markup verbatim.
-    Ok((super::markdown::markdown_to_typst(raw), false))
+    // through unrecognised markup verbatim. Trailing newlines are
+    // dropped so a replaced paragraph does not end in blank lines.
+    Ok((super::markdown::markdown_to_typst(raw).trim_end_matches('\n').to_string(), false))
 }
 
 /// Extract only the corrected-paragraph text from a grammar-check
@@ -2718,6 +2719,10 @@ mod modal_probe;
 mod pane_probe;
 #[cfg(test)]
 mod chord_probe;
+#[cfg(test)]
+mod search_probe;
+#[cfg(test)]
+mod chat_probe;
 
 /// The next rung in the leaf-type morph cycle (`t`/`T` in the Tree pane, and
 /// `Ctrl+B M`). Single source of truth for both the single-node and bulk paths
@@ -7183,13 +7188,25 @@ impl App {
         // 3.9 — Esc cancels an in-flight inference (stop the stream, keep the
         // conversation) before doing anything else. Distinct from Ctrl+B c,
         // which wipes the whole chat.
+        // 3.21 — only a stream in flight is cancelled; an error is cleared on
+        // the way back to the prompt; a finished reply stays (its apply keys
+        // with it) and Esc just bounces, as the reference says.
         if self.focus == Focus::Ai
             && matches!(key.code, KeyCode::Esc)
-            && self.inference.is_some()
             && !self.graph_walk_active()
         {
-            self.cancel_inference();
-            return Ok(false);
+            match self.inference.as_ref().map(|i| &i.status) {
+                Some(InferenceStatus::Streaming) => {
+                    self.cancel_inference();
+                    return Ok(false);
+                }
+                Some(InferenceStatus::Error(_)) => {
+                    self.cancel_inference();
+                    self.change_focus(Focus::AiPrompt);
+                    return Ok(false);
+                }
+                _ => {}
+            }
         }
         // Esc bounces AI pane → AI prompt so the user can edit / send the
         // next message without an extra Tab. Mirror of the AiPrompt → Ai
@@ -7522,6 +7539,10 @@ impl App {
     }
 
     fn handle_input_key(&mut self, key: KeyEvent, is_search: bool) -> Result<bool> {
+        // 3.21 — the `/` picker is re-derived from the text only when the text
+        // changes; re-deriving after every key reopened it on the same Esc
+        // that closed it, so the documented direct `/name` send was unreachable.
+        let text_before = if is_search { String::new() } else { self.ai_input.as_str().to_string() };
         match key.code {
             KeyCode::Esc => {
                 if is_search && self.show_results_overlay {
@@ -7529,11 +7550,12 @@ impl App {
                 } else if !is_search && self.show_prompt_picker {
                     self.show_prompt_picker = false;
                 } else if !is_search
-                    && self.inference.is_some()
+                    && self.is_streaming_inference()
                     && !self.graph_walk_active()
                 {
                     // 3.9 — cancel an in-flight inference from the prompt too,
-                    // rather than bouncing focus while a reply streams.
+                    // rather than bouncing focus while a reply streams. (3.21 —
+                    // a finished reply is kept; Esc then bounces to the pane.)
                     self.cancel_inference();
                 } else {
                     self.show_results_overlay = false;
@@ -7573,8 +7595,17 @@ impl App {
                     } else {
                         self.run_search();
                     }
-                } else if self.show_prompt_picker {
+                } else if self.show_prompt_picker && !self.prompt_picker_matches().is_empty() {
                     self.commit_prompt_pick();
+                } else if self.show_prompt_picker {
+                    // 3.21 — a `/name extra words` line matches no picker row;
+                    // Enter sends it directly instead of reporting no match.
+                    self.show_prompt_picker = false;
+                    super::input::reset_recall(
+                        &mut self.ai_prompt_history_cursor,
+                        &mut self.ai_prompt_draft,
+                    );
+                    self.start_inference();
                 } else {
                     // A sent prompt ends any history walk: the next ↑ starts at
                     // the newest entry (which is this prompt).
@@ -7730,8 +7761,9 @@ impl App {
                 }
             }
         }
-        // After Backspace/Delete in the AI input, also refresh the picker.
-        if !is_search {
+        // After Backspace/Delete in the AI input, also refresh the picker —
+        // only when the text actually changed (see `text_before`).
+        if !is_search && self.ai_input.as_str() != text_before {
             self.refresh_prompt_picker();
         }
         Ok(false)
@@ -13027,9 +13059,14 @@ impl App {
         // meta/content slots, but our own filters (current id,
         // non-paragraph kinds) still drop rows. Aim for `limit`
         // *survivors*, not `limit` raw hits.
+        // 3.21 — scoped inside the vector walk: never the current paragraph,
+        // never a system book (Help, Facts, Prompts, Notes …), so the picker
+        // lists the manuscript's own neighbours and fills its limit.
+        let hierarchy = &self.hierarchy;
+        let keep = |id: Uuid| id != exclude_id && !hierarchy.under_system_book(id);
         let raw = self
             .store
-            .search_text(query, (limit + 4).max(8))
+            .search_text_where(query, (limit + 4).max(8), &keep)
             .map_err(|e| anyhow::anyhow!("similarity search: {e}"))?;
         let mut out: Vec<SimilarPickerEntry> = Vec::new();
         for v in raw.iter() {
@@ -13096,7 +13133,10 @@ impl App {
             .collect_subtree(facts_id)
             .into_iter()
             .collect();
-        let raw = match self.store.search_text(query, (limit + 8).max(16)) {
+        // 3.21 — scoped to the Facts subtree inside the vector walk; a
+        // post-filtered global pool returned nothing once the manuscript
+        // outranked every fact.
+        let raw = match self.store.search_text_within(query, (limit + 8).max(16), &facts_ids) {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };
@@ -26792,6 +26832,15 @@ impl App {
         self.pending_paragraph_memory_target = None;
         self.pending_book_rag_cited = None;
         self.pending_translation = false;
+        // 3.21 — every flow that was waiting on this stream is disarmed too;
+        // a cancelled rewrite used to open its diff review on the next
+        // ordinary reply, a cancelled fact-check parsed it as findings.
+        self.pending_rewrite_diff = None;
+        self.pending_rewrite_span = None;
+        self.fact_check_pending = None;
+        self.pending_continuation_draft = false;
+        self.pending_style_transfer = false;
+        self.lift_target = None;
         self.ai_response_scroll = 0;
         self.status = if was_streaming {
             "inference cancelled — chat history kept".into()
@@ -26915,6 +26964,13 @@ impl App {
         self.chat_history_scroll = 0;
         self.chat_search = None;
         self.chat_selection = None;
+        // 3.21 — a new conversation shows no evidence from the old one: the
+        // retrieved-passages section read the previous Book / Graph
+        // retrieval until the next send replaced it.
+        self.book_rag_last_retrieval = None;
+        self.graph_rag_last_retrieval = None;
+        self.book_rag_last_canon = None;
+        self.pending_book_rag_cited = None;
         // Also dismiss any active grammar-correction overlay — the AI
         // result it derived from is being discarded, so keeping a
         // baseline tied to a forgotten correction is confusing.

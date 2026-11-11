@@ -197,5 +197,4 @@ ink.stylist.suppressions ( -- list )   the silenced keys
 ## Not yet wired
 
 Tense covers EN/DE/FR/ES; other languages beyond Russian are simply not built
-yet. A *blocking* Bund word for the LLM coaching (`ink.stylist.coach_blocking`)
-could follow if wanted; the deterministic surface is complete.
+yet. A *blocking* Bund word for the LLM coaching could follow if wanted; the deterministic surface is complete.

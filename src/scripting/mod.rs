@@ -34,6 +34,8 @@
 pub mod hooks;
 pub mod policy;
 pub mod stdlib;
+#[cfg(test)]
+mod surface;
 
 use std::cell::Cell;
 

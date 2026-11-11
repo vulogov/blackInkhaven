@@ -67,7 +67,7 @@ mod words;
 #[cfg(test)]
 mod integration_tests;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use rust_multistackvm::multistackvm::VM;
 
 /// Register every inkhaven-specific word on the supplied VM. Called
@@ -130,5 +130,32 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     import::register(vm)?;
     // 3.0.6 — Bund surface introspection.
     words::register(vm)?;
+    register_short_aliases(vm)
+}
+
+/// 3.21 — every `ink.*` word answers to its `ink.`-less short alias
+/// (`node.list` == `ink.node.list`), as `WORD_REFERENCE.md` promises. The
+/// modules that register their own aliases are left alone; a short name that
+/// is already a word (bundcore's or ours) or an existing alias is never
+/// shadowed, so `ink.input`'s alias yields to bundcore's `input`. Aliases
+/// resolve to their canonical word before dispatch, so a policy denial on the
+/// canonical name covers the alias too.
+fn register_short_aliases(vm: &mut VM) -> Result<()> {
+    let mut names: Vec<String> = vm
+        .inline_fun
+        .keys()
+        .filter_map(|k| k.strip_suffix("_inline"))
+        .filter(|n| n.starts_with("ink."))
+        .map(String::from)
+        .collect();
+    names.sort();
+    for name in names {
+        let short = name["ink.".len()..].to_string();
+        if vm.inline_fun.contains_key(&format!("{short}_inline")) || vm.name_mapping.contains_key(&short) {
+            continue;
+        }
+        vm.register_alias(short.clone(), name.clone())
+            .map_err(|e| anyhow!("register alias {short} → {name}: {e}"))?;
+    }
     Ok(())
 }

@@ -7,8 +7,12 @@ if a word is registered it should be here (the build's
 `ink.words` dumps the live list at runtime).
 
 Every word also answers to its **short alias** — the same name without the
-`ink.` prefix (`node.list` == `ink.node.list`). Canonical `ink.*` names are
-listed here.
+`ink.` prefix (`node.list` == `ink.node.list`); since 3.21 the stdlib registers
+the alias for every word, and the suite checks it. The exceptions are a short
+name bundcore already owns (`ink.input` → `input` stays bundcore's) and one
+another word claimed first (`world.check` is `calc.world.check`'s alias, so
+`ink.world.check` has no short form). Canonical
+`ink.*` names are listed here.
 
 ## How the category gates a word
 

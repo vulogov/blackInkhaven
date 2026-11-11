@@ -155,15 +155,60 @@ impl VectorEngine {
         Ok(results)
     }
 
+    /// [`search`](Self::search) restricted to the vector ids `keep` accepts,
+    /// filtered inside the graph walk (3.21).
+    pub fn search_filtered(
+        &self,
+        query_vector: Vec<f32>,
+        limit: usize,
+        keep: &dyn Fn(&str) -> bool,
+    ) -> Result<Vec<SearchResult>> {
+        let q = Query::new(query_vector).with_limit(limit);
+        let mut results = self.with_store(|s| {
+            s.query_filtered(q, keep).map_err(|e| anyhow!("vector search failed: {e}"))
+        })?;
+        distance_to_similarity(&mut results);
+        Ok(results)
+    }
+
     /// Fingerprint `query`, embed it, then [`search`].
     pub fn search_json(&self, query: &JsonValue, limit: usize) -> Result<Vec<SearchResult>> {
+        let vector = self.embed_query(query)?;
+        self.search(vector, limit)
+    }
+
+    /// Fingerprint `query`, embed it, then [`search_filtered`](Self::search_filtered).
+    pub fn search_json_filtered(
+        &self,
+        query: &JsonValue,
+        limit: usize,
+        keep: &dyn Fn(&str) -> bool,
+    ) -> Result<Vec<SearchResult>> {
+        let vector = self.embed_query(query)?;
+        self.search_filtered(vector, limit, keep)
+    }
+
+    fn embed_query(&self, query: &JsonValue) -> Result<Vec<f32>> {
         let engine = self
             .embedding
             .clone()
-            .ok_or_else(|| anyhow!("search_json requires an EmbeddingEngine"))?;
-        let fingerprint = json_fingerprint(query);
-        let vector = engine.embed(&fingerprint)?;
-        self.search(vector, limit)
+            .ok_or_else(|| anyhow!("search requires an EmbeddingEngine"))?;
+        engine.embed(&json_fingerprint(query))
+    }
+
+    /// Width of the stored vectors (0 while the index is empty).
+    pub fn dim(&self) -> Result<usize> {
+        self.with_store(|s| Ok(s.dim()))
+    }
+
+    /// Drop the whole index (memory and files). The next writes rebuild it.
+    pub fn reset(&self) -> Result<()> {
+        let dirty = self.dirty.clone();
+        self.with_store(|s| {
+            s.reset()?;
+            dirty.store(false, Ordering::Release);
+            Ok(())
+        })
     }
 
     /// Flush the index to disk *only when* there are writes since the

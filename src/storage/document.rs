@@ -312,6 +312,16 @@ impl DocumentStorage {
         Ok(())
     }
 
+    /// Re-embed only the `:meta` slot from the current metadata — after a
+    /// rename or a move, where the body is unchanged (3.21: a move used to
+    /// leave the slot describing the old path).
+    pub fn reembed_metadata(&self, id: Uuid) -> Result<()> {
+        if let Some(metadata) = self.meta.get_json(id)? {
+            self.vectors.store_document(&format!("{id}:meta"), metadata)?;
+        }
+        Ok(())
+    }
+
     /// Re-embed both vector slots from the current metadata + blob.
     /// Called after `update_metadata` or `update_content` so the
     /// index stays in lockstep with the source of truth.
@@ -377,6 +387,34 @@ impl DocumentStorage {
             .vectors
             .search_json(&serde_json::json!(query), pool)?;
         self.build_results(candidates, limit)
+    }
+
+    /// [`search_document_text`](Self::search_document_text) over the documents
+    /// `keep` accepts, decided inside the vector walk (3.21): a scoped search
+    /// (one book, the Facts book, the Help corpus) gets its own top-`limit`
+    /// instead of whatever survives a global top-k.
+    pub fn search_document_text_where(
+        &self,
+        query: &str,
+        limit: usize,
+        keep: &dyn Fn(Uuid) -> bool,
+    ) -> Result<Vec<JsonValue>> {
+        let pool = limit.max(1) * 4;
+        let keep_slot = |slot_id: &str| Uuid::parse_str(strip_suffix(slot_id)).is_ok_and(keep);
+        let candidates = self
+            .vectors
+            .search_json_filtered(&serde_json::json!(query), pool, &keep_slot)?;
+        self.build_results(candidates, limit)
+    }
+
+    /// Width of the stored vectors (0 while the index is empty).
+    pub fn vector_dim(&self) -> Result<usize> {
+        self.vectors.dim()
+    }
+
+    /// Drop the whole vector index; `reindex` repopulates it.
+    pub fn reset_vectors(&self) -> Result<()> {
+        self.vectors.reset()
     }
 
     // ── persistence ────────────────────────────────────────────────

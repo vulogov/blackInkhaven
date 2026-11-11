@@ -142,15 +142,15 @@ current `status:` workflow level), a Bund script can post-stamp:
   // ( parent_uuid snapshot_uuid -- )
   swap drop                                 // ( snapshot_uuid )
   // Read current paragraph status from parent ...
-  // ... compose annotation, then attach via
-  //     ink.snapshot.set_annotation (future word; 1.2.7+).
+  // ... a hook can read the history (ink.snapshot.list) but
+  //     annotations are written from the F5 prompt, not from Bund.
   drop
 } register
 ```
 
-`ink.snapshot.set_annotation` doesn't exist yet — Phase 4 of
-the snapshot work in 1.2.7+ adds it. For now annotations live
-purely in the F5 prompt path.
+There is no Bund word that writes an annotation: a hook can only
+read the history (`ink.snapshot.list`). Annotations live in the F5
+prompt path.
 
 ## Recap
 

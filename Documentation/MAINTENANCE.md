@@ -166,9 +166,13 @@ inkhaven --project ~/Books/my-novel reindex [--prune] [--adopt]
 `reindex` walks the `.typ` files under `books/` and synchronises bdslib
 with what it finds.
 
-Plain `reindex` (no flags) re-reads every `.typ` file's content and
-re-embeds it. This is what you run after switching `embeddings.model`
-or after restoring a project and wanting to verify the index is fresh.
+Plain `reindex` (no flags) re-reads every `.typ` file and re-embeds the
+ones whose content differs from the database. It re-embeds *everything*
+when the vector index is empty (an older on-disk format) or when the
+embedding model's vector width no longer matches the index (3.21 — the
+old index is dropped first). This is what you run after switching
+`embeddings.model` or after restoring a project and wanting to verify the
+index is fresh.
 
 | Flag | Effect |
 | ---- | ------ |

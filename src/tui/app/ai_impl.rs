@@ -253,13 +253,33 @@ impl super::App {
             }
             InferenceAction::Top => {
                 use tui_textarea::CursorMove;
-                doc.textarea.move_cursor(CursorMove::Top);
-                doc.textarea.move_cursor(CursorMove::Head);
-                doc.textarea.set_yank_text(format!("{text}\n\n"));
+                let text = text.trim_end_matches('\n');
+                // 3.21 — "top of the paragraph" is below its `= Title` heading
+                // line, which must stay first; the reply used to land above it.
+                let heading_first = doc.textarea.lines().first().is_some_and(|l| l.starts_with("= "));
+                if heading_first {
+                    if doc.textarea.lines().len() == 1 {
+                        doc.textarea.move_cursor(CursorMove::End);
+                        doc.textarea.set_yank_text(format!("\n\n{text}"));
+                    } else {
+                        doc.textarea.move_cursor(CursorMove::Jump(1, 0));
+                        let next_blank = doc.textarea.lines().get(1).is_some_and(|l| l.trim().is_empty());
+                        doc.textarea.set_yank_text(if next_blank {
+                            format!("\n{text}")
+                        } else {
+                            format!("\n{text}\n\n")
+                        });
+                    }
+                } else {
+                    doc.textarea.move_cursor(CursorMove::Top);
+                    doc.textarea.move_cursor(CursorMove::Head);
+                    doc.textarea.set_yank_text(format!("{text}\n\n"));
+                }
                 doc.textarea.paste();
             }
             InferenceAction::Bottom => {
                 use tui_textarea::CursorMove;
+                let text = text.trim_end_matches('\n');
                 doc.textarea.move_cursor(CursorMove::Bottom);
                 doc.textarea.move_cursor(CursorMove::End);
                 doc.textarea.set_yank_text(format!("\n\n{text}"));
@@ -462,13 +482,27 @@ impl super::App {
             // fallback floor doesn't apply here: arbitrary user
             // names have no embedded counterpart, so a miss is
             // surfaced as a status message instead.
+            // `/name` or `/name extra words` (3.21): the first word names the
+            // prompt; anything after it is appended to the rendered template
+            // as the author's instruction for this send.
             let after = raw.trim_start_matches('/').trim();
+            let (name, extra) = match after.split_once(char::is_whitespace) {
+                Some((n, rest)) => (n, rest.trim()),
+                None => (after, ""),
+            };
             let want_lang = self.active_prompt_language();
-            match self.resolve_prompt_optional(after, &want_lang) {
-                Some(found) => self.render_template(&found.template),
+            match self.resolve_prompt_optional(name, &want_lang) {
+                Some(found) => {
+                    let rendered = self.render_template(&found.template);
+                    if extra.is_empty() {
+                        rendered
+                    } else {
+                        format!("{rendered}\n\n{extra}")
+                    }
+                }
                 None => {
                     self.status = format!(
-                        "no prompt `{after}` — type `/` to see the list"
+                        "no prompt `{name}` — type `/` to see the list"
                     );
                     return;
                 }
@@ -691,7 +725,19 @@ impl super::App {
         // GM-P4 — Graph is sticky like Facts: a "chat with your graph" session
         // stays in graph scope (and reuses its cached retrieval) across
         // follow-ups until the author cycles F9 away.
-        if !matches!(mode_used, AiMode::Facts | AiMode::Graph) {
+        // 3.21 — Book is a session scope too: its retrieval is cached for the
+        // conversation and the pane shows the transcript only while the scope
+        // is Book, so resetting it on send hid both the moment the question
+        // went out. Socrates and Editor are the sticky conversation scopes
+        // the reference (and their own docs) describe; they were being reset.
+        if !matches!(
+            mode_used,
+            AiMode::Facts
+                | AiMode::Graph
+                | AiMode::Book
+                | AiMode::Socratic
+                | AiMode::EditorConversation
+        ) {
             self.ai_mode = AiMode::None;
         }
         // Clear the prompt so the next inference starts fresh.
@@ -938,6 +984,8 @@ impl super::App {
         let (tx, rx) = std::sync::mpsc::channel();
         let store = self.store.clone();
         let q = query.clone();
+        // 3.21 — scoped to the Help subtree inside the vector walk.
+        let scope = help_subtree.clone();
         std::thread::spawn(move || {
             // Isolate a library panic (ONNX embed / HNSW query) so it can't reach
             // the process-global crash hook and tear the live terminal down
@@ -946,7 +994,7 @@ impl super::App {
             // recovers via the channel's `Disconnected` arm.
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
                 crate::crash::suppress_panic_report(move || {
-                    let _ = tx.send(store.search_text(&q, 40).map_err(|e| e.to_string()));
+                    let _ = tx.send(store.search_text_within(&q, 40, &scope).map_err(|e| e.to_string()));
                 })
             }));
         });

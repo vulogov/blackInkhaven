@@ -149,7 +149,8 @@ the integrity of the corpus other features depend on.
 
 ### `n` — type a fact by hand
 
-In the Facts tree, **`n`** opens a two-step inline entry (title, then `Ctrl+S` body). The research mode
+In the Facts tree, **`n`** opens a two-step inline entry (title, `Enter`, then the body — `Ctrl+S` saves,
+`Esc` discards; an empty body is refused, as in the confirmation overlay). The research mode
 is the single home for all fact entry — whether the source is the model, a `/fact` extraction, or your
 own knowledge.
 

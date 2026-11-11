@@ -114,7 +114,9 @@ so what it shows is the raw project config, not the global-merged result.
 
 Controls how paragraph bodies are converted into vectors for semantic
 search. Inkhaven uses [fastembed](https://github.com/Anush008/fastembed-rs)
-under the hood.
+under the hood. A query is answered exactly — a cosine scan over every
+stored vector — while the index holds up to 20 000 vectors (3.21; a novel
+is a few thousand), and by the HNSW graph above that.
 
 ```hjson
 embeddings: {
@@ -138,6 +140,13 @@ Supported model names:
   multilingual recall including Russian
 - `MultilingualE5Base` — 768-dim, ~300 MB, higher quality
 - `MultilingualE5Large` — 1024-dim, ~1.1 GB, best multilingual quality
+
+The models differ in vector width, so an index built by one cannot be
+searched with another. After changing `model`, run `inkhaven reindex`: it
+notices the width mismatch, drops the old index and re-embeds every
+paragraph (3.21). Until you do, a save or a search against the old index
+is refused with that same instruction instead of ranking on mismatched
+vectors.
 - `BGEM3` — 1024-dim, multilingual, strong English performance
 - `BGESmallENV15`, `BGEBaseENV15`, `BGELargeENV15` — English-only,
   smaller binaries
@@ -175,6 +184,7 @@ llm: {
 | `default` | string | `gemini` | Which entry in `providers` is used when no `--provider` flag is passed (CLI) and no override is hard-coded (TUI). |
 | `providers.<name>.model` | string | varies | Model identifier passed to [genai](https://github.com/jeremychone/rust-genai). genai picks the adapter (Gemini / OpenAI / Anthropic / Ollama / …) from this string. |
 | `providers.<name>.api_key_env` | string \| absent | varies | Environment variable that holds the API key. **Omit entirely** for local providers like Ollama. |
+| `providers.<name>.base_url` | string \| absent | absent | (3.21) An OpenAI-compatible endpoint (`https://host/v1`). When set, the model is sent there through genai's OpenAI adapter with the key from `api_key_env` (omit the key for a local server), instead of genai choosing the adapter and host from the model name. Any host that speaks the OpenAI chat API: LM Studio, vLLM, OpenRouter, Together, a company gateway. The model string identifies the provider at request time, so two providers may not list the same model string. Must start with `http://` or `https://`. |
 | `auto_fallback` | bool | `true` | When the `default` provider's API key is unset, fall back to any other configured provider whose key IS available (or a keyless local provider). `false` fails with a clear error instead — for users who want the configured provider or nothing. |
 
 If `api_key_env` is set and that env var is unset at runtime, Inkhaven
@@ -198,6 +208,21 @@ claude: {
   api_key_env: ANTHROPIC_API_KEY
 }
 ```
+
+To reach any other OpenAI-compatible host (3.21) — a vLLM or LM Studio
+server on another machine, OpenRouter, a gateway — give the provider a
+`base_url`:
+
+```hjson
+gateway: {
+  model: org/some-open-model
+  base_url: https://gateway.example/v1
+  api_key_env: GATEWAY_API_KEY
+}
+```
+
+`auto_fallback` and the `Ctrl+B L` provider cycle treat it like any other
+provider.
 
 Switching the default is one edit: `default: claude` and you're done.
 
@@ -1442,8 +1467,8 @@ existing snippet bodies.
     expand_on: ["space", "tab"]     // 1.2.14
     bindings: [
       // Bund-prefix bodies (NEW in 1.2.16):
-      { trigger: ";today",
-        body: "bund:ink.now \"%Y-%m-%d\" ink.fmt" }
+      { trigger: ";uuid",
+        body: "bund:\"facts/harbor\" ink.path.to_uuid" }
       { trigger: ";doubled",
         body: "bund:40 2 *" }
 
@@ -1467,7 +1492,7 @@ The top-of-stack value at program end (coerced
 to string) becomes the expansion.
 
 * Sync placeholders are expanded BEFORE
-  evaluation, so `bund:"{author}" ink.print`
+  evaluation, so `bund:"{author}" ink.io.print`
   injects `{author}` first then runs the
   program.
 * Script execution honours the trust gate +

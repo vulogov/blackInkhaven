@@ -163,3 +163,117 @@ pub(crate) fn run_probe(name: &str, body: impl FnOnce(&mut Vec<String>)) {
         panic!("{name} probe failed: {msg}");
     }
 }
+
+/// A crossterm mouse event at `(column, row)`.
+pub(crate) fn mouse(kind: crossterm::event::MouseEventKind, column: u16, row: u16) -> crossterm::event::MouseEvent {
+    crossterm::event::MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE }
+}
+
+/// The seeded facts of [`companion_project`] — `(title, body)`.
+pub(crate) const FACTS: [(&str, &str); 4] = [
+    ("Harbor freeze", "The harbor froze in January 1821 and stayed shut for six weeks."),
+    ("Quay stones", "The quay is built from grey basalt quarried north of the town."),
+    ("Mara's ledger", "Mara kept the harbour-master's ledger from 1819 to 1826."),
+    ("Spring thaw", "The ice broke in the first week of March, three days after the equinox gale."),
+];
+
+/// A headless project for the companion TUIs (3.21): a Facts chapter with four
+/// facts, a Note, an author chapter in the World book, the shipped Earth world
+/// definition as `world.hjson`, one invented language with a dictionary word,
+/// and a keyless stub LLM provider whose `base_url` points at a closed local
+/// port, so every chat attempt fails fast instead of reaching the network.
+/// Returns the project root, its layout and config; the caller opens the Store.
+pub(crate) struct CompanionProject {
+    /// Keeps the project directory alive for as long as the fixture is held.
+    #[allow(dead_code)]
+    pub tmp: tempfile::TempDir,
+    pub layout: crate::project::ProjectLayout,
+    pub cfg: crate::config::Config,
+    /// The seeded Facts chapter and its fact paragraphs, in [`FACTS`] order.
+    pub facts_chapter: uuid::Uuid,
+    pub fact_ids: Vec<uuid::Uuid>,
+}
+
+pub(crate) fn companion_project() -> CompanionProject {
+    use crate::config::{Config, LlmProvider};
+    use crate::project::ProjectLayout;
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::{InsertPosition, NodeKind, Store, SYSTEM_TAG_FACTS, SYSTEM_TAG_NOTES, SYSTEM_TAG_WORLD};
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut cfg = Config::default();
+    cfg.images.preview_enabled = false;
+    cfg.sync_interval_seconds = 0;
+    cfg.llm.providers.insert(
+        "probe".into(),
+        LlmProvider {
+            model: "probe-model".into(),
+            api_key_env: None,
+            base_url: Some("http://127.0.0.1:9/v1/".into()),
+        },
+    );
+    cfg.llm.default = "probe".into();
+    let layout = ProjectLayout::new(tmp.path());
+    layout.create_layout().unwrap();
+    cfg.save(&layout.config_path()).unwrap();
+    std::fs::copy(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/examples/realworld/Earth.hjson"),
+        tmp.path().join("world.hjson"),
+    )
+    .expect("copy Earth.hjson");
+    // CLI-side seeds open their own Store: one invented language + a word.
+    crate::cli::language::init(tmp.path(), "Qya").expect("language init");
+    crate::cli::language::add_word(tmp.path(), "Qya", "mara", "noun", "sea", None, None, false)
+        .expect("add-word");
+
+    let store = Store::open(layout.clone(), &cfg).expect("open store");
+    let book = |h: &Hierarchy, tag: &str| {
+        h.children_of(None)
+            .into_iter()
+            .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(tag))
+            .cloned()
+            .unwrap_or_else(|| panic!("system book {tag}"))
+    };
+    let h = Hierarchy::load(&store).unwrap();
+    let facts = book(&h, SYSTEM_TAG_FACTS);
+    let chapter = store
+        .create_node(&cfg, &h, NodeKind::Chapter, "Harbor", Some(&facts), None, InsertPosition::End)
+        .unwrap();
+    let mut fact_ids = Vec::new();
+    for (title, body) in FACTS {
+        let h = Hierarchy::load(&store).unwrap();
+        let id = crate::research::insert::insert_paragraph(&store, &cfg, &h, facts.id, Some(chapter.id), title, body)
+            .expect("seed fact");
+        fact_ids.push(id);
+    }
+    let h = Hierarchy::load(&store).unwrap();
+    let notes = book(&h, SYSTEM_TAG_NOTES);
+    crate::research::insert::insert_paragraph(
+        &store,
+        &cfg,
+        &h,
+        notes.id,
+        None,
+        "Open question",
+        "Was the 1821 freeze the longest on record? Unverified.",
+    )
+    .expect("seed note");
+    let h = Hierarchy::load(&store).unwrap();
+    let world = book(&h, SYSTEM_TAG_WORLD);
+    let culture = store
+        .create_node(&cfg, &h, NodeKind::Chapter, "Culture", Some(&world), None, InsertPosition::End)
+        .unwrap();
+    let h = Hierarchy::load(&store).unwrap();
+    crate::research::insert::insert_paragraph(
+        &store,
+        &cfg,
+        &h,
+        world.id,
+        Some(culture.id),
+        "Ethos",
+        "Harbour towns prize punctuality; the tide waits for no one.",
+    )
+    .expect("seed world paragraph");
+    drop(store);
+    CompanionProject { tmp, layout, cfg, facts_chapter: chapter.id, fact_ids }
+}

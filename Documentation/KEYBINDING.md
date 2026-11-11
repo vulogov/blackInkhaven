@@ -111,7 +111,7 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+B X`           | **ConLang hub** (LANG-1) — a read-only overview of the project's invented-language sub-books (Language system book): the declared languages with their dictionary / grammar / phonology counts. `↑↓` scroll, `Esc` closes. Errors with a hint when there's no Language book. | `view.open_conlang_hub` |
 | `F1`                 | Open the **Help-manual** query pane (RAG over the Help book). Type a question, Enter to ask. The default LLM provider streams a grounded answer into the AI pane; the model is constrained to use only the Help excerpts (no external knowledge). Same flow as typing `Help! <question>` into the AI prompt bar. Help answers are **one-shot** and do not enter the AI chat history. | no |
 | `F7`                 | **Grammar check** the currently-open paragraph. Resolver precedence for the prompt template: (1) a paragraph titled / slugged `grammar-check` in the **Prompts** system book, (2) an entry of the same name in `prompts.hjson`, (3) a built-in fallback that runs a grammar/punctuation review against the configured `language` (HJSON top-level) and explicitly preserves any Typst markup. Result streams into the AI pane and focus moves there so you can watch the review in real time. | no |
-| `F9`                 | **Cycle the AI scope** through `None → Selection → Paragraph → Subchapter → Chapter → Book → Facts → Socrates → Editor → Graph → None`. The next prompt sent from the AI prompt bar prepends the matching context (selection text / open paragraph / enclosing branch contents) then **auto-resets to `None`** — except the **sticky** conversation scopes (`Facts`, `Socrates`, `Editor`, `Graph`), which persist across follow-ups until you cycle away. `Book` and `Graph` are retrieval-grounded (relevant passages are retrieved and cited rather than the whole book sent); `Graph` additionally folds in the knowledge-graph relations touching each passage (see `Documentation/GRAPH.md`). Mode is shown in the AI prompt title (`AI prompt · scope: Paragraph`) and the status bar. Works from every pane. | no |
+| `F9`                 | **Cycle the AI scope** through `None → Selection → Paragraph → Subchapter → Chapter → Book → Facts → Socrates → Editor → Graph → None`. The next prompt sent from the AI prompt bar prepends the matching context (selection text / open paragraph / enclosing branch contents) then **auto-resets to `None`** — except the **sticky** conversation scopes (`Book`, `Facts`, `Socrates`, `Editor`, `Graph`), which persist across follow-ups until you cycle away (3.21 — `Book` joins them: its retrieval is cached for the conversation and the pane shows the transcript only while the scope is `Book`). `Book` and `Graph` are retrieval-grounded (relevant passages are retrieved and cited rather than the whole book sent); `Graph` additionally folds in the knowledge-graph relations touching each passage (see `Documentation/GRAPH.md`). Mode is shown in the AI prompt title (`AI prompt · scope: Paragraph`) and the status bar. Works from every pane. | no |
 | `F10`                | **Toggle inference mode** between `Local` and `Full`. `Local` instructs the model to use only the supplied context (and prior chat turns); `Full` lets it augment with general knowledge. Both modes are shown in the AI pane title (`AI — gemini · done · infer=Full · scope=Paragraph`). Help inference (F1 / `Help! …`) is **pinned to Local** regardless of this toggle so the help-manual answer never invents features. Works from every pane. | no |
 | `F12`                | (editor) **AI critique** of the open paragraph — "what's weak" in edit mode, "evaluate changes" in split-edit mode. Prompt resolution: Prompts book > `prompts.hjson` > embedded default. |
 | `Ctrl+F12`           | (editor, 1.2.6) **Explain the diagnostic** at the cursor — sends it with its context lines to the AI pane with the explain-or-fix prompt (was bare `F11`, which macOS grabs). |
@@ -139,7 +139,7 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+B Shift+H` (editor) | (1.2.9) **Sentence-rhythm gauge** — open a modal that splits the open paragraph into sentences (hand-rolled walker with abbreviation suppression: Mr., Mrs., Dr., e.g., i.e., Ph.D., …), computes word-count mean / stdev / coefficient of variation (CV), and maps CV to a verdict: Monotone (`CV < 0.25` — drones), Steady (`0.25-0.45`), Varied (`0.45-0.80` — strong prose rhythm), Choppy (`≥ 0.80`). Shows a per-sentence bar list + the three shortest + three longest outliers. ↑↓ / PgUp/PgDn / Home/End scroll; any other key closes. Mnemonic: H for heartbeat. | `view.open_sentence_rhythm` |
 | `Ctrl+B Shift+T` (editor) | (1.2.9) **AI show-don't-tell scan** — send the open paragraph to the configured LLM with a system prompt asking for telling passages plus suggested rewrites. The response streams into the AI pane. Complements the always-on regex overlay (`editor.style_warnings.show_dont_tell`) — the regex catches obvious 2-grams (`was angry`, `realised`); the AI scan catches subtler instances and proposes alternatives. Mnemonic: T for tell. | `ai.analyse_show_dont_tell` |
 | `Ctrl+B Shift+X` (editor) | (1.2.21) **AI fact-check** — fact-check the open paragraph against the project's **Facts** book. Locks the AI scope to the local paragraph and grounds the check against every established world fact (climate, geography, seasons, distances, chronology), so the model flags any claim that contradicts the world — snow in a tropical region, a three-day ride that should be three weeks. With an empty Facts book it degrades to a generic local fact-check. Multilingual fact-analysis system prompt (en/ru/de/fr/es); prompt resolution: Prompts-book `fact-check` paragraph → `prompts.hjson` → embedded default. Streams the verdict into the AI pane. Pairs with the F9 **Facts** scope, which loads the same facts as an interactive chat session. Mnemonic: X for fact e**X**amination. | `ai.fact_check` |
-| `Ctrl+B Shift+S` (editor) | (1.2.21) **Facts search** — open the Facts semantic-search modal. Two-phase: type a query (multi-word OK) and **Enter** runs a semantic search over the Facts book (the same vector index as `Ctrl+V S`, post-filtered to the Facts subtree); then **↑↓** navigate the ranked matches, **Space** marks several (multi-select), **Enter** sends the marked facts — or the cursor's row — to a **targeted Facts chat** grounded in just those facts (reuses the F9 Facts-scope seed + fact-analysis system prompt). Any printable / Backspace in the results drops back to refine the query; **Esc** closes. The scalable path for a large Facts book — ground in the relevant handful instead of loading the whole book. Mnemonic: S for **S**earch facts. | `ai.search_facts` |
+| `Ctrl+B Shift+S` (editor) | (1.2.21) **Facts search** — open the Facts semantic-search modal. Two-phase: type a query (multi-word OK) and **Enter** runs a semantic search over the Facts book (the same vector index as `Ctrl+V S`, scoped to the Facts subtree inside the vector search since 3.21 — a post-filtered global top-k used to come back empty once the manuscript outranked every fact); then **↑↓** navigate the ranked matches, **Space** marks several (multi-select), **Enter** sends the marked facts — or the cursor's row — to a **targeted Facts chat** grounded in just those facts (reuses the F9 Facts-scope seed + fact-analysis system prompt). Any printable / Backspace in the results drops back to refine the query; **Esc** closes. The scalable path for a large Facts book — ground in the relevant handful instead of loading the whole book. Mnemonic: S for **S**earch facts. | `ai.search_facts` |
 | `Ctrl+B Shift+J` (editor) | (1.2.21) **Next fact finding** — after a fact-check (`Ctrl+B Shift+X`) flags contradictions, cycle through them: each press moves the editor cursor to the next flagged claim in the open paragraph (best-effort — the model's quoted phrase may be paraphrased) and shows the violated fact + explanation on the status bar. Wraps around. Findings are tied to the checked paragraph; switching paragraphs prompts a re-run. Mnemonic: J for **J**ump. | `ai.next_fact_finding` |
 | `Ctrl+B Shift+D` (editor) | (TDOC-1) **Verify the open code listing** — run the `verify`-marked fenced code block in the open `para:code` paragraph through its configured language runner and report pass / fail / skip to the Output pane on that paragraph; refreshes the tree badge. Gated by `docs.verify.enabled` (off by default). Headless equivalent: `inkhaven docs verify`. See [`TDOC.md`](TDOC.md). | `docs.verify_paragraph` |
 | `Ctrl+B Shift+M` (editor) | (1.2.11) **AI sentence-rhythm rewrite** — send the open paragraph to the configured LLM with a prompt asking it to break monotonous rhythm by mixing short and long sentences while preserving voice + meaning. Prompt resolution: Prompts book (slug or title `sentence-rhythm-rewrite`) → `prompts.hjson` → embedded multilingual fallback that respects the project's `language` setting. On stream completion, an AI diff modal pops automatically; `a` accept creates a snapshot annotated `Sentence rhythm rewrite` first then replaces the buffer; `r` reject leaves it untouched. Pairs with the `Ctrl+B Shift+H` rhythm gauge — and the chord also fires from **inside** that gauge modal, so the natural diagnose-then-rewrite path needs no extra keystrokes: open the gauge, see MONOTONE, press `Ctrl+B Shift+M`; the gauge dismisses as the rewrite spawns. Mnemonic: M for Modulate / Mix it up. | `ai.rewrite_sentence_rhythm` |
@@ -266,7 +266,8 @@ before tui-textarea sees them, so they never insert a literal tab.
 The third meta prefix. Routes to in-process exporters, pickers,
 the writing-progress modal, paragraph links, and bookmarks. In
 1.2.4+ all view-sub chords are rebindable through HJSON
-`keys.bindings.view_sub` and `ink.key.bind_view_sub`; the
+`keys.bindings.view_sub` and `ink.key.bind` (a `"Ctrl+V <key>"` chord
+selects the layer); the
 prefix itself is rebindable via `keys.view_prefix` (default
 `"Ctrl+V"`). See tutorials 15 / 16 / 17 / 19 / 21 for the
 full workflows.
@@ -277,7 +278,7 @@ full workflows.
 | `1`                    | Editor / AI-prompt       | Write the **open paragraph's buffer** as markdown via the save-as picker (1.2.4 — default path pre-filled; bare Enter writes there). |
 | `2`                    | Editor / AI-prompt       | Write the **containing subchapter's subtree** as markdown via the save-as picker. |
 | `1`                    | Tree                     | Write the tree-cursor's **node and all descendants** as markdown via the save-as picker. |
-| `S` / `s`              | any                      | Toggle **similar-paragraph mode** — saves the buffer, picks via vector search, opens a second editor side-by-side. Re-press to save both and exit. Both editors autosave on idle (1.2.4). |
+| `S` / `s`              | any                      | Toggle **similar-paragraph mode** — saves the buffer, picks via vector search (scoped to the manuscript inside the search since 3.21: never the open paragraph, never a system book such as Help, Facts or Prompts), opens a second editor side-by-side. Re-press to save both and exit. Both editors autosave on idle (1.2.4). |
 | `G` / `g`              | any                      | Open the **writing-progress modal** (today / streak — incl. lifetime best, 1.3.35 / per-book pace / 30-day sparkline / status-ladder counts / per-book bar chart). Press `e` inside it to open the **goals editor** (1.3.35): edit `goals.daily_words` / `active_minutes_daily` / `streak_grace_per_week`; Enter writes the changed keys back to `inkhaven.hjson` via the comment-preserving in-place patch (versioned backup in `.config-backups/`). Also available headless as `inkhaven goals`. |
 | `T` / `t`              | any (needs open paragraph) | Set / clear the **per-paragraph word-count target** (1.2.4+). Empty / `0` clears. Saves that cross the target auto-promote status one ladder step when `goals.auto_promote_on_target` is true. |
 | `A` / `a`              | any (needs open paragraph) | **Add outgoing paragraph link** (1.2.4) — tree pane enters select-paragraph-to-link mode; Enter confirms. Self-link / duplicate / cycle are rejected with a status-bar message. |
@@ -683,8 +684,9 @@ keystroke away. Pane title shows provider, streaming status, and a
 
 | Key       | Condition                       | Action                                              |
 | --------- | ------------------------------- | --------------------------------------------------- |
-| `Esc`     | inference in flight             | (3.9) **Cancel** the in-flight inference — stops the stream and **keeps the chat history** (vs `Ctrl+B c`, which wipes the whole conversation). Works from the AI prompt too. A `Esc cancel` cue shows in the title while streaming. |
-| `Esc`     | otherwise                       | Bounce focus back to the **AI prompt** bar (mirror of the AI-prompt → AI Esc). |
+| `Esc`     | inference in flight             | (3.9) **Cancel** the in-flight inference — stops the stream and **keeps the chat history** (vs `Ctrl+B c`, which wipes the whole conversation). Works from the AI prompt too. A `Esc cancel` cue shows in the title while streaming. (3.21) Cancelling also disarms the flow that was waiting on the stream (a rewrite's diff review, a fact-check's findings), so the next ordinary reply is just a reply. |
+| `Esc`     | inference failed                | (3.21) Clear the error and bounce to the **AI prompt** bar. |
+| `Esc`     | otherwise                       | Bounce focus back to the **AI prompt** bar (mirror of the AI-prompt → AI Esc). (3.21) A finished reply stays on screen with its apply keys — it used to be wiped by this Esc. |
 | `↑`/`↓` (or `k`/`j`), `PgUp`/`PgDn` | inference present (non-Book scope) | (3.9) **Scroll** the single response. It follows the streaming tail by default (`⟳follow` in the title); scrolling up detaches (`↑scrolled`). Mouse wheel too. |
 | `Home` / `End` | inference present (non-Book scope) | (3.9) Jump to the **top** / **bottom**. `End` re-arms follow-the-tail. (3.19) Scrolling stops at the rendered extent, so `↓` / `PgDn` move again right after `Home`. |
 | `z` | chat has a completed turn | (3.9) **Regenerate** — re-send the last prompt under the current scope. |
@@ -693,7 +695,7 @@ keystroke away. Pane title shows provider, streaming status, and a
 | `*` | any | (3.14, CANON-UI-1) **Toggle canon grounding** for Book scope — when on (default `canon.ground_ai`), the next Book-scope retrieval also packs the canon decisions behind the retrieved passages into the prompt; a `◈ N canon` cue shows in the title and the decisions list under the `p` transparency section. Off grounds on prose only. |
 | `r` / `R` | inference done, doc open        | Replace editor selection (or entire doc if no selection) with the AI text. Marks dirty, refocuses Editor. |
 | `i` / `I` | inference done, doc open        | Insert AI text at cursor. Marks dirty.              |
-| `t` / `T` | inference done, doc open        | Prepend AI text to top of paragraph (with blank line separator). |
+| `t` / `T` | inference done, doc open        | Prepend AI text to the top of the paragraph's body (with blank line separator). (3.21) The `= Title` heading line stays first; the reply used to land above it. |
 | `g` / `G` | inference done, doc open        | **Grammar-check apply**: lifts only the corrected paragraph from the response (between `<<<CORRECTED>>>` / `<<<END>>>` markers, or last fenced code, or after a "Corrected …" heading) and overwrites the editor buffer wholesale (constructs a fresh `TextArea` so nothing of the old buffer survives). Skips the markdown→Typst conversion because the grammar prompt preserves Typst markup verbatim. Changed characters render in `theme.grammar_change_fg` (default red) and the highlight **survives saves** — dismiss it explicitly with `Ctrl+B` then `C`, or by switching paragraphs. Refuses with a status message if no extraction pattern matches. |
 | `b` / `B` | inference done, doc open        | Append AI text to bottom of paragraph.              |
 | `c` / `C` | inference done                  | Copy AI text to system clipboard only (no editor change). |
@@ -879,7 +881,7 @@ action and the `/`-triggered Prompt picker overlay.
 | `↓`                  | (picker open) Move selection down. (3.9) Otherwise move down a line, falling through to history recall at the last line; past the newest entry the prompt you were composing comes back (3.19). |
 | `Shift+Enter` / `Alt+Enter` | (3.9) Insert a **newline** in the multi-line compose box (kitty-class terminals distinguish these; a paste keeps its newlines everywhere). The box grows to fit and collapses back to one line when empty. |
 | `Tab`                | (picker open) Expand selected prompt template into the buffer with `{{selection}}` / `{{context}}` substituted. |
-| `Enter`              | If picker open: same as Tab — expand selected template. Otherwise: spawn a streaming inference (plain Enter always sends — `Shift+Enter` is newline). Focus **stays** on the AI prompt bar. The buffer is sent verbatim, except: a leading `/name` is resolved against the prompt library, and a leading `Help!` (case-sensitive) routes the rest of the line through the F1 Help-RAG flow. |
+| `Enter`              | If picker open: same as Tab — expand selected template ((3.21) with no matching row — a `/name extra words` line — Enter sends the line directly). Otherwise: spawn a streaming inference (plain Enter always sends — `Shift+Enter` is newline). Focus **stays** on the AI prompt bar. The buffer is sent verbatim, except: a leading `/name` is resolved against the prompt library, and a leading `Help!` (case-sensitive) routes the rest of the line through the F1 Help-RAG flow. |
 | `Esc`                | If picker open, close it; (3.9) else if an inference is in flight, **cancel** it (stops the stream, keeps the chat history); else bounce focus to the **AI pane** so you can read or scroll the answer. Pressing `Esc` again from the AI pane brings you straight back here. |
 | `Ctrl+1`             | Focus the **Editor** pane (global shortcut, works from this input too). |
 | `Ctrl+T`             | Focus the **Tree** pane (global shortcut, works from this input too). |
@@ -940,7 +942,7 @@ Routed to the AI prompt bar (§6) — the picker has no separate focus.
 | -------------------- | ----------------------------------------------------------- |
 | `↑` / `↓`            | Move selection. (3.19) The list scrolls the selection into view; a long list used to clip at the box bottom. |
 | `Enter` or `Tab`     | Expand the selected prompt's template into the buffer.      |
-| `Esc`                | Close the picker without expanding.                         |
+| `Esc`                | Close the picker without expanding; the typed text stays, so `Enter` then sends it as a direct `/name`. (3.21 — the picker used to reopen on the same keystroke.) |
 | Backspace / Delete   | Modify the filter; picker re-filters live.                  |
 
 The leading `= Title` Typst heading is stripped from book-prompt bodies on
@@ -950,6 +952,10 @@ expanded body still fire for both sources.
 
 A direct `/name` typed into the AI prompt bar and submitted with `Enter`
 (no picker open) is also resolved against both sources, system-first.
+(3.21) `/name extra words` works too: the first word names the prompt and
+the rest is appended to the rendered template as this send's instruction.
+Such a line matches no picker row, so `Enter` sends it directly — no `Esc`
+needed to close the picker first.
 
 ---
 
@@ -1718,12 +1724,14 @@ query prompt — needing ≥ 80 columns.
 | `Ctrl+B h` | Full quick reference of every chord + `/command` (any key closes) |
 | `?` | Toggle the keybind hints bar |
 | `q` / `Ctrl+C` / `Ctrl+Q` | Quit (restores the terminal; Ctrl+Q works in text fields too) |
-| **Facts tree** | `j`/`k` nav, `Enter`/`l`/`h` expand/collapse, `g`/`G` top/bottom |
+| **Facts tree** | `j`/`k` nav, `l`/`h` step in/out, `g`/`G` top/bottom; `Enter` quick-views a fact (`j`/`k` scroll · `Y` copy · `Esc` close) or folds a branch |
+| **Facts tree** edits | `R` rename · `c`/`s` new chapter/subchapter · `-`/`D` delete a paragraph/branch (`y`/`N`) · `K`/`J` move · `y`/`x`/`p` copy/cut/paste · `u` toggle undisputed · `Y` copy the body |
 | `Ctrl+P` (tree) | Pin / unpin the cursor node for RAG context (max 3, `⬡`) |
-| `n` (tree) | Manually add a fact (title → `Ctrl+S` body) |
+| `n` (tree) | Manually add a fact (title → `Enter` → body → `Ctrl+S`; an empty body is refused, `Esc` discards) |
 | **Query prompt** | `Enter` send, `↑`/`↓` recall history, `Esc` clear-then-defocus |
-| **Chat** | `j`/`k`/`g`/`G` scroll, `Ctrl+F` search (`n`/`N` between matches) |
-| **Confirm overlay** | `Tab` switch title/body, `Ctrl+S` / `Ctrl+Enter` insert, `Esc` discard |
+| **Chat** | `j`/`k`/`g`/`G` scroll, `Ctrl+F` search (`n`/`N` between matches, `Esc` closes), `y` copy the last response, `Esc` back to the prompt |
+| `<` / `>` · `Ctrl+Z` | Resize the tree/chat split (tree or chat focused) · zoom the focused pane (toggle) |
+| **Confirm overlay** | `Tab` switch title/body, `Ctrl+S` / `Ctrl+Enter` insert (an empty body is refused), `Esc` discard |
 
 Commands (type in the prompt): `/fact "..." [→ path]`, `/note "..." [→ path]`,
 `/promote [notes/path] [→ facts/path]`, `/sources`, `/import [path]`,
@@ -1744,8 +1752,8 @@ change lands in `world.hjson`; it never generates prose. Launched outside the ed
 |:---|:---|
 | `Tab` / `Shift+Tab` | Cycle panes: Facts → World → Query → Right |
 | `Ctrl+R` | Cycle the right pane (Chat / Research / Map / Ledger) |
-| `?` | Toggle the keybind hints bar |
-| `Ctrl+Q` / `Ctrl+C` | Quit (restores the terminal) |
+| `?` | Toggle the keybind hints bar (in a pane; in the prompt it types) |
+| `q` (pane) · `Ctrl+Q` / `Ctrl+C` | Quit (restores the terminal; `q` in the prompt types) |
 | **Left trees** | `j`/`k` nav, `Enter`/`l`/`h` expand/collapse, `g`/`G` top/bottom |
 | `Ctrl+P` (tree) | Pin / unpin the cursor node for AI context (`⬡`) |
 | `Ctrl+T` (Facts) | Toggle the `fact:world` tag on the selected paragraph (`◎`) |
@@ -1768,6 +1776,38 @@ Commands (type in the prompt): `/interview`, `/set <path> <value>`, `/star`, `/t
 `/switch <name>`, `/export [--pdf]`. See
 [Worldbuilding reference](WORLDBUILDING.md#the-interactive-worldbuilder-inkhaven-worldbuilder)
 and *Building the World with Inkhaven*, chs. 20–21.
+
+## `inkhaven linguistic` (1.7.0+, LING-1)
+
+Standalone TUI over the **Language** system book — the Inner Linguist's desk.
+Launched outside the main editor: `inkhaven linguistic [--language <name>]
+[--session <name>]`. Two panes: the language tree (left 35%) and a right pane
+that cycles through five views; a one-line prompt opens over the Chat view. The
+status line shows the key hints (`i ask · m metrics · u universals · p pairs ·
+Tab cycle · jk move · q quit`).
+
+| Key | Action |
+|:---|:---|
+| `i` / `/` | Open the prompt (switches the right pane to Chat); typed text builds the question |
+| `Enter` (prompt) | Send the question (grounded in the selected language's sub-book), or run a `/command` |
+| `Esc` (prompt) | Leave the prompt (the typed text is kept); outside the prompt `Esc` does nothing (3.21) |
+| `Tab` | Cycle the right pane: Chat → Preview → Metrics → Universals → Pairs |
+| `m` / `u` / `p` | Metrics (phonology) / Universals (typology) / Minimal pairs for the selected language |
+| `j`/`k` · `↑`/`↓` | Move in the tree (the preview and the active report follow the selection) |
+| `l`/`→` · `h`/`←` · `Enter` | Step into / out of a branch · fold / unfold |
+| `g`/`Home` · `G`/`End` | Top / bottom of the tree |
+| `PgUp` / `PgDn` | Scroll the chat |
+| `q` · `Ctrl+C` · `Ctrl+Q` | Quit (`Ctrl+C` / `Ctrl+Q` also work while the prompt is open; `q` then types) |
+
+Commands (typed in the prompt; all run locally, no model call): `/trace <rule>`
+(preview a sound change), `/parse <word>`, `/check <word>` (the Oracle),
+`/tree <verb> <subject> [object] [indirect]`, `/clause …`, `/igt <sentence>`,
+`/texts`, `/settrans <name> = <translation>`, `/frequency`, `/kwic <word>`,
+`/coll <word>`, `/hypotheses`, `/hcheck <id>`. Anything else is a question to
+the Inner Linguist. The transcript is a named **session**
+(`.inkhaven/linguistic-sessions/<name>.json`, default `default`) that replays on
+reopen; only completed answers are recorded — a failed or cancelled stream is
+shown in the chat but not saved. See [CONLANG.md](CONLANG.md#the-linguistic-companion-inkhaven-linguistic).
 
 ## `inkhaven prompts-editor` (1.2.10+)
 

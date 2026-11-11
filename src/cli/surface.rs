@@ -169,6 +169,34 @@ pub(super) fn check_invocation(root: &Command, tokens: &[String]) -> Result<(), 
     Ok(())
 }
 
+/// The documents whose command lines must match the binary: the
+/// README, every top-level guide, the Bund reference and the tutorials.
+/// Release notes and proposals are history and are not checked.
+pub(crate) fn docs() -> Vec<(String, String)> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let docs = root.join("Documentation");
+    let mut files = vec![root.join("README.md")];
+    let mut collect = |dir: &std::path::Path| {
+        let mut v: Vec<_> = std::fs::read_dir(dir)
+            .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "md"))
+            .collect();
+        v.sort();
+        files.extend(v);
+    };
+    collect(&docs);
+    collect(&docs.join("Bund"));
+    collect(&docs.join("Tutorials"));
+    files
+        .into_iter()
+        .map(|p| {
+            let rel = p.strip_prefix(root).unwrap_or(&p).display().to_string();
+            (rel, std::fs::read_to_string(&p).expect("read doc"))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,34 +208,6 @@ mod tests {
             .expect("spawn")
             .join()
             .expect("join");
-    }
-
-    /// The documents whose command lines must match the binary: the
-    /// README, every top-level guide, the Bund reference and the tutorials.
-    /// Release notes and proposals are history and are not checked.
-    fn docs() -> Vec<(String, String)> {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let docs = root.join("Documentation");
-        let mut files = vec![root.join("README.md")];
-        let mut collect = |dir: &std::path::Path| {
-            let mut v: Vec<_> = std::fs::read_dir(dir)
-                .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
-                .filter_map(|e| e.ok().map(|e| e.path()))
-                .filter(|p| p.extension().is_some_and(|x| x == "md"))
-                .collect();
-            v.sort();
-            files.extend(v);
-        };
-        collect(&docs);
-        collect(&docs.join("Bund"));
-        collect(&docs.join("Tutorials"));
-        files
-            .into_iter()
-            .map(|p| {
-                let rel = p.strip_prefix(root).unwrap_or(&p).display().to_string();
-                (rel, std::fs::read_to_string(&p).expect("read doc"))
-            })
-            .collect()
     }
 
     #[test]
