@@ -10,6 +10,10 @@
 //!   and the hierarchy, bodies, snapshots and config come back identical.
 //! * `scrivener_probe` — a synthetic `.scriv` package (binder XML + RTF) imports
 //!   into the expected tree; a dry run creates nothing.
+//! * `mutations_probe` — `add`, `mv`, `paragraph copy/move`, `replace`,
+//!   `delete`, `list` and `outline` against one project, pinning the tree,
+//!   the bodies and the snapshots after each step; `delete` leaves nothing for
+//!   `doctor --scan` to find.
 //!
 //! All open real stores (embedding model), so they are `#[ignore]`d:
 //!
@@ -589,5 +593,346 @@ fn scrivener_probe() {
             out.push(format!("  - {p}"));
         }
         assert!(problems.is_empty(), "{} scrivener problem(s):\n{}", problems.len(), problems.join("\n"));
+    });
+}
+
+/// The slug path `find_by_path` resolves (`book/chapter/paragraph`).
+fn slug_path(n: &Node) -> String {
+    if n.path.is_empty() {
+        n.slug.clone()
+    } else {
+        format!("{}/{}", n.path.join("/"), n.slug)
+    }
+}
+
+/// Titles of `parent`'s children, in order.
+fn child_titles(h: &Hierarchy, parent: Uuid) -> Vec<String> {
+    h.children_of(Some(parent)).into_iter().map(|n| n.title.clone()).collect()
+}
+
+/// Critical-or-warning scanner findings, as `class` slugs.
+fn scan_classes(root: &Path) -> Vec<&'static str> {
+    use crate::cli::doctor_scan::{scan_with_store, ScanSeverity};
+    let (cfg, store) = open(root);
+    let layout = ProjectLayout::new(root);
+    let h = Hierarchy::load(&store).unwrap();
+    let report = scan_with_store(&store, &layout, &cfg, &h, None);
+    let mut out: Vec<&'static str> = report
+        .findings
+        .iter()
+        .filter(|f| matches!(f.severity, ScanSeverity::Critical | ScanSeverity::Warning))
+        .map(|f| f.class.slug())
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+#[ignore = "probe: opens real stores; run with --ignored --nocapture"]
+fn mutations_probe() {
+    run_probe("mutations", |out| {
+        let mut problems: Vec<String> = Vec::new();
+        macro_rules! note {
+            ($msg:expr) => {{ let m: String = $msg; out.push(format!("  !! {m}")); problems.push(m); }};
+        }
+        let s = seed(|_| {});
+        let root = s.root.clone();
+        let (book_path, arrival_path, quay_path, ledger_path, book_id, arrival_id) = {
+            let (_cfg, store) = open(&root);
+            let h = Hierarchy::load(&store).unwrap();
+            let book = h.iter().find(|n| n.kind == NodeKind::Book && n.system_tag.is_none()).unwrap();
+            let arrival = h.children_of(Some(book.id))[0];
+            (
+                slug_path(book),
+                slug_path(arrival),
+                slug_path(h.get(s.quay).unwrap()),
+                slug_path(h.get(s.ledger).unwrap()),
+                book.id,
+                arrival.id,
+            )
+        };
+        let clean_scan = scan_classes(&root);
+        out.push(format!("  [SEED] `{book_path}` / `{arrival_path}` / `{quay_path}`, `{ledger_path}`; scan {clean_scan:?}"));
+
+        // ---- add: chapter, paragraph, --after, book ---------------------------
+        macro_rules! step {
+            ($label:expr, $r:expr $(,)?) => {{
+                let r: crate::error::Result<()> = $r;
+                if let Err(e) = r {
+                    note!(format!("[{}] failed: {e}", $label));
+                }
+            }};
+        }
+        step!("ADD chapter", crate::cli::add::run(&root, NodeKind::Chapter, "Departure", Some(&book_path), None, None));
+        let departure_path = format!("{book_path}/departure");
+        step!("ADD paragraph", crate::cli::add::run(&root, NodeKind::Paragraph, "Dock", Some(&departure_path), None, None));
+        step!(
+            "ADD --after",
+            crate::cli::add::run(&root, NodeKind::Chapter, "Interlude", None, None, Some(&arrival_path)),
+        );
+        step!("ADD book", crate::cli::add::run(&root, NodeKind::Book, "Second Book", None, Some("second"), None));
+        match crate::cli::add::run(&root, NodeKind::Chapter, "Nowhere", None, None, None) {
+            Ok(()) => note!("[ADD] a chapter without --parent must be refused".into()),
+            Err(e) => out.push(format!("  [ADD] chapter without --parent refused: {e}")),
+        }
+        match crate::cli::add::run(&root, NodeKind::Book, "Nested", Some(&book_path), None, None) {
+            Ok(()) => note!("[ADD] a book with --parent must be refused".into()),
+            Err(e) => out.push(format!("  [ADD] book with --parent refused: {e}")),
+        }
+        {
+            let (_cfg, store) = open(&root);
+            let h = Hierarchy::load(&store).unwrap();
+            let chapters = child_titles(&h, book_id);
+            if chapters != ["Arrival", "Interlude", "Departure"] {
+                note!(format!("[ADD] chapter order after add/--after: {chapters:?}"));
+            }
+            let roots: Vec<String> = h
+                .children_of(None)
+                .into_iter()
+                .filter(|n| n.system_tag.is_none())
+                .map(|n| n.title.clone())
+                .collect();
+            // (The seeded book was appended at the end, below the system
+            // block; `add book` slots above it, so the order is not pinned.)
+            if roots.len() != 2 || !roots.contains(&"Harbor Lights".to_string()) || !roots.contains(&"Second Book".to_string()) {
+                note!(format!("[ADD] user books at root: {roots:?}"));
+            }
+            let second = h.iter().find(|n| n.title == "Second Book").unwrap();
+            if second.slug != "second" {
+                note!(format!("[ADD] --slug override ignored (got `{}`)", second.slug));
+            }
+            // The new book sits above the system block, like the TUI's `B`.
+            let all_roots: Vec<&Node> = h.children_of(None);
+            let second_pos = all_roots.iter().position(|n| n.id == second.id).unwrap();
+            let first_system = all_roots.iter().position(|n| n.system_tag.is_some()).unwrap_or(usize::MAX);
+            if second_pos > first_system {
+                note!("[ADD] the new book landed below the system books".into());
+            }
+            // `add book` provisions the Typst chapter for assembly.
+            let typst_chapter = h.iter().any(|n| {
+                n.kind == NodeKind::Chapter
+                    && n.title == "Second Book"
+                    && n.parent_id.and_then(|p| h.get(p)).and_then(|b| b.system_tag.as_deref()) == Some(crate::store::SYSTEM_TAG_TYPST)
+            });
+            if !typst_chapter {
+                note!("[ADD] the new book has no Typst skeleton chapter".into());
+            }
+            let dock = h.iter().find(|n| n.title == "Dock").unwrap();
+            if dock.parent_id.and_then(|p| h.get(p)).map(|p| p.title.as_str()) != Some("Departure") {
+                note!("[ADD] `Dock` is not under `Departure`".into());
+            }
+            if !dock.file.as_ref().map(|rel| root.join(rel).is_file()).unwrap_or(false) {
+                note!("[ADD] the new paragraph has no .typ on disk".into());
+            }
+            out.push(format!("  [ADD] chapters {chapters:?}, books {roots:?}, Typst skeleton present"));
+        }
+
+        // ---- mv: up / down / already-first --------------------------------------
+        step!("MV up", crate::cli::mv::run(&root, &departure_path, crate::cli::mv::Direction::Up));
+        {
+            let (_cfg, store) = open(&root);
+            let h = Hierarchy::load(&store).unwrap();
+            let chapters = child_titles(&h, book_id);
+            if chapters != ["Arrival", "Departure", "Interlude"] {
+                note!(format!("[MV] after `mv up`: {chapters:?}"));
+            }
+        }
+        step!("MV down", crate::cli::mv::run(&root, &arrival_path, crate::cli::mv::Direction::Down));
+        {
+            let (_cfg, store) = open(&root);
+            let h = Hierarchy::load(&store).unwrap();
+            let chapters = child_titles(&h, book_id);
+            if chapters != ["Departure", "Arrival", "Interlude"] {
+                note!(format!("[MV] after `mv down`: {chapters:?}"));
+            }
+            // Paragraph paths follow their chapter — the body is where the node says.
+            let quay = h.get(s.quay).unwrap();
+            if !para_body(&root, &h, quay.id).contains(QUAY) {
+                note!("[MV] Quay's body is unreadable after its chapter moved".into());
+            }
+        }
+        match crate::cli::mv::run(&root, &departure_path, crate::cli::mv::Direction::Up) {
+            Ok(()) => note!("[MV] moving the first chapter up must be refused".into()),
+            Err(e) => out.push(format!("  [MV] first-up refused: {e}")),
+        }
+        match crate::cli::mv::run(&root, &format!("{book_path}/no-such"), crate::cli::mv::Direction::Up) {
+            Ok(()) => note!("[MV] an unknown path must be refused".into()),
+            Err(e) => out.push(format!("  [MV] unknown path refused: {e}")),
+        }
+        out.push("  [MV] up / down / refusals".into());
+
+        // ---- paragraph copy / move ---------------------------------------------
+        step!("PARA copy", crate::cli::paragraph::copy(&root, &quay_path, &departure_path));
+        step!("PARA move", crate::cli::paragraph::move_(&root, &ledger_path, &departure_path));
+        {
+            let (_cfg, store) = open(&root);
+            let h = Hierarchy::load(&store).unwrap();
+            let departure = h.iter().find(|n| n.title == "Departure").unwrap();
+            let in_departure = child_titles(&h, departure.id);
+            if in_departure != ["Dock", "Quay", "Ledger"] {
+                note!(format!("[PARA] Departure's paragraphs after copy+move: {in_departure:?}"));
+            }
+            let in_arrival = child_titles(&h, arrival_id);
+            if in_arrival != ["Quay"] {
+                note!(format!("[PARA] Arrival's paragraphs after the move: {in_arrival:?}"));
+            }
+            let copies: Vec<&Node> = h.iter().filter(|n| n.title == "Quay").collect();
+            if copies.len() != 2 || copies.iter().any(|n| !para_body(&root, &h, n.id).contains(QUAY)) {
+                note!(format!("[PARA] expected two `Quay` bodies with {QUAY}, got {}", copies.len()));
+            }
+            if copies[0].file == copies[1].file {
+                note!("[PARA] the copy shares the original's .typ".into());
+            }
+            let ledger = h.get(s.ledger).unwrap();
+            if !para_body(&root, &h, ledger.id).contains(LEDGER) {
+                note!("[PARA] Ledger's body did not follow the move".into());
+            }
+            out.push(format!("  [PARA] Departure {in_departure:?}, Arrival {in_arrival:?}"));
+        }
+        match crate::cli::paragraph::copy(&root, &arrival_path, &departure_path) {
+            Ok(()) => note!("[PARA] copying a chapter must be refused".into()),
+            Err(e) => out.push(format!("  [PARA] chapter copy refused: {e}")),
+        }
+
+        // ---- replace: dry run, then for real with snapshots --------------------
+        let ledger_snaps_before = {
+            let (_cfg, store) = open(&root);
+            store.list_snapshots(s.ledger).unwrap().len()
+        };
+        step!(
+            "REPLACE dry",
+            crate::cli::replace::run(&root, LEDGER, "LEDGERSWAP", false, false, false, None, false, true, false),
+        );
+        {
+            let (_cfg, store) = open(&root);
+            let h = Hierarchy::load(&store).unwrap();
+            if !para_body(&root, &h, s.ledger).contains(LEDGER) {
+                note!("[REPLACE] --dry-run changed a body".into());
+            }
+        }
+        step!(
+            "REPLACE",
+            crate::cli::replace::run(&root, LEDGER, "LEDGERSWAP", false, false, false, None, false, false, true),
+        );
+        {
+            let (_cfg, store) = open(&root);
+            let h = Hierarchy::load(&store).unwrap();
+            let body = para_body(&root, &h, s.ledger);
+            if !body.contains("LEDGERSWAP") || body.contains(LEDGER) {
+                note!(format!("[REPLACE] Ledger body after replace: {body:?}"));
+            }
+            let snaps = store.list_snapshots(s.ledger).unwrap().len();
+            if snaps != ledger_snaps_before + 1 {
+                note!(format!("[REPLACE] expected one new snapshot on Ledger ({ledger_snaps_before} → {snaps})"));
+            }
+            // Untouched paragraphs keep their bodies.
+            for n in h.iter().filter(|n| n.title == "Quay") {
+                if !para_body(&root, &h, n.id).contains(QUAY) {
+                    note!("[REPLACE] a `Quay` body changed".into());
+                }
+            }
+            out.push(format!("  [REPLACE] dry run left the body alone; real run swapped it and snapshotted ({snaps} snapshot(s))"));
+        }
+        match crate::cli::replace::run(&root, "NOSUCHTOKEN", "x", false, false, false, Some("No Such Book"), false, true, false) {
+            Ok(()) => note!("[REPLACE] an unknown --book must be refused".into()),
+            Err(e) => out.push(format!("  [REPLACE] unknown book refused: {e}")),
+        }
+
+        // ---- list / outline -----------------------------------------------------
+        step!("LIST", crate::cli::list::run(&root));
+        {
+            let (_cfg, store) = open(&root);
+            let h = Hierarchy::load(&store).unwrap();
+            let outline = crate::cli::outline::render(&h, None);
+            for t in ["Harbor Lights", "Departure", "Arrival", "Interlude", "Second Book", "Dock", "Ledger"] {
+                if !outline.contains(t) {
+                    note!(format!("[OUTLINE] `{t}` is missing from the outline"));
+                }
+            }
+            let filtered = crate::cli::outline::render(&h, Some("Second Book"));
+            if !filtered.contains("Second Book") || filtered.contains("Harbor Lights") {
+                note!("[OUTLINE] the book filter did not narrow the outline".into());
+            }
+            out.push("  [OUTLINE] full and filtered outlines list the tree".into());
+        }
+
+        // ---- delete: confirmation, subtree, protected ----------------------------
+        match crate::cli::delete::run(&root, &departure_path, false) {
+            Ok(()) => note!("[DELETE] deleting without --yes must be refused".into()),
+            Err(e) => {
+                if !e.to_string().contains("--yes") {
+                    note!(format!("[DELETE] the refusal must mention --yes: {e}"));
+                }
+                out.push(format!("  [DELETE] without --yes: {e}"));
+            }
+        }
+        let departure_files: Vec<PathBuf> = {
+            let (_cfg, store) = open(&root);
+            let h = Hierarchy::load(&store).unwrap();
+            let departure = h.iter().find(|n| n.title == "Departure").unwrap();
+            h.children_of(Some(departure.id)).iter().filter_map(|n| n.file.as_ref()).map(|rel| root.join(rel)).collect()
+        };
+        step!("DELETE chapter", crate::cli::delete::run(&root, &departure_path, true));
+        {
+            let (_cfg, store) = open(&root);
+            let h = Hierarchy::load(&store).unwrap();
+            let chapters = child_titles(&h, book_id);
+            if chapters != ["Arrival", "Interlude"] {
+                note!(format!("[DELETE] chapters after deleting Departure: {chapters:?}"));
+            }
+            for t in ["Dock", "Ledger"] {
+                if h.iter().any(|n| n.title == t) {
+                    note!(format!("[DELETE] `{t}` survived its chapter's deletion"));
+                }
+            }
+            if h.iter().filter(|n| n.title == "Quay").count() != 1 {
+                note!("[DELETE] the original `Quay` in Arrival must survive".into());
+            }
+            for f in &departure_files {
+                if f.exists() {
+                    note!(format!("[DELETE] body still on disk: {}", f.display()));
+                }
+            }
+            // Snapshots deliberately outlive their paragraph: the project-wide
+            // browser (Ctrl+F6) still lists them under the stored title, which
+            // is the last place a deleted paragraph's text can be read back.
+            let orphaned: Vec<String> = store
+                .list_all_snapshots()
+                .unwrap()
+                .into_iter()
+                .filter(|(_, snap)| snap.parent_id == s.ledger)
+                .map(|(title, _)| title)
+                .collect();
+            if orphaned != ["Ledger"] {
+                note!(format!("[DELETE] the deleted paragraph's snapshot should stay listed under its title, got {orphaned:?}"));
+            }
+            if store.snapshot_content(store.list_snapshots(s.ledger).unwrap()[0].id).unwrap().is_none() {
+                note!("[DELETE] the surviving snapshot has no content".into());
+            }
+        }
+        let protected = {
+            let (_cfg, store) = open(&root);
+            let h = Hierarchy::load(&store).unwrap();
+            h.iter().find(|n| n.kind == NodeKind::Book && n.protected).map(slug_path)
+        };
+        match protected {
+            Some(p) => match crate::cli::delete::run(&root, &p, true) {
+                Ok(()) => note!(format!("[DELETE] system book `{p}` must not be deletable")),
+                Err(e) => out.push(format!("  [DELETE] system book refused: {e}")),
+            },
+            None => note!("[DELETE] no protected book to test against".into()),
+        }
+        let after_scan = scan_classes(&root);
+        if after_scan != clean_scan {
+            note!(format!("[DELETE] doctor --scan changed after the mutations: {clean_scan:?} → {after_scan:?}"));
+        }
+        out.push(format!("  [DELETE] subtree and files gone, snapshots kept for the browser; scan {after_scan:?}"));
+
+        out.push(String::new());
+        out.push(format!("PROBLEMS ({})", problems.len()));
+        for p in &problems {
+            out.push(format!("  - {p}"));
+        }
+        assert!(problems.is_empty(), "{} mutation problem(s):\n{}", problems.len(), problems.join("\n"));
     });
 }

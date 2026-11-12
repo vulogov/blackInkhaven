@@ -2735,6 +2735,8 @@ mod chat_probe;
 mod flows_probe;
 #[cfg(test)]
 mod tui_hooks_probe;
+#[cfg(test)]
+mod progress_probe;
 
 /// The next rung in the leaf-type morph cycle (`t`/`T` in the Tree pane, and
 /// `Ctrl+B M`). Single source of truth for both the single-node and bulk paths
