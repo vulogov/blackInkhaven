@@ -27,7 +27,9 @@ Storage lives in `<project>/progress.db` — a self-contained
 DuckDB file that reuses the same connection-pool primitive the
 main store does. Drop it any time to reset history; the editor
 will recreate it on next launch (today's baseline is captured
-fresh).
+fresh). A baseline is also captured when the day rolls over while
+the editor is open, from the totals as they stood at midnight, so
+the first save after midnight counts for the new day.
 
 ## Word counting rules
 
@@ -102,10 +104,19 @@ The streak is the trailing run of "writing days" (≥1 save with
 `word_delta > 0`) ending today, allowing `streak_grace_per_week`
 skipped days inside a rolling 7-day window.
 
+Today counts as soon as you save new words; until then it is
+*pending* — it neither extends the streak nor spends grace, so the
+run you built is still there in the morning. A day is missed only
+once it is over: with strict grace the streak drops to 0 (and
+`hook.on_streak_break` fires) on the first refresh after a midnight
+that closed a day with no writing.
+
 | Setting | Example pattern (5d ago → today) | Streak |
 | ------- | -------------------------------- | ------ |
 | `0` | `W W W W W` | 5 |
 | `0` | `W W _ W W` (one skip) | 2 |
+| `0` | `W W W W _` (today pending) | 4 |
+| `0` | `W W W _ _` (yesterday missed, today pending) | 0 |
 | `1` | `W W _ W W` | 5 (skip forgiven) |
 | `1` | `W _ _ W W` (two skips inside window) | 2 |
 | `2` | `W _ _ W W W` | 6 |

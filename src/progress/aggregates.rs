@@ -298,7 +298,12 @@ fn streak_len_at(
     let mut grace_used_window: i64 = 0;
     let mut window: std::collections::VecDeque<bool> =
         std::collections::VecDeque::with_capacity(7); // true = skipped
-    let mut d = today;
+    // 3.22 — a day is only "missed" once it is over. Until today's first
+    // save, today is pending: it adds nothing and spends no grace, so the
+    // streak the writer built stands all morning instead of reading 0 (and
+    // `hook.on_streak_break` firing) at midnight. The heatmap has always
+    // treated today's 0 this way; the streak now agrees with it.
+    let mut d = if writing.contains(&today) { today } else { today - 1 };
     loop {
         let skipped = !writing.contains(&d);
         // Slide the rolling 7-day window forward.
@@ -377,6 +382,19 @@ mod tests {
         let days = vec![100, 99, 98, 97, 96];
         let s = compute_streak(&days, today, 0);
         assert_eq!(s.days, 5);
+    }
+
+    #[test]
+    fn an_unwritten_today_is_pending_not_a_break() {
+        // Wrote the last three days, nothing yet today: the streak stands.
+        let s = compute_streak(&[99, 98, 97], 100, 0);
+        assert_eq!(s.days, 3);
+        // Yesterday missed too: that is the break (today is still pending).
+        assert_eq!(compute_streak(&[98, 97], 100, 0).days, 0);
+        // With one grace day the missed yesterday is forgiven.
+        assert_eq!(compute_streak(&[98, 97], 100, 1).days, 3);
+        // Writing today still counts today.
+        assert_eq!(compute_streak(&[100, 99, 98, 97], 100, 0).days, 4);
     }
 
     #[test]

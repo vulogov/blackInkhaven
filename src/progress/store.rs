@@ -7,7 +7,6 @@
 //! redraw + the Ctrl+V G modal which open one snapshot at a time.
 
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use uuid::Uuid;
@@ -75,6 +74,20 @@ impl ProgressStore {
              (ts, node_id, book_id, kind, word_delta, total_words, extra_json)
              VALUES (?, ?, ?, ?, ?, ?, ?)",
             &[&ts, &node_str, &book_str, &kind, &word_delta, &total_words, &extra],
+        )?;
+        Ok(())
+    }
+
+    /// Test-only: a baseline row for an arbitrary day (the heatmap and the
+    /// sparkline derive a day's words from consecutive baselines).
+    #[cfg(test)]
+    pub fn record_baseline_at(&self, day: i64, book_id: Uuid, total_words: i64) -> Result<()> {
+        let book_str = book_id.to_string();
+        self.engine.execute_with(
+            "INSERT INTO writing_baselines (day, book_id, total_words)
+             VALUES (?, ?, ?)
+             ON CONFLICT (day, book_id) DO UPDATE SET total_words = excluded.total_words",
+            &[&day, &book_str, &total_words],
         )?;
         Ok(())
     }
@@ -228,8 +241,14 @@ impl ProgressStore {
                     bl.get(&d).unwrap_or(&0)
                 })
             };
-            let this_d = *bl.get(&d).unwrap_or(&0);
-            let written = (next_d_total - this_d).max(0);
+            // 3.22 — a day with no baseline of its own reads 0 (the project
+            // wasn't open), even when the next day has one: diffing the
+            // next baseline against an imagined 0 credited the whole
+            // manuscript to the first day before the history began.
+            let written = match bl.get(&d) {
+                Some(this_d) => (next_d_total - this_d).max(0),
+                None => 0,
+            };
             out.push(written);
         }
         Ok(out)
@@ -351,11 +370,10 @@ impl ProgressStore {
     }
 }
 
+/// The clock every event is stamped with — `dayclock`'s, so the bins agree
+/// with `today_days` and a probe's shifted clock moves the events too.
 fn now_unix_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    crate::dayclock::now_secs()
 }
 
 
@@ -381,5 +399,56 @@ mod tests {
         store.record_event_at(now - 2 * 86_400, "status_change", pid, None, 7, 90).unwrap();
         let days = store.writing_days_recent(30).unwrap();
         assert_eq!(days, vec![today, today - 3]);
+    }
+
+    /// The other aggregate readers, pinned for the same DuckDB typing reason:
+    /// `SUM` over BIGINT comes back as HUGEINT, `COUNT(*)` as BIGINT.
+    #[test]
+    fn active_seconds_sums_capped_gaps_between_saves() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ProgressStore::open(&tmp.path().join("progress.duckdb")).unwrap();
+        let pid = Uuid::new_v4();
+        let t0 = 1_700_000_000;
+        // 60 s, 120 s, then a 2 h break (capped to 300), then 30 s.
+        for (i, ts) in [t0, t0 + 60, t0 + 180, t0 + 180 + 7_200, t0 + 180 + 7_230].iter().enumerate() {
+            store.record_event_at(*ts, "save", pid, None, i as i64, 10).unwrap();
+        }
+        let secs = store.active_seconds_in_range(t0 - 1, t0 + 10_000, 300).unwrap();
+        assert_eq!(secs, 60 + 120 + 300 + 30);
+        assert_eq!(store.active_seconds_in_range(t0 + 10_000, t0 + 20_000, 300).unwrap(), 0);
+    }
+
+    #[test]
+    fn status_promotions_group_by_target_status() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ProgressStore::open(&tmp.path().join("progress.duckdb")).unwrap();
+        let pid = Uuid::new_v4();
+        for to in ["ready", "final", "ready"] {
+            let extra = serde_json::json!({ "from": "draft", "to": to }).to_string();
+            store.record_event("status_change", pid, None, 0, 10, Some(&extra)).unwrap();
+        }
+        let mut rows = store.status_promotions_recent(7).unwrap();
+        rows.sort();
+        assert_eq!(rows, vec![("final".to_string(), 1), ("ready".to_string(), 2)]);
+    }
+
+    #[test]
+    fn daily_words_come_from_consecutive_baselines() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ProgressStore::open(&tmp.path().join("progress.duckdb")).unwrap();
+        let today = crate::dayclock::today_days();
+        let book = Uuid::new_v4();
+        // Baselines: start of day-2 = 100, day-1 = 130, today = 130 (nothing
+        // written yesterday), live total now 145.
+        store.record_baseline_at(today - 2, book, 100).unwrap();
+        store.record_baseline_at(today - 1, book, 130).unwrap();
+        store.record_baseline_at(today, book, 130).unwrap();
+        assert_eq!(store.last_n_daily(book, 145, 3).unwrap(), vec![30, 0, 15]);
+        // The day before the first baseline has no baseline of its own: it
+        // reads 0, not "everything up to the first baseline".
+        assert_eq!(store.last_n_daily(book, 145, 4).unwrap(), vec![0, 30, 0, 15]);
+        assert_eq!(store.today_words(book, 145).unwrap(), 15);
+        // No baseline for a day → that day reads as 0, not as the whole total.
+        assert_eq!(store.today_words(Uuid::new_v4(), 145).unwrap(), 0);
     }
 }

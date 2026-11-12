@@ -2268,6 +2268,14 @@ pub(crate) struct App {
     /// per-frame redraws don't trigger a hierarchy walk. `None`
     /// means "progress disabled / not yet computed".
     progress_cache: Option<crate::progress::ProgressSnapshot>,
+    /// 3.22 — the day (`dayclock::today_days`) the last progress refresh ran
+    /// on, and the live totals it saw. When a refresh lands on a later day the
+    /// editor has stayed open across the boundary: the new day's baselines
+    /// are captured from those totals (so the first save after midnight
+    /// counts for the new day, not for neither) and the goal hook treats the
+    /// new day as starting from zero.
+    progress_day: Option<i64>,
+    progress_last_totals: Option<(Vec<(Uuid, i64)>, i64)>,
     /// "Select paragraph to link" mode (1.2.4+). When Some, the
     /// tree pane shows a custom title and `Enter` on a paragraph
     /// links it to the owning UUID stashed here. Esc / tree-focus
@@ -3942,6 +3950,8 @@ impl App {
             similar_mode: false,
             picker_target: PaneTarget::Primary,
             progress_cache: None,
+            progress_day: None,
+            progress_last_totals: None,
             link_pick_for: None,
             tree_marked: std::collections::HashSet::new(),
             tree_filter: TextInput::new(),
@@ -4083,7 +4093,7 @@ impl App {
             std::collections::HashMap::new();
         let mut book_slugs: std::collections::HashMap<Uuid, String> =
             std::collections::HashMap::new();
-        for (id, total) in per_book_vec {
+        for &(id, total) in &per_book_vec {
             per_book.insert(id, total);
             if let Some(node) = self.hierarchy.get(id) {
                 book_titles.insert(id, node.title.clone());
@@ -4096,9 +4106,26 @@ impl App {
             book_titles,
             book_slugs,
         };
+        // Day rollover while the editor is open (3.22). Baselines used to be
+        // captured only at startup, so after midnight `today_words` read 0
+        // all day and yesterday's words vanished from the heatmap (no
+        // next-day baseline to diff against). The totals the previous
+        // refresh saw are exactly where the new day starts.
+        let today = crate::dayclock::today_days();
+        let rolled_over = match self.progress_day {
+            Some(d) if d != today => {
+                if let Some((per_book_prev, project_prev)) = self.progress_last_totals.as_ref() {
+                    crate::progress::capture_today_baselines(per_book_prev, *project_prev);
+                }
+                true
+            }
+            _ => false,
+        };
+        self.progress_day = Some(today);
+        self.progress_last_totals = Some((per_book_vec.clone(), project_total));
         let prev = self.progress_cache.clone();
         let snap = crate::progress::snapshot(&self.cfg.goals, &live);
-        self.fire_progress_hooks(prev.as_ref(), &snap);
+        self.fire_progress_hooks(prev.as_ref(), &snap, rolled_over);
         self.progress_cache = Some(snap);
     }
 
@@ -4118,12 +4145,16 @@ impl App {
         &self,
         prev: Option<&crate::progress::ProgressSnapshot>,
         new: &crate::progress::ProgressSnapshot,
+        rolled_over: bool,
     ) {
-        // on_goal_hit
+        // on_goal_hit — on a new day yesterday's count is not "already over
+        // the line": the first crossing today must fire again.
         if let Some(goal) = new.project.daily_goal.filter(|n| *n > 0) {
-            let prev_today = prev
-                .map(|p| p.project.today_words)
-                .unwrap_or(0);
+            let prev_today = if rolled_over {
+                0
+            } else {
+                prev.map(|p| p.project.today_words).unwrap_or(0)
+            };
             let new_today = new.project.today_words;
             if prev_today < goal && new_today >= goal {
                 crate::scripting::hooks::fire(
@@ -24210,8 +24241,15 @@ impl App {
                 current = 0;
             }
         }
-        // Today's date in (y, m, d) — chrono's UTC date.
-        let today = chrono::Utc::now().date_naive();
+        // Today's date in (y, m, d) under the configured day boundary —
+        // the same clock the cells were binned with (3.22; it used to be
+        // the UTC date, one column off for a `local` boundary near midnight).
+        let today = chrono::DateTime::from_timestamp(
+            crate::dayclock::now_secs() + crate::dayclock::offset_secs(),
+            0,
+        )
+        .map(|dt| dt.date_naive())
+        .unwrap_or_else(|| chrono::Utc::now().date_naive());
         use chrono::Datelike;
         let today_ymd = (today.year(), today.month(), today.day());
         self.modal = Modal::WritingStreakHeatmap {

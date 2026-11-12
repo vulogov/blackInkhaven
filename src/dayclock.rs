@@ -37,12 +37,34 @@ pub fn offset_secs() -> i64 {
     OFFSET_SECS.load(Ordering::Relaxed)
 }
 
+/// Test-only: advance the clock by `delta_secs` so a probe can walk into
+/// tomorrow without waiting for midnight. Every reader of `now_secs` (and so
+/// every `today_*` helper and every event the progress store stamps) moves
+/// together, like real time passing; pass the negative to walk back. Shifting
+/// the *boundary offset* instead would move the day bins and "today" by the
+/// same amount and change nothing.
+#[cfg(test)]
+pub fn shift_for_test(delta_secs: i64) {
+    NOW_SHIFT.fetch_add(delta_secs, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+static NOW_SHIFT: AtomicI64 = AtomicI64::new(0);
+
 /// Now, in Unix seconds (UTC).
 pub fn now_secs() -> i64 {
-    std::time::SystemTime::now()
+    let real = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+        .unwrap_or(0);
+    #[cfg(test)]
+    {
+        real + NOW_SHIFT.load(Ordering::Relaxed)
+    }
+    #[cfg(not(test))]
+    {
+        real
+    }
 }
 
 /// Today's day number (days since the epoch) under the active boundary.
